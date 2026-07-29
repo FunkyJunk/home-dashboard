@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home dashboard</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; }
+    .card { background: #1c1c1c; border-radius: 12px; padding: 1.5rem; }
+    h2 { margin-top: 0; font-size: 1.1rem; color: #9ad; }
+    .error { color: #e77; }
+  </style>
+</head>
+<body>
+  <div class="grid">
+    <div class="card"><h2>Weather</h2><div id="weather">loading…</div></div>
+    <div class="card"><h2>Calendar</h2><div id="calendar">loading…</div></div>
+    <div class="card"><h2>Home</h2><div id="home">loading…</div></div>
+  </div>
+
+  <script>
+    async function refresh() {
+      try {
+        const res = await fetch("/api/dashboard");
+        const data = await res.json();
+        document.getElementById("weather").textContent = data.weather
+          ? `${Math.round(data.weather.current.temperature_2m)}°F`
+          : "unavailable";
+        document.getElementById("calendar").textContent = data.calendar
+          ? JSON.stringify(data.calendar)
+          : "not yet configured";
+        document.getElementById("home").textContent = data.homeAssistant
+          ? `${data.homeAssistant.length} entities`
+          : "unavailable";
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    refresh();
+    setInterval(refresh, 60_000);
+  </script>
+</body>
+</html>
