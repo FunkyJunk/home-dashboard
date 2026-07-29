@@ -29,4 +29,4 @@ jobs:
           context: ./${{ matrix.service }}
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/home-dashboard-${{ matrix.service }}:latest
+          tags: ghcr.io/funkyjunk/home-dashboard-${{ matrix.service }}:latest
