@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: ghcr.io/home-assistant/home-assistant:latest
     container_name: homeassistant
     restart: unless-stopped
     network_mode: host   # needed for device discovery (Homey/Alexa on the LAN)
@@ -13,7 +13,7 @@ services:
 
   backend:
     # Swap for `build: ../backend` if you'd rather build on the NAS directly.
-    image: ghcr.io/<github-username>/home-dashboard-backend:latest
+    image: ghcr.io/funkyjunk/home-dashboard-backend:latest
     container_name: dashboard-backend
     restart: unless-stopped
     env_file: .env
@@ -21,7 +21,7 @@ services:
       - homeassistant
 
   frontend:
-    image: ghcr.io/<github-username>/home-dashboard-frontend:latest
+    image: ghcr.io/funkyjunk/home-dashboard-frontend:latest
     container_name: dashboard-frontend
     restart: unless-stopped
     ports:

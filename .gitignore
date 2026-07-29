@@ -4,3 +4,4 @@ infra/.env
 infra/volumes/
 *.log
 .DS_Store
+credentials.json

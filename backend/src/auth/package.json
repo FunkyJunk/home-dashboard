@@ -1,0 +1,9 @@
+{
+  "name": "get-refresh-token",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "googleapis": "^140.0.0",
+    "open": "^10.1.0"
+  }
+}
