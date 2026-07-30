@@ -32,12 +32,15 @@
 
   /* Header / split-flap strip */
   .header{
-    display:flex; align-items:center; justify-content:space-between;
     background:var(--panel);
     border:1px solid var(--panel-line);
     border-radius:6px;
     padding:1.5rem 2rem;
     margin-bottom:1.5rem;
+    display:flex; flex-direction:column; gap:1.25rem;
+  }
+  .header-top{
+    display:flex; align-items:center; justify-content:space-between;
     flex-wrap:wrap;
     gap:1rem;
   }
@@ -68,6 +71,8 @@
   }
   .weather-now .temp{font-size:2.4rem; font-weight:600; color:var(--teal);}
   .weather-now .cond{font-size:.95rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em;}
+  .weather-now .humidity{font-size:.85rem; color:var(--text-dim);}
+  .header .hourly-strip{border-top:1px solid var(--panel-line); padding-top:1.1rem;}
 
   /* Grid */
   .grid{
@@ -175,11 +180,11 @@
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
-  .hourly-card{margin-top:1.5rem;}
   .hourly-strip{display:flex; gap:1.25rem; overflow-x:auto; padding-bottom:.25rem;}
-  .hour-block{display:flex; flex-direction:column; align-items:center; gap:.35rem; min-width:3em;}
+  .hour-block{display:flex; flex-direction:column; align-items:center; gap:.3rem; min-width:3em;}
   .hour-label{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em;}
   .hour-temp{font-family:'IBM Plex Mono', monospace; font-size:1.05rem; font-weight:600; color:var(--amber);}
+  .hour-humidity{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);}
 
   .ring-card{margin-top:1.5rem;}
   .ring-strip{
@@ -299,14 +304,18 @@
 <body>
   <div class="board">
     <div class="header">
-      <div>
-        <div class="flap-group" id="clock"></div>
-        <div class="date-block" id="date" style="margin-top:.6rem;"></div>
+      <div class="header-top">
+        <div>
+          <div class="flap-group" id="clock"></div>
+          <div class="date-block" id="date" style="margin-top:.6rem;"></div>
+        </div>
+        <div class="weather-now">
+          <span class="temp" id="temp-now">--°</span>
+          <span class="cond" id="cond-now">loading</span>
+          <span class="humidity" id="humidity-now"></span>
+        </div>
       </div>
-      <div class="weather-now">
-        <span class="temp" id="temp-now">--°</span>
-        <span class="cond" id="cond-now">loading</span>
-      </div>
+      <div class="hourly-strip" id="hourly-strip"></div>
     </div>
 
     <div class="grid">
@@ -324,11 +333,6 @@
         <h2>This week</h2>
         <div class="week-strip" id="week"></div>
       </div>
-    </div>
-
-    <div class="card hourly-card" id="hourly-section" style="display:none;">
-      <h2>Next hours</h2>
-      <div class="hourly-strip" id="hourly-strip"></div>
     </div>
 
     <div class="card controls-card" id="controls-section" style="display:none;">
@@ -544,13 +548,11 @@ function renderWeek(daily){
 }
 
 function renderHourly(hourly){
-  const section = document.getElementById('hourly-section');
   const el = document.getElementById('hourly-strip');
   if (!hourly || !hourly.time || !hourly.time.length){
-    section.style.display = 'none';
+    el.innerHTML = '';
     return;
   }
-  section.style.display = '';
 
   const now = new Date();
   let startIdx = hourly.time.findIndex(t => new Date(t) >= now);
@@ -561,10 +563,12 @@ function renderHourly(hourly){
     const idx = startIdx + i;
     const label = i === 0 ? 'Now' : new Date(t).toLocaleTimeString('en-US', {hour:'numeric'});
     const temp = Math.round(hourly.temperature_2m[idx]);
+    const humidity = hourly.relative_humidity_2m ? hourly.relative_humidity_2m[idx] : null;
     return `
       <div class="hour-block">
         <span class="hour-label">${label}</span>
         <span class="hour-temp">${temp}&deg;</span>
+        ${humidity != null ? `<span class="hour-humidity">${Math.round(humidity)}%</span>` : ''}
       </div>
     `;
   }).join('');
@@ -864,6 +868,8 @@ async function refresh(){
     if (data.weather?.current){
       document.getElementById('temp-now').textContent = Math.round(data.weather.current.temperature_2m) + '\u00b0';
       document.getElementById('cond-now').textContent = WMO[data.weather.current.weather_code] || 'Unknown';
+      const humidity = data.weather.current.relative_humidity_2m;
+      document.getElementById('humidity-now').textContent = humidity != null ? humidity + '% humidity' : '';
     }
     renderWeek(data.weather?.daily);
     renderHourly(data.weather?.hourly);
