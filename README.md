@@ -96,7 +96,13 @@ without a Workspace admin.
    ```
 7. Home Assistant first-run wizard: `http://<nas-ip>:8123`. Add the Homey,
    Alexa Media Player (via HACS — you'll need to install HACS separately,
-   it's not in HA core), and MyQ integrations from there.
+   it's not in HA core), MyQ, and Ring integrations from there.
+
+   Ring is core to HA (no HACS needed) — add it via **Settings → Devices &
+   Services → Add Integration → Ring** and log in with your Ring account.
+   Once its camera/motion/ding entities show up in HA, the dashboard backend
+   picks them up automatically over the existing `HOME_ASSISTANT_TOKEN` —
+   no separate Ring credentials needed.
 
    Honest heads-up: MyQ's parent company actively fights third-party API
    access, so the MyQ integration in HA breaks periodically when they change

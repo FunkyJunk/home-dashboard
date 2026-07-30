@@ -23,14 +23,37 @@ app.get("/api/dashboard", async (_req, res) => {
     getHomeAssistantStates(),
   ]);
 
+  const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
+
   res.json({
     weather: weather.status === "fulfilled" ? weather.value : null,
     calendar: cal.status === "fulfilled" ? cal.value : null,
-    homeAssistant: homeAssistant.status === "fulfilled" ? homeAssistant.value : null,
+    homeAssistant: haStates,
+    ring: haStates ? getRingCameras(haStates) : [],
     errors: [weather, cal, homeAssistant]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
+});
+
+const RING_CAMERA_ID = /^camera\.[a-z0-9_]+$/;
+
+app.get("/api/ring/snapshot/:entityId", async (req, res) => {
+  const { entityId } = req.params;
+  if (!RING_CAMERA_ID.test(entityId)) {
+    return res.status(400).json({ error: "invalid camera id" });
+  }
+  try {
+    const r = await fetch(`${HA_URL}/api/camera_proxy/${entityId}`, {
+      headers: { Authorization: `Bearer ${HA_TOKEN}` },
+    });
+    if (!r.ok) return res.status(r.status).end();
+    res.set("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "no-store");
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch {
+    res.status(502).json({ error: "snapshot fetch failed" });
+  }
 });
 
 async function getWeather() {
@@ -68,6 +91,40 @@ async function getHomeAssistantStates() {
   });
   if (!r.ok) throw new Error(`Home Assistant fetch failed: ${r.status}`);
   return r.json();
+}
+
+// Ring entities carry this attribution regardless of local naming, so cameras
+// are discovered rather than assumed from hardcoded entity IDs.
+function getRingCameras(states) {
+  const ringEntities = states.filter(
+    (s) => s.attributes?.attribution === "Data provided by Ring.com"
+  );
+  const cameras = ringEntities.filter((s) => s.entity_id.startsWith("camera."));
+
+  return cameras.map((cam) => {
+    const base = cam.entity_id.slice("camera.".length);
+    const related = ringEntities.filter(
+      (s) => s !== cam && s.entity_id.includes(base)
+    );
+    const motion = related.find((s) => s.entity_id.includes("motion"));
+    const ding = related.find((s) => s.entity_id.includes("ding"));
+
+    return {
+      id: cam.entity_id,
+      name: cam.attributes?.friendly_name || base.replace(/_/g, " "),
+      available: cam.state !== "unavailable",
+      motionActive: isActiveOrRecent(motion),
+      dingActive: isActiveOrRecent(ding),
+      snapshotUrl: `/api/ring/snapshot/${cam.entity_id}`,
+    };
+  });
+}
+
+function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
+  if (!entity) return false;
+  if (entity.state === "on") return true;
+  const t = new Date(entity.state);
+  return !isNaN(t) && Date.now() - t < withinMs;
 }
 
 app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));

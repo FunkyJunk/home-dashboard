@@ -170,6 +170,16 @@
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
+  .ring-card{margin-top:1.5rem;}
+  .ring-strip{display:flex; gap:1rem; flex-wrap:wrap;}
+  .ring-cam{width:180px; display:flex; flex-direction:column; gap:.5rem;}
+  .ring-thumb{
+    width:100%; aspect-ratio:16/9; object-fit:cover;
+    border-radius:4px; background:#0d1116; border:1px solid var(--panel-line);
+  }
+  .ring-cam-foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
+  .ring-cam-name{font-size:.85rem; color:var(--text);}
+
   .updated{
     margin-top:1.5rem;
     text-align:center;
@@ -214,6 +224,11 @@
         <h2>This week</h2>
         <div class="week-strip" id="week"></div>
       </div>
+    </div>
+
+    <div class="card ring-card" id="ring-section" style="display:none;">
+      <h2>Ring cameras</h2>
+      <div class="ring-strip" id="ring-cams"></div>
     </div>
 
     <div class="updated" id="updated">Connecting&hellip;</div>
@@ -390,6 +405,29 @@ function renderWeek(daily){
   }).join('');
 }
 
+function renderRing(cameras){
+  const section = document.getElementById('ring-section');
+  const el = document.getElementById('ring-cams');
+  if (!cameras || cameras.length === 0){
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  el.innerHTML = cameras.map(c => {
+    const label = c.dingActive ? 'Ding' : (c.motionActive ? 'Motion' : (c.available ? 'Idle' : 'Offline'));
+    const cls = (c.dingActive || c.motionActive) ? 'alert' : 'calm';
+    return `
+      <div class="ring-cam">
+        <img class="ring-thumb" src="${c.snapshotUrl}?t=${Date.now()}" alt="${escapeHtml(c.name)}" loading="lazy" />
+        <div class="ring-cam-foot">
+          <span class="ring-cam-name">${escapeHtml(c.name)}</span>
+          <span class="pill ${cls}">${label}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 async function refresh(){
   try {
     const res = await fetch('/api/dashboard');
@@ -402,6 +440,7 @@ async function refresh(){
     renderWeek(data.weather?.daily);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
+    renderRing(data.ring);
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){
