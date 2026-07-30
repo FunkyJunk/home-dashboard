@@ -208,32 +208,38 @@
   }
   .ring-modal-status.error{color:var(--coral);}
 
-  .lighting-card{margin-top:1.5rem;}
-  .light-control{padding:.75rem 0; border-bottom:1px solid var(--panel-line);}
-  .light-control:last-child{border-bottom:none;}
-  .light-control-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:.75rem;}
-  .light-control-name{font-size:.95rem; color:var(--text);}
-  .light-control-body{display:flex; align-items:center; gap:1rem; flex-wrap:wrap;}
+  .controls-card{margin-top:1.5rem;}
+  .controls-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap:1rem;
+  }
+  .control-tile{
+    background:#0d1116; border:1px solid var(--panel-line); border-radius:6px;
+    padding:.85rem; display:flex; flex-direction:column; gap:.6rem;
+  }
+  .control-head{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
+  .control-name{font-size:.85rem; color:var(--text);}
+  .control-value{font-family:'IBM Plex Mono', monospace; font-size:.75rem; color:var(--text-dim);}
+  .control-slider{width:100%; accent-color:var(--teal);}
+  .control-effect{
+    width:100%; background:var(--panel); color:var(--text); border:1px solid var(--panel-line);
+    border-radius:4px; padding:.3em .4em; font-family:inherit; font-size:.78rem;
+  }
 
-  .toggle{position:relative; display:inline-block; width:2.6em; height:1.5em; flex-shrink:0;}
+  .toggle{position:relative; display:inline-block; width:2.4em; height:1.4em; flex-shrink:0;}
   .toggle input{opacity:0; width:0; height:0; position:absolute;}
   .toggle-track{
-    position:absolute; inset:0; background:#0d1116; border:1px solid var(--panel-line);
+    position:absolute; inset:0; background:#12161c; border:1px solid var(--panel-line);
     border-radius:100px; cursor:pointer; transition:background .15s ease;
   }
   .toggle-track::before{
-    content:''; position:absolute; height:1.1em; width:1.1em; left:.15em; top:.15em;
+    content:''; position:absolute; height:1em; width:1em; left:.15em; top:.15em;
     background:var(--text-dim); border-radius:50%; transition:transform .15s ease, background .15s ease;
   }
   .toggle input:checked + .toggle-track{background:var(--teal-dim); border-color:var(--teal);}
-  .toggle input:checked + .toggle-track::before{transform:translateX(1.1em); background:var(--teal);}
+  .toggle input:checked + .toggle-track::before{transform:translateX(1em); background:var(--teal);}
   .toggle input:disabled + .toggle-track{opacity:.5; cursor:not-allowed;}
-
-  .light-brightness{flex:1; min-width:120px; accent-color:var(--teal);}
-  .light-effect{
-    background:#0d1116; color:var(--text); border:1px solid var(--panel-line);
-    border-radius:4px; padding:.3em .5em; font-family:inherit; font-size:.85rem;
-  }
 
   .updated{
     margin-top:1.5rem;
@@ -281,9 +287,9 @@
       </div>
     </div>
 
-    <div class="card lighting-card" id="lighting-section" style="display:none;">
-      <h2>Lighting</h2>
-      <div id="lighting-controls"></div>
+    <div class="card controls-card" id="controls-section" style="display:none;">
+      <h2>Controls</h2>
+      <div class="controls-grid" id="controls-grid"></div>
     </div>
 
     <div class="card ring-card" id="ring-section" style="display:none;">
@@ -476,55 +482,71 @@ function renderWeek(daily){
   }).join('');
 }
 
-function renderLighting(lights){
-  const section = document.getElementById('lighting-section');
-  const el = document.getElementById('lighting-controls');
-  if (!lights || lights.length === 0){
+function renderControls(controls){
+  const section = document.getElementById('controls-section');
+  const el = document.getElementById('controls-grid');
+  if (!controls || controls.length === 0){
     section.style.display = 'none';
     return;
   }
   section.style.display = '';
-  el.innerHTML = lights.map(l => {
-    const enabled = l.on && l.available;
-    const effects = (l.effectList || []).filter(e => e.toLowerCase() !== 'off');
-    return `
-      <div class="light-control">
-        <div class="light-control-head">
-          <span class="light-control-name">${escapeHtml(l.name)}</span>
-          <label class="toggle">
-            <input type="checkbox" class="light-toggle" data-id="${l.id}" ${l.on ? 'checked' : ''} ${l.available ? '' : 'disabled'}>
-            <span class="toggle-track"></span>
-          </label>
-        </div>
-        <div class="light-control-body">
-          <input type="range" class="light-brightness" data-id="${l.id}" min="0" max="255" value="${l.brightness ?? 128}" ${enabled ? '' : 'disabled'}>
+  el.innerHTML = controls.map(c => {
+    if (c.type === 'light'){
+      const enabled = c.on && c.available;
+      const effects = (c.effectList || []).filter(e => e.toLowerCase() !== 'off');
+      return `
+        <div class="control-tile">
+          <div class="control-head">
+            <span class="control-name">${escapeHtml(c.name)}</span>
+            <label class="toggle">
+              <input type="checkbox" class="ctl-toggle" data-id="${c.id}" ${c.on ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <input type="range" class="control-slider ctl-brightness" data-id="${c.id}" min="0" max="255" value="${c.brightness ?? 128}" ${enabled ? '' : 'disabled'}>
           ${effects.length ? `
-            <select class="light-effect" data-id="${l.id}" ${enabled ? '' : 'disabled'}>
+            <select class="control-effect ctl-effect" data-id="${c.id}" ${enabled ? '' : 'disabled'}>
               <option value="">No effect</option>
-              ${effects.map(e => `<option value="${escapeHtml(e)}" ${l.effect === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+              ${effects.map(e => `<option value="${escapeHtml(e)}" ${c.effect === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
             </select>
           ` : ''}
         </div>
-      </div>
-    `;
+      `;
+    }
+    if (c.type === 'cover'){
+      const label = c.position != null ? c.position + '%' : (c.isClosed ? 'Closed' : 'Open');
+      return `
+        <div class="control-tile">
+          <div class="control-head">
+            <span class="control-name">${escapeHtml(c.name)}</span>
+            <span class="control-value">${label}</span>
+          </div>
+          <input type="range" class="control-slider ctl-position" data-id="${c.id}" min="0" max="100" value="${c.position ?? 0}" ${c.available ? '' : 'disabled'}>
+        </div>
+      `;
+    }
+    return '';
   }).join('');
 
-  el.querySelectorAll('.light-toggle').forEach(input => {
-    input.addEventListener('change', () => setLight(input.dataset.id, { on: input.checked }));
+  el.querySelectorAll('.ctl-toggle').forEach(input => {
+    input.addEventListener('change', () => setControl(input.dataset.id, { on: input.checked }));
   });
-  el.querySelectorAll('.light-brightness').forEach(input => {
-    input.addEventListener('change', () => setLight(input.dataset.id, { on: true, brightness: Number(input.value) }));
+  el.querySelectorAll('.ctl-brightness').forEach(input => {
+    input.addEventListener('change', () => setControl(input.dataset.id, { on: true, brightness: Number(input.value) }));
   });
-  el.querySelectorAll('.light-effect').forEach(select => {
+  el.querySelectorAll('.ctl-effect').forEach(select => {
     select.addEventListener('change', () => {
-      if (select.value) setLight(select.dataset.id, { on: true, effect: select.value });
+      if (select.value) setControl(select.dataset.id, { on: true, effect: select.value });
     });
+  });
+  el.querySelectorAll('.ctl-position').forEach(input => {
+    input.addEventListener('change', () => setControl(input.dataset.id, { position: Number(input.value) }));
   });
 }
 
-async function setLight(id, payload){
+async function setControl(id, payload){
   try {
-    await fetch(`/api/ha/light/${id}`, {
+    await fetch(`/api/ha/control/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -543,7 +565,7 @@ function renderRing(cameras){
   }
   section.style.display = '';
   el.innerHTML = cameras.map(c => {
-    const label = c.dingActive ? 'Ding' : (c.motionActive ? 'Motion' : (c.available ? 'Idle' : 'Offline'));
+    const label = c.dingActive ? 'Ding' : (c.motionActive ? 'Motion' : 'Idle');
     const cls = (c.dingActive || c.motionActive) ? 'alert' : 'calm';
     return `
       <button type="button" class="ring-cam" data-name="${escapeHtml(c.name)}" data-id="${c.id}">
@@ -669,7 +691,7 @@ async function refresh(){
     renderWeek(data.weather?.daily);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
-    renderLighting(data.lights);
+    renderControls(data.controls);
     renderRing(data.ring);
 
     const updEl = document.getElementById('updated');

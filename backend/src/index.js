@@ -33,7 +33,7 @@ app.get("/api/dashboard", async (_req, res) => {
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
-    lights: haStates ? getControllableLights(haStates) : [],
+    controls: haStates ? getControllableDevices(haStates) : [],
     errors: [weather, cal, homeAssistant]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
@@ -41,58 +41,84 @@ app.get("/api/dashboard", async (_req, res) => {
 });
 
 // Explicit allowlist - this dashboard has no login, so anyone on the LAN who
-// can load the page can hit this route. Keeping it to specific light
-// entities (rather than a generic HA service passthrough) bounds what a
-// stray request can actually actuate.
-const CONTROLLABLE_LIGHTS = {
-  "light.shellyrgbw2_284dba": { name: "Bambu Lighting" },
+// can load the page can hit this route. Keeping it to specific entities
+// (rather than a generic HA service passthrough) bounds what a stray
+// request can actually actuate.
+const CONTROLLABLE_DEVICES = {
+  "light.shellyrgbw2_284dba": { type: "light", name: "Bambu Lighting" },
+  "cover.office_office_blinds": { type: "cover", name: "Office Blinds" },
 };
 
-function getControllableLights(states) {
-  return Object.entries(CONTROLLABLE_LIGHTS)
+function getControllableDevices(states) {
+  return Object.entries(CONTROLLABLE_DEVICES)
     .map(([entityId, meta]) => {
       const s = states.find((e) => e.entity_id === entityId);
       if (!s) return null;
-      return {
-        id: entityId,
-        name: meta.name,
-        available: s.state !== "unavailable",
-        on: s.state === "on",
-        brightness: s.attributes?.brightness ?? null,
-        effect: s.attributes?.effect ?? null,
-        effectList: s.attributes?.effect_list ?? [],
-      };
+      const available = s.state !== "unavailable";
+
+      if (meta.type === "light") {
+        return {
+          id: entityId,
+          type: "light",
+          name: meta.name,
+          available,
+          on: s.state === "on",
+          brightness: s.attributes?.brightness ?? null,
+          effect: s.attributes?.effect ?? null,
+          effectList: s.attributes?.effect_list ?? [],
+        };
+      }
+      if (meta.type === "cover") {
+        return {
+          id: entityId,
+          type: "cover",
+          name: meta.name,
+          available,
+          position: s.attributes?.current_position ?? null,
+          isClosed: s.attributes?.is_closed ?? s.state === "closed",
+        };
+      }
+      return null;
     })
     .filter(Boolean);
 }
 
-app.post("/api/ha/light/:entityId", async (req, res) => {
+app.post("/api/ha/control/:entityId", async (req, res) => {
   const { entityId } = req.params;
-  if (!CONTROLLABLE_LIGHTS[entityId]) {
-    return res.status(404).json({ error: "unknown light" });
+  const meta = CONTROLLABLE_DEVICES[entityId];
+  if (!meta) {
+    return res.status(404).json({ error: "unknown device" });
   }
-  const { on, brightness, effect } = req.body || {};
   try {
-    if (on === false) {
-      await callHaService("light", "turn_off", { entity_id: entityId });
-    } else {
-      const data = { entity_id: entityId };
-      if (Number.isInteger(brightness) && brightness >= 0 && brightness <= 255) {
-        data.brightness = brightness;
-      }
-      if (typeof effect === "string") {
-        const known = await getHomeAssistantStates()
-          .then((states) => states.find((s) => s.entity_id === entityId))
-          .catch(() => null);
-        if (known?.attributes?.effect_list?.includes(effect)) {
-          data.effect = effect;
+    if (meta.type === "light") {
+      const { on, brightness, effect } = req.body || {};
+      if (on === false) {
+        await callHaService("light", "turn_off", { entity_id: entityId });
+      } else {
+        const data = { entity_id: entityId };
+        if (Number.isInteger(brightness) && brightness >= 0 && brightness <= 255) {
+          data.brightness = brightness;
         }
+        if (typeof effect === "string") {
+          const current = await getHomeAssistantStates()
+            .then((states) => states.find((s) => s.entity_id === entityId))
+            .catch(() => null);
+          if (current?.attributes?.effect_list?.includes(effect)) {
+            data.effect = effect;
+          }
+        }
+        await callHaService("light", "turn_on", data);
       }
-      await callHaService("light", "turn_on", data);
+    } else if (meta.type === "cover") {
+      const { position } = req.body || {};
+      if (!Number.isInteger(position) || position < 0 || position > 100) {
+        return res.status(400).json({ error: "invalid position" });
+      }
+      await callHaService("cover", "set_cover_position", { entity_id: entityId, position });
     }
     res.json({ ok: true });
   } catch (e) {
-    res.status(502).json({ error: e.message || "failed to update light" });
+    res.status(502).json({ error: e.message || "failed to update device" });
   }
 });
 
@@ -170,23 +196,32 @@ function getRingCameras(states) {
   );
   const cameras = ringEntities.filter((s) => s.entity_id.startsWith("camera."));
 
-  return cameras.map((cam) => {
-    const base = cam.entity_id.slice("camera.".length);
-    const related = ringEntities.filter(
-      (s) => s !== cam && s.entity_id.includes(base)
-    );
-    const motion = related.find((s) => s.entity_id.includes("motion"));
-    const ding = related.find((s) => s.entity_id.includes("ding"));
+  return cameras
+    .map((cam) => {
+      const base = cam.entity_id.slice("camera.".length);
+      const related = ringEntities.filter(
+        (s) => s !== cam && s.entity_id.includes(base)
+      );
+      const motion = related.find((s) => s.entity_id.includes("motion"));
+      const ding = related.find((s) => s.entity_id.includes("ding"));
+      const battery = related.find(
+        (s) => s.entity_id.startsWith("sensor.") && s.entity_id.includes("battery")
+      );
+      const batteryLevel = battery ? Number(battery.state) : null;
+      // HA leaves the camera's own state as "idle" even once a battery cam has
+      // died - a 0% battery reading is what actually indicates it's offline.
+      const offline = cam.state === "unavailable" || batteryLevel === 0;
+      if (offline) return null; // auto-hide - reappears once healthy again
 
-    return {
-      id: cam.entity_id,
-      name: cam.attributes?.friendly_name || base.replace(/_/g, " "),
-      available: cam.state !== "unavailable",
-      motionActive: isActiveOrRecent(motion),
-      dingActive: isActiveOrRecent(ding),
-      snapshotUrl: `/api/ring/snapshot/${cam.entity_id}`,
-    };
-  });
+      return {
+        id: cam.entity_id,
+        name: cam.attributes?.friendly_name || base.replace(/_/g, " "),
+        motionActive: isActiveOrRecent(motion),
+        dingActive: isActiveOrRecent(ding),
+        snapshotUrl: `/api/ring/snapshot/${cam.entity_id}`,
+      };
+    })
+    .filter(Boolean);
 }
 
 function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
