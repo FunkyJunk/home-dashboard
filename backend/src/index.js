@@ -56,6 +56,31 @@ app.get("/api/ring/snapshot/:entityId", async (req, res) => {
   }
 });
 
+app.get("/api/ring/stream/:entityId", async (req, res) => {
+  const { entityId } = req.params;
+  if (!RING_CAMERA_ID.test(entityId)) {
+    return res.status(400).json({ error: "invalid camera id" });
+  }
+  const controller = new AbortController();
+  req.on("close", () => controller.abort());
+  try {
+    const r = await fetch(`${HA_URL}/api/camera_proxy_stream/${entityId}`, {
+      headers: { Authorization: `Bearer ${HA_TOKEN}` },
+      signal: controller.signal,
+    });
+    if (!r.ok || !r.body) return res.status(r.status || 502).end();
+    res.set("Content-Type", r.headers.get("content-type") || "multipart/x-mixed-replace");
+    res.set("Cache-Control", "no-store");
+    for await (const chunk of r.body) {
+      if (res.destroyed) break;
+      res.write(chunk);
+    }
+    res.end();
+  } catch {
+    res.end();
+  }
+});
+
 async function getWeather() {
   const lat = process.env.LAT;
   const lon = process.env.LON;
@@ -116,6 +141,7 @@ function getRingCameras(states) {
       motionActive: isActiveOrRecent(motion),
       dingActive: isActiveOrRecent(ding),
       snapshotUrl: `/api/ring/snapshot/${cam.entity_id}`,
+      streamUrl: `/api/ring/stream/${cam.entity_id}`,
     };
   });
 }

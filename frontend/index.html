@@ -171,14 +171,37 @@
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
   .ring-card{margin-top:1.5rem;}
-  .ring-strip{display:flex; gap:1rem; flex-wrap:wrap;}
-  .ring-cam{width:180px; display:flex; flex-direction:column; gap:.5rem;}
+  .ring-strip{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap:1.25rem;
+  }
+  .ring-cam{display:flex; flex-direction:column; gap:.5rem; cursor:pointer; background:none; border:none; padding:0; text-align:left; font:inherit; color:inherit;}
   .ring-thumb{
     width:100%; aspect-ratio:16/9; object-fit:cover;
     border-radius:4px; background:#0d1116; border:1px solid var(--panel-line);
   }
   .ring-cam-foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
-  .ring-cam-name{font-size:.85rem; color:var(--text);}
+  .ring-cam-name{font-size:.95rem; color:var(--text);}
+
+  .ring-modal{
+    display:none;
+    position:fixed; inset:0; z-index:100;
+    background:rgba(10,12,16,.85);
+    align-items:center; justify-content:center;
+    padding:3vw;
+  }
+  .ring-modal.open{display:flex;}
+  .ring-modal-inner{max-width:min(90vw, 960px); width:100%;}
+  .ring-modal-head{
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:.75rem; color:var(--text); font-family:'IBM Plex Mono', monospace;
+  }
+  .ring-modal-close{
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.4em .8em; cursor:pointer; font-family:inherit; font-size:.85rem;
+  }
+  .ring-modal img{width:100%; display:block; border-radius:6px; background:#000; aspect-ratio:16/9; object-fit:contain;}
 
   .updated{
     margin-top:1.5rem;
@@ -232,6 +255,16 @@
     </div>
 
     <div class="updated" id="updated">Connecting&hellip;</div>
+  </div>
+
+  <div class="ring-modal" id="ring-modal">
+    <div class="ring-modal-inner">
+      <div class="ring-modal-head">
+        <span id="ring-modal-name"></span>
+        <button class="ring-modal-close" id="ring-modal-close">Close</button>
+      </div>
+      <img id="ring-modal-img" alt="Live view" />
+    </div>
   </div>
 
 <script>
@@ -417,15 +450,31 @@ function renderRing(cameras){
     const label = c.dingActive ? 'Ding' : (c.motionActive ? 'Motion' : (c.available ? 'Idle' : 'Offline'));
     const cls = (c.dingActive || c.motionActive) ? 'alert' : 'calm';
     return `
-      <div class="ring-cam">
+      <button type="button" class="ring-cam" data-name="${escapeHtml(c.name)}" data-stream="${c.streamUrl}">
         <img class="ring-thumb" src="${c.snapshotUrl}?t=${Date.now()}" alt="${escapeHtml(c.name)}" loading="lazy" />
         <div class="ring-cam-foot">
           <span class="ring-cam-name">${escapeHtml(c.name)}</span>
           <span class="pill ${cls}">${label}</span>
         </div>
-      </div>
+      </button>
     `;
   }).join('');
+
+  el.querySelectorAll('.ring-cam').forEach(btn => {
+    btn.addEventListener('click', () => openRingModal(btn.dataset.name, btn.dataset.stream));
+  });
+}
+
+function openRingModal(name, streamUrl){
+  document.getElementById('ring-modal-name').textContent = name;
+  document.getElementById('ring-modal-img').src = streamUrl;
+  document.getElementById('ring-modal').classList.add('open');
+}
+
+function closeRingModal(){
+  document.getElementById('ring-modal').classList.remove('open');
+  // Clearing src drops the connection so the camera stops streaming.
+  document.getElementById('ring-modal-img').src = '';
 }
 
 async function refresh(){
@@ -455,6 +504,11 @@ async function refresh(){
     document.getElementById('updated').className = 'updated error';
   }
 }
+
+document.getElementById('ring-modal-close').addEventListener('click', closeRingModal);
+document.getElementById('ring-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'ring-modal') closeRingModal();
+});
 
 renderClock();
 setInterval(renderClock, 1000 * 15);
