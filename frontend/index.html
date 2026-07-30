@@ -226,6 +226,14 @@
     width:100%; background:var(--panel); color:var(--text); border:1px solid var(--panel-line);
     border-radius:4px; padding:.3em .4em; font-family:inherit; font-size:.78rem;
   }
+  .control-presets{display:flex; gap:.35rem;}
+  .control-preset{
+    flex:1; background:var(--panel); color:var(--text-dim); border:1px solid var(--panel-line);
+    border-radius:4px; padding:.3em 0; font-family:'IBM Plex Mono', monospace; font-size:.72rem;
+    cursor:pointer;
+  }
+  .control-preset:hover:not(:disabled){color:var(--text); border-color:var(--teal);}
+  .control-preset:disabled{opacity:.5; cursor:not-allowed;}
 
   .toggle{position:relative; display:inline-block; width:2.4em; height:1.4em; flex-shrink:0;}
   .toggle input{opacity:0; width:0; height:0; position:absolute;}
@@ -490,6 +498,8 @@ function renderControls(controls){
     return;
   }
   section.style.display = '';
+  const POSITION_PRESETS = [0, 25, 50, 75, 100];
+
   el.innerHTML = controls.map(c => {
     if (c.type === 'light'){
       const enabled = c.on && c.available;
@@ -503,13 +513,15 @@ function renderControls(controls){
               <span class="toggle-track"></span>
             </label>
           </div>
-          <input type="range" class="control-slider ctl-brightness" data-id="${c.id}" min="0" max="255" value="${c.brightness ?? 128}" ${enabled ? '' : 'disabled'}>
-          ${effects.length ? `
-            <select class="control-effect ctl-effect" data-id="${c.id}" ${enabled ? '' : 'disabled'}>
-              <option value="">No effect</option>
-              ${effects.map(e => `<option value="${escapeHtml(e)}" ${c.effect === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
-            </select>
-          ` : ''}
+          ${c.simple ? '' : `
+            <input type="range" class="control-slider ctl-brightness" data-id="${c.id}" min="0" max="255" value="${c.brightness ?? 128}" ${enabled ? '' : 'disabled'}>
+            ${effects.length ? `
+              <select class="control-effect ctl-effect" data-id="${c.id}" ${enabled ? '' : 'disabled'}>
+                <option value="">No effect</option>
+                ${effects.map(e => `<option value="${escapeHtml(e)}" ${c.effect === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+              </select>
+            ` : ''}
+          `}
         </div>
       `;
     }
@@ -522,6 +534,9 @@ function renderControls(controls){
             <span class="control-value">${label}</span>
           </div>
           <input type="range" class="control-slider ctl-position" data-id="${c.id}" min="0" max="100" value="${c.position ?? 0}" ${c.available ? '' : 'disabled'}>
+          <div class="control-presets">
+            ${POSITION_PRESETS.map(p => `<button type="button" class="control-preset ctl-preset" data-id="${c.id}" data-position="${p}" ${c.available ? '' : 'disabled'}>${p}%</button>`).join('')}
+          </div>
         </div>
       `;
     }
@@ -541,6 +556,9 @@ function renderControls(controls){
   });
   el.querySelectorAll('.ctl-position').forEach(input => {
     input.addEventListener('change', () => setControl(input.dataset.id, { position: Number(input.value) }));
+  });
+  el.querySelectorAll('.ctl-preset').forEach(button => {
+    button.addEventListener('click', () => setControl(button.dataset.id, { position: Number(button.dataset.position) }));
   });
 }
 

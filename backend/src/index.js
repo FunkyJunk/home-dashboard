@@ -45,7 +45,20 @@ app.get("/api/dashboard", async (_req, res) => {
 // (rather than a generic HA service passthrough) bounds what a stray
 // request can actually actuate.
 const CONTROLLABLE_DEVICES = {
-  "light.shellyrgbw2_284dba": { type: "light", name: "Bambu Lighting" },
+  "light.shellyrgbw2_284dba": {
+    type: "light",
+    name: "Bambu X1 Carbon Light",
+    // Plain on/off at full white - the Shelly's color/effect controls
+    // (Meteor Shower etc.) aren't wanted for this fixture.
+    simple: true,
+    onData: { brightness: 255, rgbw_color: [0, 0, 0, 255] },
+  },
+  "light.office_bambu_p1s": {
+    type: "light",
+    name: "Bambu P1S Light",
+    simple: true,
+    onData: { brightness: 255, hs_color: [0, 0] },
+  },
   "cover.office_office_blinds": { type: "cover", name: "Office Blinds" },
 };
 
@@ -62,6 +75,7 @@ function getControllableDevices(states) {
           type: "light",
           name: meta.name,
           available,
+          simple: !!meta.simple,
           on: s.state === "on",
           brightness: s.attributes?.brightness ?? null,
           effect: s.attributes?.effect ?? null,
@@ -94,6 +108,8 @@ app.post("/api/ha/control/:entityId", async (req, res) => {
       const { on, brightness, effect } = req.body || {};
       if (on === false) {
         await callHaService("light", "turn_off", { entity_id: entityId });
+      } else if (meta.simple) {
+        await callHaService("light", "turn_on", { entity_id: entityId, ...meta.onData });
       } else {
         const data = { entity_id: entityId };
         if (Number.isInteger(brightness) && brightness >= 0 && brightness <= 255) {
