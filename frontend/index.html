@@ -208,6 +208,33 @@
   }
   .ring-modal-status.error{color:var(--coral);}
 
+  .lighting-card{margin-top:1.5rem;}
+  .light-control{padding:.75rem 0; border-bottom:1px solid var(--panel-line);}
+  .light-control:last-child{border-bottom:none;}
+  .light-control-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:.75rem;}
+  .light-control-name{font-size:.95rem; color:var(--text);}
+  .light-control-body{display:flex; align-items:center; gap:1rem; flex-wrap:wrap;}
+
+  .toggle{position:relative; display:inline-block; width:2.6em; height:1.5em; flex-shrink:0;}
+  .toggle input{opacity:0; width:0; height:0; position:absolute;}
+  .toggle-track{
+    position:absolute; inset:0; background:#0d1116; border:1px solid var(--panel-line);
+    border-radius:100px; cursor:pointer; transition:background .15s ease;
+  }
+  .toggle-track::before{
+    content:''; position:absolute; height:1.1em; width:1.1em; left:.15em; top:.15em;
+    background:var(--text-dim); border-radius:50%; transition:transform .15s ease, background .15s ease;
+  }
+  .toggle input:checked + .toggle-track{background:var(--teal-dim); border-color:var(--teal);}
+  .toggle input:checked + .toggle-track::before{transform:translateX(1.1em); background:var(--teal);}
+  .toggle input:disabled + .toggle-track{opacity:.5; cursor:not-allowed;}
+
+  .light-brightness{flex:1; min-width:120px; accent-color:var(--teal);}
+  .light-effect{
+    background:#0d1116; color:var(--text); border:1px solid var(--panel-line);
+    border-radius:4px; padding:.3em .5em; font-family:inherit; font-size:.85rem;
+  }
+
   .updated{
     margin-top:1.5rem;
     text-align:center;
@@ -252,6 +279,11 @@
         <h2>This week</h2>
         <div class="week-strip" id="week"></div>
       </div>
+    </div>
+
+    <div class="card lighting-card" id="lighting-section" style="display:none;">
+      <h2>Lighting</h2>
+      <div id="lighting-controls"></div>
     </div>
 
     <div class="card ring-card" id="ring-section" style="display:none;">
@@ -444,6 +476,64 @@ function renderWeek(daily){
   }).join('');
 }
 
+function renderLighting(lights){
+  const section = document.getElementById('lighting-section');
+  const el = document.getElementById('lighting-controls');
+  if (!lights || lights.length === 0){
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  el.innerHTML = lights.map(l => {
+    const enabled = l.on && l.available;
+    const effects = (l.effectList || []).filter(e => e.toLowerCase() !== 'off');
+    return `
+      <div class="light-control">
+        <div class="light-control-head">
+          <span class="light-control-name">${escapeHtml(l.name)}</span>
+          <label class="toggle">
+            <input type="checkbox" class="light-toggle" data-id="${l.id}" ${l.on ? 'checked' : ''} ${l.available ? '' : 'disabled'}>
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="light-control-body">
+          <input type="range" class="light-brightness" data-id="${l.id}" min="0" max="255" value="${l.brightness ?? 128}" ${enabled ? '' : 'disabled'}>
+          ${effects.length ? `
+            <select class="light-effect" data-id="${l.id}" ${enabled ? '' : 'disabled'}>
+              <option value="">No effect</option>
+              ${effects.map(e => `<option value="${escapeHtml(e)}" ${l.effect === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+            </select>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  el.querySelectorAll('.light-toggle').forEach(input => {
+    input.addEventListener('change', () => setLight(input.dataset.id, { on: input.checked }));
+  });
+  el.querySelectorAll('.light-brightness').forEach(input => {
+    input.addEventListener('change', () => setLight(input.dataset.id, { on: true, brightness: Number(input.value) }));
+  });
+  el.querySelectorAll('.light-effect').forEach(select => {
+    select.addEventListener('change', () => {
+      if (select.value) setLight(select.dataset.id, { on: true, effect: select.value });
+    });
+  });
+}
+
+async function setLight(id, payload){
+  try {
+    await fetch(`/api/ha/light/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (e){
+    // next refresh() cycle reconciles the UI with actual HA state either way
+  }
+}
+
 function renderRing(cameras){
   const section = document.getElementById('ring-section');
   const el = document.getElementById('ring-cams');
@@ -579,6 +669,7 @@ async function refresh(){
     renderWeek(data.weather?.daily);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
+    renderLighting(data.lights);
     renderRing(data.ring);
 
     const updEl = document.getElementById('updated');

@@ -4,6 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 
 const app = express();
+app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const HA_URL = process.env.HOME_ASSISTANT_URL || "http://homeassistant:8123";
 const HA_TOKEN = process.env.HOME_ASSISTANT_TOKEN;
@@ -32,11 +33,77 @@ app.get("/api/dashboard", async (_req, res) => {
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
+    lights: haStates ? getControllableLights(haStates) : [],
     errors: [weather, cal, homeAssistant]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
 });
+
+// Explicit allowlist - this dashboard has no login, so anyone on the LAN who
+// can load the page can hit this route. Keeping it to specific light
+// entities (rather than a generic HA service passthrough) bounds what a
+// stray request can actually actuate.
+const CONTROLLABLE_LIGHTS = {
+  "light.shellyrgbw2_284dba": { name: "Bambu Lighting" },
+};
+
+function getControllableLights(states) {
+  return Object.entries(CONTROLLABLE_LIGHTS)
+    .map(([entityId, meta]) => {
+      const s = states.find((e) => e.entity_id === entityId);
+      if (!s) return null;
+      return {
+        id: entityId,
+        name: meta.name,
+        available: s.state !== "unavailable",
+        on: s.state === "on",
+        brightness: s.attributes?.brightness ?? null,
+        effect: s.attributes?.effect ?? null,
+        effectList: s.attributes?.effect_list ?? [],
+      };
+    })
+    .filter(Boolean);
+}
+
+app.post("/api/ha/light/:entityId", async (req, res) => {
+  const { entityId } = req.params;
+  if (!CONTROLLABLE_LIGHTS[entityId]) {
+    return res.status(404).json({ error: "unknown light" });
+  }
+  const { on, brightness, effect } = req.body || {};
+  try {
+    if (on === false) {
+      await callHaService("light", "turn_off", { entity_id: entityId });
+    } else {
+      const data = { entity_id: entityId };
+      if (Number.isInteger(brightness) && brightness >= 0 && brightness <= 255) {
+        data.brightness = brightness;
+      }
+      if (typeof effect === "string") {
+        const known = await getHomeAssistantStates()
+          .then((states) => states.find((s) => s.entity_id === entityId))
+          .catch(() => null);
+        if (known?.attributes?.effect_list?.includes(effect)) {
+          data.effect = effect;
+        }
+      }
+      await callHaService("light", "turn_on", data);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to update light" });
+  }
+});
+
+async function callHaService(domain, service, data) {
+  const r = await fetch(`${HA_URL}/api/services/${domain}/${service}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${HA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) throw new Error(`Home Assistant service call failed: ${r.status}`);
+}
 
 const RING_CAMERA_ID = /^camera\.[a-z0-9_]+$/;
 
