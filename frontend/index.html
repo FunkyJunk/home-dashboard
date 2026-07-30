@@ -170,6 +170,28 @@
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
+  /* Camera grid */
+  .camera-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap:1rem;
+  }
+  .camera-tile{background:#0d1116; border:1px solid var(--panel-line); border-radius:4px; overflow:hidden;}
+  .camera-tile img{display:block; width:100%; aspect-ratio:16/9; object-fit:cover; background:#000;}
+  .camera-tile .camera-meta{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:.5rem .6rem; gap:.5rem;
+  }
+  .camera-tile .camera-name{font-size:.85rem; color:var(--text);}
+  .camera-tile .camera-time{
+    font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); white-space:nowrap;
+  }
+  .camera-tile.offline .camera-name{color:var(--coral);}
+  .camera-tile .camera-placeholder{
+    width:100%; aspect-ratio:16/9; display:flex; align-items:center; justify-content:center;
+    color:var(--text-dim); font-size:.8rem;
+  }
+
   .updated{
     margin-top:1.5rem;
     text-align:center;
@@ -213,6 +235,11 @@
       <div class="card">
         <h2>This week</h2>
         <div class="week-strip" id="week"></div>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h2>Cameras</h2>
+        <div class="camera-grid" id="cameras"><div class="empty">Loading&hellip;</div></div>
       </div>
     </div>
 
@@ -363,6 +390,32 @@ function renderHomeStatus(entities){
   el.innerHTML = rows.join('');
 }
 
+function fmtCameraTime(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+}
+
+function renderCameras(cameras){
+  const el = document.getElementById('cameras');
+  if (!cameras || cameras.length === 0){
+    el.innerHTML = '<div class="empty">No cameras configured.</div>';
+    return;
+  }
+  el.innerHTML = cameras.map(c => `
+    <div class="camera-tile ${c.snapshot ? '' : 'offline'}">
+      ${c.snapshot
+        ? `<img src="${c.snapshot}" alt="${escapeHtml(c.name || 'Camera')}" />`
+        : `<div class="camera-placeholder">Unavailable</div>`}
+      <div class="camera-meta">
+        <span class="camera-name">${escapeHtml(c.name || 'Camera')}</span>
+        <span class="camera-time">${c.timestamp ? fmtCameraTime(c.timestamp) : ''}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
 function renderWeek(daily){
   const el = document.getElementById('week');
   if (!daily){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
@@ -402,6 +455,7 @@ async function refresh(){
     renderWeek(data.weather?.daily);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
+    renderCameras(data.ring);
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){

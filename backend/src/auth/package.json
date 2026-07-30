@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "googleapis": "^140.0.0",
-    "open": "^10.1.0"
+    "open": "^10.1.0",
+    "ring-client-api": "^14.3.0"
   }
 }
