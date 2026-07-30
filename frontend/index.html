@@ -88,11 +88,9 @@
   .card-handle:active{cursor:grabbing;}
 
   .drag-handle{
-    cursor:grab; touch-action:none; user-select:none;
     color:var(--text-dim); font-size:.9rem; letter-spacing:-.1em;
     padding:0 .2em;
   }
-  .drag-handle:active{cursor:grabbing;}
 
   .card{
     background:var(--panel);
@@ -212,29 +210,48 @@
   .ring-cam-foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
   .ring-cam-name{font-size:.95rem; color:var(--text);}
 
-  .ring-modal{
+  .modal-overlay{
     display:none;
     position:fixed; inset:0; z-index:100;
     background:rgba(10,12,16,.85);
     align-items:center; justify-content:center;
     padding:3vw;
   }
-  .ring-modal.open{display:flex;}
-  .ring-modal-inner{max-width:min(90vw, 960px); width:100%;}
-  .ring-modal-head{
+  .modal-overlay.open{display:flex;}
+  .modal-inner{width:100%;}
+  .modal-head{
     display:flex; justify-content:space-between; align-items:center;
     margin-bottom:.75rem; color:var(--text); font-family:'IBM Plex Mono', monospace;
   }
-  .ring-modal-close{
+  .modal-close{
     background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
     border-radius:4px; padding:.4em .8em; cursor:pointer; font-family:inherit; font-size:.85rem;
   }
-  .ring-modal video{width:100%; display:block; border-radius:6px; background:#000; aspect-ratio:16/9; object-fit:contain;}
+
+  .ring-modal-inner{max-width:min(90vw, 960px);}
+  .ring-modal-inner video{width:100%; display:block; border-radius:6px; background:#000; aspect-ratio:16/9; object-fit:contain;}
   .ring-modal-status{
     text-align:center; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;
     font-size:.85rem; padding:1rem 0;
   }
   .ring-modal-status.error{color:var(--coral);}
+
+  .roku-modal-inner{max-width:min(90vw, 320px);}
+  .roku-modal-app{
+    text-align:center; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;
+    font-size:.85rem; padding-bottom:1rem;
+  }
+  .dpad{display:flex; flex-direction:column; align-items:center; gap:.5rem; margin-bottom:1rem;}
+  .dpad-row{display:flex; align-items:center; gap:.5rem;}
+  .dpad-btn{
+    width:3em; height:3em; border-radius:8px;
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    font-size:1rem; cursor:pointer;
+  }
+  .dpad-btn:hover{border-color:var(--teal);}
+  .dpad-btn.dpad-ok{background:var(--teal-dim); border-color:var(--teal); color:var(--teal); font-weight:600;}
+  .roku-modal-row{display:flex; gap:.5rem;}
+  .roku-modal-row .media-btn{padding:.6em 0;}
 
   .controls-card{margin-top:1.5rem;}
   .controls-grid{
@@ -247,7 +264,17 @@
     padding:.85rem; display:flex; flex-direction:column; gap:.6rem;
   }
   .control-head{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
-  .control-head-left{display:flex; align-items:center; gap:.4rem; min-width:0;}
+  .control-head-left{
+    display:flex; align-items:center; gap:.4rem; min-width:0;
+    cursor:grab; user-select:none; touch-action:none;
+  }
+  .control-head-left:active{cursor:grabbing;}
+  .control-head-right{display:flex; align-items:center; gap:.5rem; flex-shrink:0;}
+  .icon-btn{
+    background:none; border:none; color:var(--text-dim); cursor:pointer;
+    font-size:1.1rem; line-height:1; padding:0 .1em;
+  }
+  .icon-btn:hover{color:var(--text);}
   .control-name{font-size:.85rem; color:var(--text);}
   .control-tile.dragging{opacity:.4;}
   .control-value{font-family:'IBM Plex Mono', monospace; font-size:.75rem; color:var(--text-dim);}
@@ -362,14 +389,39 @@
     <div class="updated" id="updated">Connecting&hellip;</div>
   </div>
 
-  <div class="ring-modal" id="ring-modal">
-    <div class="ring-modal-inner">
-      <div class="ring-modal-head">
+  <div class="modal-overlay" id="ring-modal">
+    <div class="modal-inner ring-modal-inner">
+      <div class="modal-head">
         <span id="ring-modal-name"></span>
-        <button class="ring-modal-close" id="ring-modal-close">Close</button>
+        <button class="modal-close" id="ring-modal-close">Close</button>
       </div>
       <div class="ring-modal-status" id="ring-modal-status">Connecting&hellip;</div>
       <video id="ring-modal-video" muted autoplay playsinline style="display:none;"></video>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="roku-modal">
+    <div class="modal-inner roku-modal-inner">
+      <div class="modal-head">
+        <span id="roku-modal-name">Office Roku</span>
+        <button class="modal-close" id="roku-modal-close">Close</button>
+      </div>
+      <div class="roku-modal-app" id="roku-modal-app"></div>
+      <div class="dpad">
+        <button type="button" class="dpad-btn" data-key="Up">&#9650;</button>
+        <div class="dpad-row">
+          <button type="button" class="dpad-btn" data-key="Left">&#9664;</button>
+          <button type="button" class="dpad-btn dpad-ok" data-key="Select">OK</button>
+          <button type="button" class="dpad-btn" data-key="Right">&#9654;</button>
+        </div>
+        <button type="button" class="dpad-btn" data-key="Down">&#9660;</button>
+      </div>
+      <div class="roku-modal-row">
+        <button type="button" class="media-btn" data-key="Back">Back</button>
+        <button type="button" class="media-btn" data-key="Home">Home</button>
+        <button type="button" class="media-btn" data-key="InstantReplay">Replay</button>
+        <button type="button" class="media-btn" data-key="Info">Info</button>
+      </div>
     </div>
   </div>
 
@@ -612,51 +664,51 @@ function reorderDomToSaved(container, itemSelector, key){
   }
 }
 
-// Native HTML5 drag-and-drop, delegated on the container so it keeps
-// working after renderControls() rebuilds the tiles' innerHTML each
-// refresh. Mouse-oriented, matching this dashboard's primary (desktop) use.
+// Pointer Events rather than native HTML5 drag-and-drop - the native
+// dragstart/dragover/dragend sequence turned out unreliable for nested
+// flex handles (dragstart fired but the browser's native drag session
+// never progressed to dragover, regardless of drag distance). Pointer
+// events are plain mouse/touch tracking with no browser-internal drag
+// session to depend on, so this works the same way for both.
 function makeSortable(container, { handleSelector, itemSelector, storageKey }){
-  const finishDrag = () => {
-    const dragging = container.querySelector(`${itemSelector}.dragging`);
-    if (!dragging) return;
-    dragging.classList.remove('dragging');
-    dragging.removeAttribute('draggable');
-    saveOrder(storageKey, [...container.querySelectorAll(itemSelector)].map(el => el.dataset.tileId));
-  };
+  let dragEl = null;
 
-  container.addEventListener('mousedown', (e) => {
+  container.addEventListener('pointerdown', (e) => {
     const handle = e.target.closest(handleSelector);
-    if (!handle) return;
-    const item = handle.closest(itemSelector);
-    if (item) item.setAttribute('draggable', 'true');
-  });
-  // Self-healing: covers both "mousedown on a handle but never dragged" and
-  // (as a fallback) a drag session whose dragend/drop never fired - so a
-  // stuck tile can't outlive the very next click anywhere on the page.
-  document.addEventListener('mouseup', () => {
-    finishDrag();
-    container.querySelectorAll(`${itemSelector}[draggable="true"]:not(.dragging)`)
-      .forEach(el => el.removeAttribute('draggable'));
-  });
-  container.addEventListener('dragstart', (e) => {
-    const item = e.target.closest(itemSelector);
-    if (!item || item.getAttribute('draggable') !== 'true'){ e.preventDefault(); return; }
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', '');
+    const item = handle && handle.closest(itemSelector);
+    if (!item) return;
+    dragEl = item;
     item.classList.add('dragging');
-  });
-  container.addEventListener('dragover', (e) => {
-    const dragging = container.querySelector('.dragging');
-    if (!dragging) return;
+    try { handle.setPointerCapture(e.pointerId); } catch {}
     e.preventDefault();
-    const target = e.target.closest(itemSelector);
-    if (!target || target === dragging) return;
-    const rect = target.getBoundingClientRect();
-    const before = (e.clientY - rect.top) < rect.height / 2;
-    target.parentNode.insertBefore(dragging, before ? target : target.nextSibling);
   });
-  container.addEventListener('drop', (e) => e.preventDefault());
-  container.addEventListener('dragend', finishDrag);
+
+  container.addEventListener('pointermove', (e) => {
+    if (!dragEl) return;
+    const items = [...container.querySelectorAll(itemSelector)].filter(el => el !== dragEl);
+    let closest = null;
+    let closestDist = Infinity;
+    for (const el of items){
+      const rect = el.getBoundingClientRect();
+      const dist = Math.hypot(e.clientX - (rect.left + rect.width / 2), e.clientY - (rect.top + rect.height / 2));
+      if (dist < closestDist){ closestDist = dist; closest = el; }
+    }
+    if (!closest) return;
+    const all = [...container.querySelectorAll(itemSelector)];
+    if (all.indexOf(dragEl) < all.indexOf(closest)) closest.after(dragEl);
+    else closest.before(dragEl);
+  });
+
+  const finishDrag = () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    saveOrder(storageKey, [...container.querySelectorAll(itemSelector)].map(el => el.dataset.tileId));
+    dragEl = null;
+  };
+  container.addEventListener('pointerup', finishDrag);
+  container.addEventListener('pointercancel', finishDrag);
+  // Safety net in case a drag session's pointerup/pointercancel never fires.
+  document.addEventListener('mouseup', finishDrag);
 }
 
 function renderControls(controls){
@@ -677,7 +729,7 @@ function renderControls(controls){
       return `
         <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-head-left">
+            <span class="control-head-left" title="Drag to reorder">
               <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
               <span class="control-name">${escapeHtml(c.name)}</span>
             </span>
@@ -703,7 +755,7 @@ function renderControls(controls){
       return `
         <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-head-left">
+            <span class="control-head-left" title="Drag to reorder">
               <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
               <span class="control-name">${escapeHtml(c.name)}</span>
             </span>
@@ -722,7 +774,7 @@ function renderControls(controls){
       return `
         <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-head-left">
+            <span class="control-head-left" title="Drag to reorder">
               <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
               <span class="control-name">${escapeHtml(c.name)}</span>
             </span>
@@ -746,14 +798,17 @@ function renderControls(controls){
       return `
         <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-head-left">
+            <span class="control-head-left" title="Drag to reorder">
               <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
               <span class="control-name">${escapeHtml(c.name)}</span>
             </span>
-            <label class="toggle">
-              <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
-              <span class="toggle-track"></span>
-            </label>
+            <span class="control-head-right">
+              <button type="button" class="icon-btn ctl-media-expand" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-app="${escapeHtml(status)}" title="More controls">&hellip;</button>
+              <label class="toggle">
+                <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+                <span class="toggle-track"></span>
+              </label>
+            </span>
           </div>
           <div class="control-value">${escapeHtml(status)}</div>
           <div class="media-buttons">
@@ -825,6 +880,23 @@ function renderControls(controls){
       if (select.value) setControl(select.dataset.id, { action: 'select_source', source: select.value });
     });
   });
+  el.querySelectorAll('.ctl-media-expand').forEach(button => {
+    button.addEventListener('click', () => openRokuModal(button.dataset.id, button.dataset.name, button.dataset.app));
+  });
+}
+
+let rokuModalDeviceId = null;
+
+function openRokuModal(id, name, appStatus){
+  rokuModalDeviceId = id;
+  document.getElementById('roku-modal-name').textContent = name || 'Roku';
+  document.getElementById('roku-modal-app').textContent = appStatus || '';
+  document.getElementById('roku-modal').classList.add('open');
+}
+
+function closeRokuModal(){
+  document.getElementById('roku-modal').classList.remove('open');
+  rokuModalDeviceId = null;
 }
 
 async function setControl(id, payload){
@@ -999,10 +1071,20 @@ document.getElementById('ring-modal').addEventListener('click', (e) => {
   if (e.target.id === 'ring-modal') closeRingModal();
 });
 
+document.getElementById('roku-modal-close').addEventListener('click', closeRokuModal);
+document.getElementById('roku-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'roku-modal') closeRokuModal();
+});
+document.querySelectorAll('#roku-modal [data-key]').forEach(button => {
+  button.addEventListener('click', () => {
+    if (rokuModalDeviceId) setControl(rokuModalDeviceId, { action: 'remote_key', key: button.dataset.key });
+  });
+});
+
 const boardGrid = document.getElementById('board-grid');
 reorderDomToSaved(boardGrid, '.card', TILE_ORDER_KEY);
 makeSortable(boardGrid, { handleSelector: '.card-handle', itemSelector: '.card', storageKey: TILE_ORDER_KEY });
-makeSortable(document.getElementById('controls-grid'), { handleSelector: '.drag-handle', itemSelector: '.control-tile', storageKey: CONTROL_ORDER_KEY });
+makeSortable(document.getElementById('controls-grid'), { handleSelector: '.control-head-left', itemSelector: '.control-tile', storageKey: CONTROL_ORDER_KEY });
 
 renderClock();
 setInterval(renderClock, 1000 * 15);

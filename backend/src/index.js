@@ -172,7 +172,7 @@ app.post("/api/ha/control/*", async (req, res) => {
       }
       await callHaService("cover", "set_cover_position", { entity_id: entityId, position });
     } else if (meta.type === "media") {
-      const { action, source } = req.body || {};
+      const { action, source, key } = req.body || {};
       if (action === "select_source") {
         if (typeof source !== "string") {
           return res.status(400).json({ error: "invalid source" });
@@ -186,6 +186,15 @@ app.post("/api/ha/control/*", async (req, res) => {
         await callHaService("media_player", "select_source", { entity_id: entityId, source });
       } else if (action === "mute") {
         await callHaService("media_player", "volume_mute", { entity_id: entityId, is_volume_muted: true });
+      } else if (action === "remote_key") {
+        if (!ROKU_REMOTE_KEYS.includes(key)) {
+          return res.status(400).json({ error: "invalid key" });
+        }
+        // Same device, different HA domain - the remote entity (full D-pad,
+        // Home/Back/etc.) is separate from the media_player entity used for
+        // everything else in this tile.
+        const remoteEntity = entityId.replace(/^media_player\./, "remote.");
+        await callHaService("remote", "send_command", { entity_id: remoteEntity, command: key });
       } else {
         const MEDIA_ACTIONS = {
           turn_on: "turn_on",
@@ -219,6 +228,13 @@ async function callHaService(domain, service, data) {
 }
 
 const RING_CAMERA_ID = /^camera\.[a-z0-9_]+$/;
+
+// Roku ECP key names - allowlisted rather than passed through raw, since this
+// dashboard has no login.
+const ROKU_REMOTE_KEYS = [
+  "Up", "Down", "Left", "Right", "Select",
+  "Back", "Home", "InstantReplay", "Info",
+];
 
 app.get("/api/ring/snapshot/:entityId", async (req, res) => {
   const { entityId } = req.params;
