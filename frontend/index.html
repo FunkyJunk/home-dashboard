@@ -453,7 +453,6 @@ function renderHomeStatus(entities){
   }
   const byPrefix = (p) => entities.filter(e => e.entity_id.startsWith(p));
 
-  const climates = byPrefix('climate.');
   const covers = byPrefix('cover.');
   const lights = byPrefix('light.').filter(e => e.state === 'on');
   const media = byPrefix('media_player.').filter(e => e.state === 'playing');
@@ -469,17 +468,6 @@ function renderHomeStatus(entities){
   });
 
   let rows = [];
-
-  if (climates.length){
-    const avgTemp = Math.round(climates.reduce((s,c) => s + (c.attributes.current_temperature||0),0) / climates.length);
-    const modes = [...new Set(climates.map(c => c.state))];
-    rows.push(`
-      <div class="status-row">
-        <span class="status-label">Thermostats (${climates.length})</span>
-        <span class="status-value calm">${avgTemp}&deg; <span class="pill calm">${modes.join(', ')}</span></span>
-      </div>
-    `);
-  }
 
   if (covers.length){
     covers.forEach(c => {
@@ -624,13 +612,15 @@ function renderControls(controls){
         </div>
       `;
     }
-    if (c.type === 'climate'){
+    if (c.type === 'nest'){
+      const modeLabel = (m) => (c.hvacModeLabels && c.hvacModeLabels[m]) || (m.charAt(0).toUpperCase() + m.slice(1));
+      const runningNote = (c.hvacStatus && c.hvacStatus !== 'off') ? ' · ' + modeLabel(c.hvacStatus) : '';
       return `
         <div class="control-tile">
           <div class="control-head">
             <span class="control-name">${escapeHtml(c.name)}</span>
             <select class="control-effect ctl-hvac" data-id="${c.id}" ${c.available ? '' : 'disabled'}>
-              ${(c.hvacModes || []).map(m => `<option value="${m}" ${c.hvacMode === m ? 'selected' : ''}>${m.charAt(0).toUpperCase() + m.slice(1)}</option>`).join('')}
+              ${(c.hvacModes || []).map(m => `<option value="${m}" ${c.hvacMode === m ? 'selected' : ''}>${modeLabel(m)}</option>`).join('')}
             </select>
           </div>
           <div class="thermo-row">
@@ -639,7 +629,7 @@ function renderControls(controls){
             <button type="button" class="thermo-btn ctl-temp-up" data-id="${c.id}" data-step="${c.step}" data-min="${c.minTemp}" data-max="${c.maxTemp}" ${c.available ? '' : 'disabled'}>+</button>
           </div>
           <div class="control-value">
-            Now ${c.currentTemp != null ? Math.round(c.currentTemp) + '°' : '--'}${c.currentHumidity != null ? ' · ' + Math.round(c.currentHumidity) + '%' : ''}
+            Now ${c.currentTemp != null ? Math.round(c.currentTemp) + '°' : '--'}${c.currentHumidity != null ? ' · ' + Math.round(c.currentHumidity) + '%' : ''}${runningNote}
           </div>
         </div>
       `;
@@ -704,12 +694,14 @@ function renderControls(controls){
       const step = Number(button.dataset.step) || 1;
       const min = Number(button.dataset.min);
       const max = Number(button.dataset.max);
-      const tempEl = el.querySelector(`.thermo-temp[data-target-for="${id}"]`);
+      const tile = button.closest('.control-tile');
+      const tempEl = tile.querySelector('.thermo-temp');
+      const hvacSelect = tile.querySelector('.ctl-hvac');
       const current = parseFloat(tempEl.textContent) || 0;
       const delta = button.classList.contains('ctl-temp-up') ? step : -step;
       const next = Math.min(max, Math.max(min, current + delta));
       tempEl.textContent = Math.round(next) + '°';
-      setControl(id, { temperature: next });
+      setControl(id, { temperature: next, hvacMode: hvacSelect ? hvacSelect.value : undefined });
     });
   });
   el.querySelectorAll('.ctl-media-power').forEach(input => {

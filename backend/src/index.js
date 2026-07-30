@@ -10,6 +10,12 @@ const HA_URL = process.env.HOME_ASSISTANT_URL || "http://homeassistant:8123";
 const HA_TOKEN = process.env.HOME_ASSISTANT_TOKEN;
 const HA_WS_URL = HA_URL.replace(/^http/, "ws") + "/api/websocket";
 
+const NEST_PROJECT_ID = process.env.NEST_PROJECT_ID;
+const NEST_CLIENT_ID = process.env.NEST_CLIENT_ID;
+const NEST_CLIENT_SECRET = process.env.NEST_CLIENT_SECRET;
+const NEST_REFRESH_TOKEN = process.env.NEST_REFRESH_TOKEN;
+const NEST_API = "https://smartdevicemanagement.googleapis.com/v1";
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET
@@ -20,21 +26,26 @@ const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.get("/api/dashboard", async (_req, res) => {
-  const [weather, cal, homeAssistant] = await Promise.allSettled([
+  const [weather, cal, homeAssistant, nest] = await Promise.allSettled([
     getWeather(),
     getCalendar(),
     getHomeAssistantStates(),
+    getNestThermostats(),
   ]);
 
   const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
+  const nestThermostats = nest.status === "fulfilled" ? nest.value : [];
 
   res.json({
     weather: weather.status === "fulfilled" ? weather.value : null,
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
-    controls: haStates ? getControllableDevices(haStates) : [],
-    errors: [weather, cal, homeAssistant]
+    controls: [
+      ...(haStates ? getControllableDevices(haStates) : []),
+      ...nestThermostats,
+    ],
+    errors: [weather, cal, homeAssistant, nest]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
@@ -60,13 +71,11 @@ const CONTROLLABLE_DEVICES = {
     onData: { brightness: 255, hs_color: [0, 0] },
   },
   "cover.office_office_blinds": { type: "cover", name: "Office Blinds" },
-  // HA has no distinguishing name for these three (all just "Thermostat") and
-  // area assignment isn't exposed over the plain REST states API, so these
-  // are numbered rather than guessed - easy to relabel once known.
-  "climate.home_thermostat": { type: "climate", name: "Thermostat 1" },
-  "climate.home_thermostat_2": { type: "climate", name: "Thermostat 2" },
-  "climate.home_thermostat_3": { type: "climate", name: "Thermostat 3" },
   "media_player.office_roku_streambar_pro_office": { type: "media", name: "Office Roku" },
+  // Thermostats are handled separately via the Nest SDM API directly - see
+  // getNestThermostats()/setNestThermostat() below. The Homey-bridged HA
+  // climate entities never showed correct names/data and couldn't actually
+  // write a setpoint (Homey API permissions), so they're not listed here.
 };
 
 function getControllableDevices(states) {
@@ -99,22 +108,6 @@ function getControllableDevices(states) {
           isClosed: s.attributes?.is_closed ?? s.state === "closed",
         };
       }
-      if (meta.type === "climate") {
-        return {
-          id: entityId,
-          type: "climate",
-          name: meta.name,
-          available,
-          hvacMode: s.state,
-          hvacModes: s.attributes?.hvac_modes ?? [],
-          currentTemp: s.attributes?.current_temperature ?? null,
-          currentHumidity: s.attributes?.current_humidity ?? null,
-          targetTemp: s.attributes?.temperature ?? null,
-          minTemp: s.attributes?.min_temp ?? 60,
-          maxTemp: s.attributes?.max_temp ?? 90,
-          step: s.attributes?.target_temp_step ?? 1,
-        };
-      }
       if (meta.type === "media") {
         return {
           id: entityId,
@@ -131,8 +124,21 @@ function getControllableDevices(states) {
     .filter(Boolean);
 }
 
-app.post("/api/ha/control/:entityId", async (req, res) => {
-  const { entityId } = req.params;
+// Wildcard rather than :entityId - Nest device resource names
+// ("enterprises/.../devices/...") contain slashes.
+app.post("/api/ha/control/*", async (req, res) => {
+  const entityId = req.params[0];
+
+  if (entityId.startsWith("enterprises/")) {
+    try {
+      await setNestThermostat(entityId, req.body || {});
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(502).json({ error: e.message || "failed to update thermostat" });
+    }
+    return;
+  }
+
   const meta = CONTROLLABLE_DEVICES[entityId];
   if (!meta) {
     return res.status(404).json({ error: "unknown device" });
@@ -165,21 +171,6 @@ app.post("/api/ha/control/:entityId", async (req, res) => {
         return res.status(400).json({ error: "invalid position" });
       }
       await callHaService("cover", "set_cover_position", { entity_id: entityId, position });
-    } else if (meta.type === "climate") {
-      const { temperature, hvacMode } = req.body || {};
-      if (typeof hvacMode === "string") {
-        const current = await getHomeAssistantStates()
-          .then((states) => states.find((s) => s.entity_id === entityId))
-          .catch(() => null);
-        if (!current?.attributes?.hvac_modes?.includes(hvacMode)) {
-          return res.status(400).json({ error: "invalid hvac mode" });
-        }
-        await callHaService("climate", "set_hvac_mode", { entity_id: entityId, hvac_mode: hvacMode });
-      } else if (typeof temperature === "number") {
-        await callHaService("climate", "set_temperature", { entity_id: entityId, temperature });
-      } else {
-        return res.status(400).json({ error: "invalid request" });
-      }
     } else if (meta.type === "media") {
       const { action, source } = req.body || {};
       if (action === "select_source") {
@@ -276,6 +267,114 @@ async function getCalendar() {
     summary: e.summary,
     start: e.start?.dateTime || e.start?.date,
   }));
+}
+
+let nestAccessToken = null;
+let nestTokenExpiresAt = 0;
+
+async function getNestAccessToken() {
+  if (nestAccessToken && Date.now() < nestTokenExpiresAt - 60_000) {
+    return nestAccessToken;
+  }
+  const r = await fetch("https://www.googleapis.com/oauth2/v4/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: NEST_CLIENT_ID,
+      client_secret: NEST_CLIENT_SECRET,
+      refresh_token: NEST_REFRESH_TOKEN,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!r.ok) throw new Error(`Nest token refresh failed: ${r.status}`);
+  const data = await r.json();
+  nestAccessToken = data.access_token;
+  nestTokenExpiresAt = Date.now() + data.expires_in * 1000;
+  return nestAccessToken;
+}
+
+const celsiusToF = (c) => (c * 9) / 5 + 32;
+const fahrenheitToC = (f) => ((f - 32) * 5) / 9;
+
+const HVAC_MODE_LABELS = { heatcool: "Auto" };
+
+async function getNestThermostats() {
+  if (!NEST_PROJECT_ID || !NEST_REFRESH_TOKEN) {
+    throw new Error("Nest integration not configured");
+  }
+  const token = await getNestAccessToken();
+  const r = await fetch(`${NEST_API}/enterprises/${NEST_PROJECT_ID}/devices`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`Nest devices fetch failed: ${r.status}`);
+  const data = await r.json();
+
+  return (data.devices || [])
+    .filter((d) => d.type === "sdm.devices.types.THERMOSTAT")
+    .map((d) => {
+      const t = d.traits || {};
+      const roomName = d.parentRelations?.[0]?.displayName;
+      const customName = t["sdm.devices.traits.Info"]?.customName;
+      const mode = (t["sdm.devices.traits.ThermostatMode"]?.mode || "OFF").toLowerCase();
+      const availableModes = (t["sdm.devices.traits.ThermostatMode"]?.availableModes || []).map((m) => m.toLowerCase());
+      const setpoint = t["sdm.devices.traits.ThermostatTemperatureSetpoint"] || {};
+      const ambientC = t["sdm.devices.traits.Temperature"]?.ambientTemperatureCelsius;
+      const humidity = t["sdm.devices.traits.Humidity"]?.ambientHumidityPercent;
+      const hvacStatus = (t["sdm.devices.traits.ThermostatHvac"]?.status || "").toLowerCase();
+      const online = t["sdm.devices.traits.Connectivity"]?.status === "ONLINE";
+      // heatcool (range) mode carries both setpoints - showing the cool side
+      // keeps the single-stepper UI simple; none of these run in that mode.
+      const setpointC = mode === "heat" ? setpoint.heatCelsius : (setpoint.coolCelsius ?? setpoint.heatCelsius);
+
+      return {
+        id: d.name,
+        type: "nest",
+        name: (customName || roomName || "Thermostat").trim() || "Thermostat",
+        available: online,
+        hvacMode: mode,
+        hvacModes: availableModes,
+        hvacModeLabels: HVAC_MODE_LABELS,
+        hvacStatus,
+        currentTemp: ambientC != null ? Math.round(celsiusToF(ambientC)) : null,
+        currentHumidity: humidity ?? null,
+        targetTemp: setpointC != null ? Math.round(celsiusToF(setpointC)) : null,
+        minTemp: 50,
+        maxTemp: 90,
+        step: 1,
+      };
+    });
+}
+
+async function setNestThermostat(deviceName, { temperature, hvacMode }) {
+  const token = await getNestAccessToken();
+  const url = `${NEST_API}/${deviceName}:executeCommand`;
+
+  if (typeof temperature === "number") {
+    const mode = (hvacMode || "cool").toUpperCase();
+    const command = mode === "HEAT"
+      ? "sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat"
+      : "sdm.devices.commands.ThermostatTemperatureSetpoint.SetCool";
+    const paramKey = mode === "HEAT" ? "heatCelsius" : "coolCelsius";
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ command, params: { [paramKey]: fahrenheitToC(temperature) } }),
+    });
+    if (!r.ok) throw new Error(`Nest set temperature failed: ${r.status}`);
+    return;
+  }
+
+  if (typeof hvacMode === "string") {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "sdm.devices.commands.ThermostatMode.SetMode", params: { mode: hvacMode.toUpperCase() } }),
+    });
+    if (!r.ok) throw new Error(`Nest set mode failed: ${r.status}`);
+    return;
+  }
+
+  throw new Error("invalid request");
 }
 
 async function getHomeAssistantStates() {
