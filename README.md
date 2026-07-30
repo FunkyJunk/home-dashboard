@@ -24,7 +24,8 @@ Desktop (Claude Code)  --push-->  GitHub  --CI builds image-->  ghcr.io
 ```
 home-dashboard/
   backend/     Node.js/Express API that aggregates HA state, Google Calendar,
-               Gmail, and weather into one JSON payload for the frontend
+               Gmail, weather, and Ring camera snapshots into one JSON
+               payload for the frontend
   frontend/    static HTML/JS dashboard, served by nginx
   infra/       docker-compose.yml + env template for the NAS
   .github/     CI workflow that builds and pushes images to GHCR
@@ -69,7 +70,28 @@ without a Workspace admin.
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
 
-## 3. Synology NAS setup
+## 3. Ring camera access
+
+Ring has no OAuth app registration flow like Google - auth is your account
+email/password plus 2FA, exchanged once for a long-lived refresh token.
+
+1. Run `node backend/src/auth/get-ring-refresh-token.js` *locally on your
+   desktop*, not on the NAS. It prompts for your Ring email/password and, if
+   your account has 2FA (most do), a verification code, then prints a
+   refresh token to paste into `infra/.env` as `RING_REFRESH_TOKEN`.
+2. Optionally set `RING_CAMERA_IDS` in `.env` to a comma-separated list of
+   camera IDs if you only want specific cameras on the board; leave it blank
+   to show every camera on the account.
+
+   Honest heads-up: Ring rotates this refresh token roughly every hour under
+   the hood. The backend keeps using the one you set until it stops working,
+   at which point you'll see a Ring error on the dashboard and need to
+   re-run the script for a fresh token. Also, snapshot requests wake a
+   battery-powered camera - the backend caches those longer than wired
+   cameras to limit the drain, but a camera add-on that hammers this more
+   than the existing 60s poll cycle will burn through battery faster.
+
+## 4. Synology NAS setup
 
 1. **Control Panel → Terminal & SNMP** → enable SSH.
 2. **Package Center** → install **Container Manager** (DSM 7.x's Docker
@@ -108,7 +130,7 @@ without a Workspace admin.
    access, so the MyQ integration in HA breaks periodically when they change
    something. Not a you-problem — just expect the occasional patch.
 
-## 4. Point the wall tablet
+## 5. Point the wall tablet
 
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
