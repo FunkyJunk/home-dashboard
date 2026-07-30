@@ -1,44 +1,425 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Home dashboard</title>
-  <style>
-    body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 2rem; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; }
-    .card { background: #1c1c1c; border-radius: 12px; padding: 1.5rem; }
-    h2 { margin-top: 0; font-size: 1.1rem; color: #9ad; }
-    .error { color: #e77; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Home</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12161c;
+    --panel: #1b212b;
+    --panel-line: #2a323f;
+    --text: #ece7db;
+    --text-dim: #8b93a1;
+    --amber: #e8a33d;
+    --amber-dim: #6b5730;
+    --teal: #4fb8ae;
+    --teal-dim: #2c5b56;
+    --coral: #e2574c;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    min-height:100vh;
+    padding:2.5vw;
+  }
+  .board{max-width:1400px; margin:0 auto;}
+
+  /* Header / split-flap strip */
+  .header{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:6px;
+    padding:1.5rem 2rem;
+    margin-bottom:1.5rem;
+    flex-wrap:wrap;
+    gap:1rem;
+  }
+  .flap-group{display:flex; gap:.4rem;}
+  .flap{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:600;
+    font-size:clamp(2.2rem, 5vw, 3.6rem);
+    background:#0d1116;
+    border:1px solid var(--panel-line);
+    border-radius:4px;
+    padding:.1em .25em;
+    line-height:1;
+    color:var(--amber);
+    min-width:1.2em;
+    text-align:center;
+  }
+  .date-block{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.95rem;
+    color:var(--text-dim);
+    letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+  .weather-now{
+    display:flex; align-items:baseline; gap:.6rem;
+    font-family:'IBM Plex Mono', monospace;
+  }
+  .weather-now .temp{font-size:2.4rem; font-weight:600; color:var(--teal);}
+  .weather-now .cond{font-size:.95rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em;}
+
+  /* Grid */
+  .grid{
+    display:grid;
+    grid-template-columns: 1.1fr 1.4fr 1fr;
+    gap:1.5rem;
+  }
+  @media (max-width: 900px){ .grid{ grid-template-columns: 1fr; } }
+
+  .card{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:6px;
+    padding:1.5rem;
+  }
+  .card h2{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.8rem;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--text-dim);
+    margin-bottom:1rem;
+    padding-bottom:.6rem;
+    border-bottom:1px solid var(--panel-line);
+  }
+
+  /* Today card */
+  .event-row{
+    display:flex; justify-content:space-between; gap:1rem;
+    padding:.6rem 0;
+    border-bottom:1px solid var(--panel-line);
+    font-size:.95rem;
+  }
+  .event-row:last-child{border-bottom:none;}
+  .event-time{
+    font-family:'IBM Plex Mono', monospace;
+    color:var(--amber);
+    white-space:nowrap;
+    font-size:.85rem;
+  }
+  .event-name{color:var(--text);}
+  .empty{color:var(--text-dim); font-style:normal; font-size:.9rem; padding:.5rem 0;}
+
+  /* Home status card */
+  .status-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:.7rem 0;
+    border-bottom:1px solid var(--panel-line);
+  }
+  .status-row:last-child{border-bottom:none;}
+  .status-label{font-size:.9rem; color:var(--text-dim);}
+  .status-value{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:1.1rem;
+    font-weight:600;
+  }
+  .status-value.warm{color:var(--amber);}
+  .status-value.calm{color:var(--teal);}
+  .status-value.alert{color:var(--coral);}
+  .pill{
+    display:inline-block;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.7rem;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    padding:.15em .55em;
+    border-radius:100px;
+    background:var(--amber-dim);
+    color:var(--amber);
+  }
+  .pill.calm{background:var(--teal-dim); color:var(--teal);}
+  .pill.alert{background:#5a2a26; color:var(--coral);}
+
+  /* Week strip */
+  .week-strip{display:flex; flex-direction:column; gap:.1rem;}
+  .week-row{
+    display:grid; grid-template-columns: 3.2em 1fr auto;
+    align-items:center; gap:.75rem;
+    padding:.55rem 0;
+    border-bottom:1px solid var(--panel-line);
+  }
+  .week-row:last-child{border-bottom:none;}
+  .week-day{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.8rem; color:var(--text-dim); text-transform:uppercase;
+  }
+  .week-bar-track{
+    height:6px; background:#0d1116; border-radius:100px; position:relative;
+  }
+  .week-bar-fill{
+    position:absolute; top:0; bottom:0;
+    background:linear-gradient(90deg, var(--teal), var(--amber));
+    border-radius:100px;
+  }
+  .week-temps{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.85rem;
+    white-space:nowrap;
+  }
+  .week-temps .hi{color:var(--amber);}
+  .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
+
+  .updated{
+    margin-top:1.5rem;
+    text-align:center;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:.75rem;
+    color:var(--text-dim);
+    letter-spacing:.08em;
+    text-transform:uppercase;
+  }
+  .updated.error{color:var(--coral);}
+
+  @media (prefers-reduced-motion: no-preference){
+    .flap{ transition: transform .15s ease; }
+  }
+</style>
 </head>
 <body>
-  <div class="grid">
-    <div class="card"><h2>Weather</h2><div id="weather">loading…</div></div>
-    <div class="card"><h2>Calendar</h2><div id="calendar">loading…</div></div>
-    <div class="card"><h2>Home</h2><div id="home">loading…</div></div>
+  <div class="board">
+    <div class="header">
+      <div>
+        <div class="flap-group" id="clock"></div>
+        <div class="date-block" id="date" style="margin-top:.6rem;"></div>
+      </div>
+      <div class="weather-now">
+        <span class="temp" id="temp-now">--°</span>
+        <span class="cond" id="cond-now">loading</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Today &amp; upcoming</h2>
+        <div id="events"><div class="empty">Loading&hellip;</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Home status</h2>
+        <div id="home-status"><div class="empty">Loading&hellip;</div></div>
+      </div>
+
+      <div class="card">
+        <h2>This week</h2>
+        <div class="week-strip" id="week"></div>
+      </div>
+    </div>
+
+    <div class="updated" id="updated">Connecting&hellip;</div>
   </div>
 
-  <script>
-    async function refresh() {
-      try {
-        const res = await fetch("/api/dashboard");
-        const data = await res.json();
-        document.getElementById("weather").textContent = data.weather
-          ? `${Math.round(data.weather.current.temperature_2m)}°F`
-          : "unavailable";
-        document.getElementById("calendar").textContent = data.calendar
-          ? JSON.stringify(data.calendar)
-          : "not yet configured";
-        document.getElementById("home").textContent = data.homeAssistant
-          ? `${data.homeAssistant.length} entities`
-          : "unavailable";
-      } catch (e) {
-        console.error(e);
-      }
+<script>
+const WMO = {
+  0:'Clear', 1:'Mostly clear', 2:'Partly cloudy', 3:'Overcast',
+  45:'Fog', 48:'Fog',
+  51:'Light drizzle', 53:'Drizzle', 55:'Heavy drizzle',
+  61:'Light rain', 63:'Rain', 65:'Heavy rain',
+  71:'Light snow', 73:'Snow', 75:'Heavy snow',
+  80:'Showers', 81:'Showers', 82:'Heavy showers',
+  95:'Thunderstorms'
+};
+
+function renderClock(){
+  const now = new Date();
+  const h = String(now.getHours() % 12 || 12).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
+  const digits = (h + m).split('');
+  const el = document.getElementById('clock');
+  el.innerHTML = '';
+  digits.forEach(d => {
+    const f = document.createElement('div');
+    f.className = 'flap';
+    f.textContent = d;
+    el.appendChild(f);
+  });
+  const ampmEl = document.createElement('div');
+  ampmEl.className = 'flap';
+  ampmEl.style.fontSize = '1.1rem';
+  ampmEl.style.color = 'var(--text-dim)';
+  ampmEl.textContent = ampm;
+  el.appendChild(ampmEl);
+
+  document.getElementById('date').textContent = now.toLocaleDateString('en-US', {
+    weekday:'long', month:'long', day:'numeric'
+  });
+}
+
+function fmtEventTime(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return 'All day';
+  const today = new Date();
+  const isToday = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+  if (isToday) return time;
+  return d.toLocaleDateString('en-US', {weekday:'short'}) + ' ' + time;
+}
+
+function renderEvents(events){
+  const el = document.getElementById('events');
+  if (!events || events.length === 0){
+    el.innerHTML = '<div class="empty">Nothing on the calendar.</div>';
+    return;
+  }
+  el.innerHTML = events.slice(0,7).map(e => `
+    <div class="event-row">
+      <span class="event-name">${escapeHtml(e.summary || 'Untitled')}</span>
+      <span class="event-time">${fmtEventTime(e.start)}</span>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderHomeStatus(entities){
+  const el = document.getElementById('home-status');
+  if (!entities){
+    el.innerHTML = '<div class="empty">Home Assistant unavailable.</div>';
+    return;
+  }
+  const byPrefix = (p) => entities.filter(e => e.entity_id.startsWith(p));
+
+  const climates = byPrefix('climate.');
+  const covers = byPrefix('cover.');
+  const lights = byPrefix('light.').filter(e => e.state === 'on');
+  const media = byPrefix('media_player.').filter(e => e.state === 'playing');
+  const motionEvents = entities.filter(e =>
+    e.entity_id.startsWith('event.') &&
+    e.attributes?.device_class === 'motion' &&
+    !isNaN(new Date(e.state))
+  );
+
+  const recentMotion = motionEvents.filter(e => {
+    const mins = (Date.now() - new Date(e.state)) / 60000;
+    return mins < 15;
+  });
+
+  let rows = [];
+
+  if (climates.length){
+    const avgTemp = Math.round(climates.reduce((s,c) => s + (c.attributes.current_temperature||0),0) / climates.length);
+    const modes = [...new Set(climates.map(c => c.state))];
+    rows.push(`
+      <div class="status-row">
+        <span class="status-label">Thermostats (${climates.length})</span>
+        <span class="status-value calm">${avgTemp}&deg; <span class="pill calm">${modes.join(', ')}</span></span>
+      </div>
+    `);
+  }
+
+  if (covers.length){
+    covers.forEach(c => {
+      const pos = c.attributes.current_position;
+      const label = c.attributes.friendly_name || c.entity_id;
+      rows.push(`
+        <div class="status-row">
+          <span class="status-label">${escapeHtml(label)}</span>
+          <span class="status-value calm">${pos != null ? pos + '% open' : c.state}</span>
+        </div>
+      `);
+    });
+  }
+
+  rows.push(`
+    <div class="status-row">
+      <span class="status-label">Lights on</span>
+      <span class="status-value ${lights.length ? 'warm' : 'calm'}">${lights.length}</span>
+    </div>
+  `);
+
+  rows.push(`
+    <div class="status-row">
+      <span class="status-label">Playing now</span>
+      <span class="status-value ${media.length ? 'warm' : 'calm'}">${media.length ? media.length + ' zone' + (media.length>1?'s':'') : 'Quiet'}</span>
+    </div>
+  `);
+
+  rows.push(`
+    <div class="status-row">
+      <span class="status-label">Motion (last 15 min)</span>
+      <span class="status-value ${recentMotion.length ? 'alert' : 'calm'}">
+        ${recentMotion.length ? recentMotion.length + ' <span class="pill alert">recent</span>' : 'None'}
+      </span>
+    </div>
+  `);
+
+  el.innerHTML = rows.join('');
+}
+
+function renderWeek(daily){
+  const el = document.getElementById('week');
+  if (!daily){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
+  const days = daily.time;
+  const highs = daily.temperature_2m_max;
+  const lows = daily.temperature_2m_min;
+  const globalMax = Math.max(...highs);
+  const globalMin = Math.min(...lows);
+  const range = globalMax - globalMin || 1;
+
+  el.innerHTML = days.map((d, i) => {
+    const date = new Date(d + 'T12:00:00');
+    const label = i === 0 ? 'Today' : date.toLocaleDateString('en-US', {weekday:'short'});
+    const left = ((lows[i] - globalMin) / range) * 100;
+    const width = ((highs[i] - lows[i]) / range) * 100;
+    return `
+      <div class="week-row">
+        <span class="week-day">${label}</span>
+        <div class="week-bar-track">
+          <div class="week-bar-fill" style="left:${left}%; width:${Math.max(width,6)}%"></div>
+        </div>
+        <span class="week-temps"><span class="hi">${Math.round(highs[i])}&deg;</span><span class="lo">${Math.round(lows[i])}&deg;</span></span>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refresh(){
+  try {
+    const res = await fetch('/api/dashboard');
+    const data = await res.json();
+
+    if (data.weather?.current){
+      document.getElementById('temp-now').textContent = Math.round(data.weather.current.temperature_2m) + '\u00b0';
+      document.getElementById('cond-now').textContent = WMO[data.weather.current.weather_code] || 'Unknown';
     }
-    refresh();
-    setInterval(refresh, 60_000);
-  </script>
+    renderWeek(data.weather?.daily);
+    renderEvents(data.calendar);
+    renderHomeStatus(data.homeAssistant);
+
+    const updEl = document.getElementById('updated');
+    if (data.errors && data.errors.length){
+      updEl.textContent = 'Updated ' + new Date().toLocaleTimeString() + ' \u2014 ' + data.errors.join(' / ');
+      updEl.className = 'updated error';
+    } else {
+      updEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      updEl.className = 'updated';
+    }
+  } catch (e){
+    document.getElementById('updated').textContent = 'Connection lost \u2014 retrying\u2026';
+    document.getElementById('updated').className = 'updated error';
+  }
+}
+
+renderClock();
+setInterval(renderClock, 1000 * 15);
+refresh();
+setInterval(refresh, 60 * 1000);
+</script>
 </body>
 </html>
