@@ -198,15 +198,12 @@ function getRingCameras(states) {
 
   return cameras
     .map((cam) => {
-      const base = cam.entity_id.slice("camera.".length);
-      const related = ringEntities.filter(
-        (s) => s !== cam && s.entity_id.includes(base)
-      );
-      const motion = related.find((s) => s.entity_id.includes("motion"));
-      const ding = related.find((s) => s.entity_id.includes("ding"));
-      const battery = related.find(
-        (s) => s.entity_id.startsWith("sensor.") && s.entity_id.includes("battery")
-      );
+      // Companion entities (motion/ding events, battery sensor) use the short
+      // device name, not the camera's own "_live_view"-suffixed entity_id.
+      const base = cam.entity_id.slice("camera.".length).replace(/_live_view$/, "");
+      const motion = ringEntities.find((s) => s.entity_id === `event.${base}_motion`);
+      const ding = ringEntities.find((s) => s.entity_id === `event.${base}_ding`);
+      const battery = ringEntities.find((s) => s.entity_id === `sensor.${base}_battery`);
       const batteryLevel = battery ? Number(battery.state) : null;
       // HA leaves the camera's own state as "idle" even once a battery cam has
       // died - a 0% battery reading is what actually indicates it's offline.
