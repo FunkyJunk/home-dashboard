@@ -1,7 +1,7 @@
 import express from "express";
 import "dotenv/config";
 import { google } from "googleapis";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -55,84 +55,6 @@ app.get("/api/ring/snapshot/:entityId", async (req, res) => {
     res.send(Buffer.from(await r.arrayBuffer()));
   } catch {
     res.status(502).json({ error: "snapshot fetch failed" });
-  }
-});
-
-// The plain snapshot/MJPEG-repeat endpoints just replay the entity's last
-// motion-event frame for Ring's "_live_view" cameras - not an actual live
-// capture. A genuine live look requires HA's real stream negotiation (over
-// its WebSocket API), which hands back an HLS playlist URL.
-app.get("/api/ring/live/:entityId", async (req, res) => {
-  const { entityId } = req.params;
-  if (!RING_CAMERA_ID.test(entityId)) {
-    return res.status(400).json({ error: "invalid camera id" });
-  }
-  try {
-    const url = await requestRingLiveUrl(entityId);
-    res.json({ url });
-  } catch (e) {
-    res.status(502).json({ error: e.message || "live stream request failed" });
-  }
-});
-
-function requestRingLiveUrl(entityId) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(HA_WS_URL);
-    const timeout = setTimeout(() => {
-      ws.terminate();
-      reject(new Error("Home Assistant stream request timed out"));
-    }, 10000);
-    const finish = (fn, arg) => {
-      clearTimeout(timeout);
-      ws.terminate();
-      fn(arg);
-    };
-
-    ws.on("message", (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
-      if (msg.type === "auth_required") {
-        ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
-      } else if (msg.type === "auth_invalid") {
-        finish(reject, new Error("Home Assistant auth rejected"));
-      } else if (msg.type === "auth_ok") {
-        ws.send(JSON.stringify({ id: 1, type: "camera/stream", entity_id: entityId }));
-      } else if (msg.id === 1 && msg.type === "result") {
-        if (msg.success && msg.result?.url) {
-          finish(resolve, msg.result.url);
-        } else {
-          finish(reject, new Error(msg.error?.message || "stream request failed"));
-        }
-      }
-    });
-    ws.on("error", (err) => finish(reject, err));
-  });
-}
-
-// Mirrors HA's own /api/hls/ path so both relative and absolute references
-// inside the returned HLS playlist resolve back through this same proxy.
-app.get("/api/hls/*", async (req, res) => {
-  const controller = new AbortController();
-  req.on("close", () => controller.abort());
-  try {
-    const r = await fetch(`${HA_URL}/api/hls/${req.params[0]}`, {
-      headers: { Authorization: `Bearer ${HA_TOKEN}` },
-      signal: controller.signal,
-    });
-    if (!r.ok || !r.body) return res.status(r.status || 502).end();
-    res.set("Content-Type", r.headers.get("content-type") || "application/octet-stream");
-    res.set("Cache-Control", "no-store");
-    for await (const chunk of r.body) {
-      if (res.destroyed) break;
-      res.write(chunk);
-    }
-    res.end();
-  } catch {
-    res.end();
   }
 });
 
@@ -207,4 +129,121 @@ function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
   return !isNaN(t) && Date.now() - t < withinMs;
 }
 
-app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));
+const server = app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));
+
+// Ring's "_live_view" entities stream over WebRTC rather than HLS/MJPEG - the
+// only way to get an actual live frame (not a replay of the last motion
+// event) is to negotiate a real session through HA's WebSocket API and relay
+// SDP/ICE between the browser and HA for the life of that session.
+const wss = new WebSocketServer({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url, "http://localhost");
+  const match = url.pathname.match(/^\/api\/ring\/webrtc\/(camera\.[a-z0-9_]+)$/);
+  if (!match) {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (browserWs) => {
+    relayWebRtcSignaling(browserWs, match[1]);
+  });
+});
+
+function relayWebRtcSignaling(browserWs, entityId) {
+  const haWs = new WebSocket(HA_WS_URL);
+  let nextId = 1;
+  let sessionId = null;
+  let haReady = false;
+  let pendingOfferSdp = null;
+  let pendingCandidates = [];
+  let closed = false;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    try { haWs.close(); } catch {}
+    try { browserWs.close(); } catch {}
+  };
+  const sendError = (message) => {
+    try { browserWs.send(JSON.stringify({ type: "error", message })); } catch {}
+  };
+  const sendOffer = (sdp) => {
+    haWs.send(JSON.stringify({ id: nextId++, type: "camera/webrtc/offer", entity_id: entityId, offer: sdp }));
+  };
+  const sendCandidate = (candidate) => {
+    haWs.send(JSON.stringify({
+      id: nextId++,
+      type: "camera/webrtc/candidate",
+      entity_id: entityId,
+      session_id: sessionId,
+      candidate,
+    }));
+  };
+
+  haWs.on("message", (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    switch (msg.type) {
+      case "auth_required":
+        haWs.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
+        break;
+      case "auth_invalid":
+        sendError("Home Assistant auth rejected");
+        cleanup();
+        break;
+      case "auth_ok":
+        haReady = true;
+        if (pendingOfferSdp) {
+          sendOffer(pendingOfferSdp);
+          pendingOfferSdp = null;
+        }
+        break;
+      case "result":
+        if (!msg.success) {
+          sendError(msg.error?.message || "webrtc offer failed");
+          cleanup();
+        } else if (msg.result?.session_id) {
+          sessionId = msg.result.session_id;
+          for (const c of pendingCandidates) sendCandidate(c);
+          pendingCandidates = [];
+        }
+        break;
+      case "event":
+        if (msg.event?.type === "answer") {
+          browserWs.send(JSON.stringify({ type: "answer", sdp: msg.event.answer }));
+        } else if (msg.event?.type === "candidate") {
+          browserWs.send(JSON.stringify({ type: "candidate", candidate: msg.event.candidate }));
+        } else if (msg.event?.type === "error") {
+          sendError(msg.event.message || "webrtc stream error");
+        }
+        break;
+    }
+  });
+  haWs.on("error", () => {
+    sendError("Home Assistant connection error");
+    cleanup();
+  });
+  haWs.on("close", cleanup);
+
+  browserWs.on("message", (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    if (msg.type === "offer") {
+      if (haReady) sendOffer(msg.sdp);
+      else pendingOfferSdp = msg.sdp;
+    } else if (msg.type === "candidate") {
+      if (sessionId) sendCandidate(msg.candidate);
+      else pendingCandidates.push(msg.candidate);
+    }
+  });
+  browserWs.on("close", cleanup);
+  browserWs.on("error", cleanup);
+}
