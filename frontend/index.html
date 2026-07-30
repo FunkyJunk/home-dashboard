@@ -75,12 +75,24 @@
   .header .hourly-strip{border-top:1px solid var(--panel-line); padding-top:1.1rem;}
 
   /* Grid */
-  .grid{
+  .board-grid{
     display:grid;
-    grid-template-columns: 1.1fr 1.4fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap:1.5rem;
+    align-items:start;
   }
-  @media (max-width: 900px){ .grid{ grid-template-columns: 1fr; } }
+  .board-grid .card.wide{ grid-column: 1 / -1; }
+  .board-grid .card.dragging{ opacity:.4; }
+
+  .card-handle{cursor:grab; touch-action:none; user-select:none;}
+  .card-handle:active{cursor:grabbing;}
+
+  .drag-handle{
+    cursor:grab; touch-action:none; user-select:none;
+    color:var(--text-dim); font-size:.9rem; letter-spacing:-.1em;
+    padding:0 .2em;
+  }
+  .drag-handle:active{cursor:grabbing;}
 
   .card{
     background:var(--panel);
@@ -235,7 +247,9 @@
     padding:.85rem; display:flex; flex-direction:column; gap:.6rem;
   }
   .control-head{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
+  .control-head-left{display:flex; align-items:center; gap:.4rem; min-width:0;}
   .control-name{font-size:.85rem; color:var(--text);}
+  .control-tile.dragging{opacity:.4;}
   .control-value{font-family:'IBM Plex Mono', monospace; font-size:.75rem; color:var(--text-dim);}
   .control-slider{width:100%; accent-color:var(--teal);}
   .control-effect{
@@ -318,31 +332,31 @@
       <div class="hourly-strip" id="hourly-strip"></div>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <h2>Today &amp; upcoming</h2>
+    <div class="board-grid" id="board-grid">
+      <div class="card" data-tile-id="today">
+        <h2 class="card-handle">Today &amp; upcoming</h2>
         <div id="events"><div class="empty">Loading&hellip;</div></div>
       </div>
 
-      <div class="card">
-        <h2>Home status</h2>
+      <div class="card" data-tile-id="home-status">
+        <h2 class="card-handle">Home status</h2>
         <div id="home-status"><div class="empty">Loading&hellip;</div></div>
       </div>
 
-      <div class="card">
-        <h2>This week</h2>
+      <div class="card" data-tile-id="week">
+        <h2 class="card-handle">This week</h2>
         <div class="week-strip" id="week"></div>
       </div>
-    </div>
 
-    <div class="card controls-card" id="controls-section" style="display:none;">
-      <h2>Controls</h2>
-      <div class="controls-grid" id="controls-grid"></div>
-    </div>
+      <div class="card wide" data-tile-id="controls" id="controls-section" style="display:none;">
+        <h2 class="card-handle">Controls</h2>
+        <div class="controls-grid" id="controls-grid"></div>
+      </div>
 
-    <div class="card ring-card" id="ring-section" style="display:none;">
-      <h2>Ring cameras</h2>
-      <div class="ring-strip" id="ring-cams"></div>
+      <div class="card wide" data-tile-id="ring" id="ring-section" style="display:none;">
+        <h2 class="card-handle">Ring cameras</h2>
+        <div class="ring-strip" id="ring-cams"></div>
+      </div>
     </div>
 
     <div class="updated" id="updated">Connecting&hellip;</div>
@@ -562,6 +576,89 @@ function renderHourly(hourly){
   }).join('');
 }
 
+const TILE_ORDER_KEY = 'dashboard-tile-order';
+const CONTROL_ORDER_KEY = 'dashboard-control-order';
+
+function loadOrder(key){
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
+}
+function saveOrder(key, ids){
+  localStorage.setItem(key, JSON.stringify(ids));
+}
+
+// Reorders a data array to match a previously saved id order; anything not
+// in the saved order (new controls) is appended at the end.
+function applySavedOrder(items, key, idFn){
+  const saved = loadOrder(key);
+  if (!saved.length) return items;
+  const byId = new Map(items.map(it => [idFn(it), it]));
+  const ordered = [];
+  for (const id of saved){
+    if (byId.has(id)){ ordered.push(byId.get(id)); byId.delete(id); }
+  }
+  ordered.push(...byId.values());
+  return ordered;
+}
+
+// Moves existing DOM nodes (doesn't rebuild them) to match a saved order -
+// for containers whose children persist across refresh() cycles.
+function reorderDomToSaved(container, itemSelector, key){
+  const saved = loadOrder(key);
+  if (!saved.length) return;
+  const byId = new Map([...container.querySelectorAll(itemSelector)].map(el => [el.dataset.tileId, el]));
+  for (const id of saved){
+    const el = byId.get(id);
+    if (el) container.appendChild(el);
+  }
+}
+
+// Native HTML5 drag-and-drop, delegated on the container so it keeps
+// working after renderControls() rebuilds the tiles' innerHTML each
+// refresh. Mouse-oriented, matching this dashboard's primary (desktop) use.
+function makeSortable(container, { handleSelector, itemSelector, storageKey }){
+  const finishDrag = () => {
+    const dragging = container.querySelector(`${itemSelector}.dragging`);
+    if (!dragging) return;
+    dragging.classList.remove('dragging');
+    dragging.removeAttribute('draggable');
+    saveOrder(storageKey, [...container.querySelectorAll(itemSelector)].map(el => el.dataset.tileId));
+  };
+
+  container.addEventListener('mousedown', (e) => {
+    const handle = e.target.closest(handleSelector);
+    if (!handle) return;
+    const item = handle.closest(itemSelector);
+    if (item) item.setAttribute('draggable', 'true');
+  });
+  // Self-healing: covers both "mousedown on a handle but never dragged" and
+  // (as a fallback) a drag session whose dragend/drop never fired - so a
+  // stuck tile can't outlive the very next click anywhere on the page.
+  document.addEventListener('mouseup', () => {
+    finishDrag();
+    container.querySelectorAll(`${itemSelector}[draggable="true"]:not(.dragging)`)
+      .forEach(el => el.removeAttribute('draggable'));
+  });
+  container.addEventListener('dragstart', (e) => {
+    const item = e.target.closest(itemSelector);
+    if (!item || item.getAttribute('draggable') !== 'true'){ e.preventDefault(); return; }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', '');
+    item.classList.add('dragging');
+  });
+  container.addEventListener('dragover', (e) => {
+    const dragging = container.querySelector('.dragging');
+    if (!dragging) return;
+    e.preventDefault();
+    const target = e.target.closest(itemSelector);
+    if (!target || target === dragging) return;
+    const rect = target.getBoundingClientRect();
+    const before = (e.clientY - rect.top) < rect.height / 2;
+    target.parentNode.insertBefore(dragging, before ? target : target.nextSibling);
+  });
+  container.addEventListener('drop', (e) => e.preventDefault());
+  container.addEventListener('dragend', finishDrag);
+}
+
 function renderControls(controls){
   const section = document.getElementById('controls-section');
   const el = document.getElementById('controls-grid');
@@ -570,6 +667,7 @@ function renderControls(controls){
     return;
   }
   section.style.display = '';
+  controls = applySavedOrder(controls, CONTROL_ORDER_KEY, c => c.id);
   const POSITION_PRESETS = [0, 25, 50, 75, 100];
 
   el.innerHTML = controls.map(c => {
@@ -577,9 +675,12 @@ function renderControls(controls){
       const enabled = c.on && c.available;
       const effects = (c.effectList || []).filter(e => e.toLowerCase() !== 'off');
       return `
-        <div class="control-tile">
+        <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-name">${escapeHtml(c.name)}</span>
+            <span class="control-head-left">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
             <label class="toggle">
               <input type="checkbox" class="ctl-toggle" data-id="${c.id}" ${c.on ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
               <span class="toggle-track"></span>
@@ -600,9 +701,12 @@ function renderControls(controls){
     if (c.type === 'cover'){
       const label = c.position != null ? c.position + '%' : (c.isClosed ? 'Closed' : 'Open');
       return `
-        <div class="control-tile">
+        <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-name">${escapeHtml(c.name)}</span>
+            <span class="control-head-left">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
             <span class="control-value">${label}</span>
           </div>
           <input type="range" class="control-slider ctl-position" data-id="${c.id}" min="0" max="100" value="${c.position ?? 0}" ${c.available ? '' : 'disabled'}>
@@ -616,9 +720,12 @@ function renderControls(controls){
       const modeLabel = (m) => (c.hvacModeLabels && c.hvacModeLabels[m]) || (m.charAt(0).toUpperCase() + m.slice(1));
       const runningNote = (c.hvacStatus && c.hvacStatus !== 'off') ? ' · ' + modeLabel(c.hvacStatus) : '';
       return `
-        <div class="control-tile">
+        <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-name">${escapeHtml(c.name)}</span>
+            <span class="control-head-left">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
             <select class="control-effect ctl-hvac" data-id="${c.id}" ${c.available ? '' : 'disabled'}>
               ${(c.hvacModes || []).map(m => `<option value="${m}" ${c.hvacMode === m ? 'selected' : ''}>${modeLabel(m)}</option>`).join('')}
             </select>
@@ -637,9 +744,12 @@ function renderControls(controls){
     if (c.type === 'media'){
       const status = c.appName ? c.appName : (c.state === 'off' ? 'Off' : 'Idle');
       return `
-        <div class="control-tile">
+        <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
-            <span class="control-name">${escapeHtml(c.name)}</span>
+            <span class="control-head-left">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
             <label class="toggle">
               <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
               <span class="toggle-track"></span>
@@ -888,6 +998,11 @@ document.getElementById('ring-modal-close').addEventListener('click', closeRingM
 document.getElementById('ring-modal').addEventListener('click', (e) => {
   if (e.target.id === 'ring-modal') closeRingModal();
 });
+
+const boardGrid = document.getElementById('board-grid');
+reorderDomToSaved(boardGrid, '.card', TILE_ORDER_KEY);
+makeSortable(boardGrid, { handleSelector: '.card-handle', itemSelector: '.card', storageKey: TILE_ORDER_KEY });
+makeSortable(document.getElementById('controls-grid'), { handleSelector: '.drag-handle', itemSelector: '.control-tile', storageKey: CONTROL_ORDER_KEY });
 
 renderClock();
 setInterval(renderClock, 1000 * 15);
