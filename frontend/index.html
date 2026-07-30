@@ -96,18 +96,23 @@
 
   /* Today card */
   .event-row{
-    display:flex; justify-content:space-between; gap:1rem;
-    padding:.6rem 0;
+    display:flex; justify-content:space-between; align-items:center; gap:1rem;
+    padding:.6rem .6rem;
+    margin:0 -.6rem;
     border-bottom:1px solid var(--panel-line);
+    border-radius:4px;
     font-size:.95rem;
   }
   .event-row:last-child{border-bottom:none;}
+  .event-row.today{background:rgba(232,163,61,.08); border-bottom-color:var(--amber-dim);}
   .event-time{
+    display:flex; flex-direction:column; align-items:flex-end; gap:.1rem;
     font-family:'IBM Plex Mono', monospace;
-    color:var(--amber);
     white-space:nowrap;
-    font-size:.85rem;
   }
+  .event-day{font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim);}
+  .event-day.today{color:var(--amber); font-weight:600;}
+  .event-clock{color:var(--amber); font-size:.85rem;}
   .event-name{color:var(--text);}
   .empty{color:var(--text-dim); font-style:normal; font-size:.9rem; padding:.5rem 0;}
 
@@ -169,6 +174,12 @@
   }
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
+
+  .hourly-card{margin-top:1.5rem;}
+  .hourly-strip{display:flex; gap:1.25rem; overflow-x:auto; padding-bottom:.25rem;}
+  .hour-block{display:flex; flex-direction:column; align-items:center; gap:.35rem; min-width:3em;}
+  .hour-label{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em;}
+  .hour-temp{font-family:'IBM Plex Mono', monospace; font-size:1.05rem; font-weight:600; color:var(--amber);}
 
   .ring-card{margin-top:1.5rem;}
   .ring-strip{
@@ -235,6 +246,26 @@
   .control-preset:hover:not(:disabled){color:var(--text); border-color:var(--teal);}
   .control-preset:disabled{opacity:.5; cursor:not-allowed;}
 
+  .thermo-row{display:flex; align-items:center; justify-content:center; gap:.85rem;}
+  .thermo-btn{
+    width:2em; height:2em; border-radius:50%; flex-shrink:0;
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    font-size:1.1rem; line-height:1; cursor:pointer;
+  }
+  .thermo-btn:disabled{opacity:.5; cursor:not-allowed;}
+  .thermo-temp{
+    font-family:'IBM Plex Mono', monospace; font-size:1.3rem; font-weight:600;
+    color:var(--teal); min-width:3em; text-align:center;
+  }
+
+  .media-buttons{display:flex; gap:.4rem;}
+  .media-btn{
+    flex:1; background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.35em 0; font-family:inherit; font-size:.85rem; cursor:pointer;
+  }
+  .media-btn:hover:not(:disabled){border-color:var(--teal);}
+  .media-btn:disabled{opacity:.5; cursor:not-allowed;}
+
   .toggle{position:relative; display:inline-block; width:2.4em; height:1.4em; flex-shrink:0;}
   .toggle input{opacity:0; width:0; height:0; position:absolute;}
   .toggle-track{
@@ -293,6 +324,11 @@
         <h2>This week</h2>
         <div class="week-strip" id="week"></div>
       </div>
+    </div>
+
+    <div class="card hourly-card" id="hourly-section" style="display:none;">
+      <h2>Next hours</h2>
+      <div class="hourly-strip" id="hourly-strip"></div>
     </div>
 
     <div class="card controls-card" id="controls-section" style="display:none;">
@@ -356,16 +392,26 @@ function renderClock(){
   });
 }
 
-function fmtEventTime(iso){
-  if (!iso) return '';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return 'All day';
-  const d = new Date(iso);
-  if (isNaN(d)) return 'All day';
+function eventDate(iso){
+  if (!iso) return null;
+  // All-day events are date-only ("2026-07-30") - parse at noon local time
+  // so they land on the correct calendar day regardless of timezone offset.
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+  return isNaN(d) ? null : d;
+}
+
+function fmtEventDay(iso){
+  const d = eventDate(iso);
+  if (!d) return '';
   const today = new Date();
-  const isToday = d.toDateString() === today.toDateString();
-  const time = d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
-  if (isToday) return time;
-  return d.toLocaleDateString('en-US', {weekday:'short'}) + ' ' + time;
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  return d.toLocaleDateString('en-US', {weekday:'short'});
+}
+
+function fmtEventClock(iso){
+  if (!iso || /^\d{4}-\d{2}-\d{2}$/.test(iso)) return 'All day';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
 }
 
 function renderEvents(events){
@@ -374,12 +420,19 @@ function renderEvents(events){
     el.innerHTML = '<div class="empty">Nothing on the calendar.</div>';
     return;
   }
-  el.innerHTML = events.slice(0,7).map(e => `
-    <div class="event-row">
-      <span class="event-name">${escapeHtml(e.summary || 'Untitled')}</span>
-      <span class="event-time">${fmtEventTime(e.start)}</span>
-    </div>
-  `).join('');
+  el.innerHTML = events.slice(0,7).map(e => {
+    const day = fmtEventDay(e.start);
+    const isToday = day === 'Today';
+    return `
+      <div class="event-row ${isToday ? 'today' : ''}">
+        <span class="event-name">${escapeHtml(e.summary || 'Untitled')}</span>
+        <span class="event-time">
+          <span class="event-day ${isToday ? 'today' : ''}">${day}</span>
+          <span class="event-clock">${fmtEventClock(e.start)}</span>
+        </span>
+      </div>
+    `;
+  }).join('');
 }
 
 function escapeHtml(s){
@@ -490,6 +543,33 @@ function renderWeek(daily){
   }).join('');
 }
 
+function renderHourly(hourly){
+  const section = document.getElementById('hourly-section');
+  const el = document.getElementById('hourly-strip');
+  if (!hourly || !hourly.time || !hourly.time.length){
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  const now = new Date();
+  let startIdx = hourly.time.findIndex(t => new Date(t) >= now);
+  if (startIdx === -1) startIdx = 0;
+  const slice = hourly.time.slice(startIdx, startIdx + 12);
+
+  el.innerHTML = slice.map((t, i) => {
+    const idx = startIdx + i;
+    const label = i === 0 ? 'Now' : new Date(t).toLocaleTimeString('en-US', {hour:'numeric'});
+    const temp = Math.round(hourly.temperature_2m[idx]);
+    return `
+      <div class="hour-block">
+        <span class="hour-label">${label}</span>
+        <span class="hour-temp">${temp}&deg;</span>
+      </div>
+    `;
+  }).join('');
+}
+
 function renderControls(controls){
   const section = document.getElementById('controls-section');
   const el = document.getElementById('controls-grid');
@@ -540,6 +620,57 @@ function renderControls(controls){
         </div>
       `;
     }
+    if (c.type === 'climate'){
+      return `
+        <div class="control-tile">
+          <div class="control-head">
+            <span class="control-name">${escapeHtml(c.name)}</span>
+            <select class="control-effect ctl-hvac" data-id="${c.id}" ${c.available ? '' : 'disabled'}>
+              ${(c.hvacModes || []).map(m => `<option value="${m}" ${c.hvacMode === m ? 'selected' : ''}>${m.charAt(0).toUpperCase() + m.slice(1)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="thermo-row">
+            <button type="button" class="thermo-btn ctl-temp-down" data-id="${c.id}" data-step="${c.step}" data-min="${c.minTemp}" data-max="${c.maxTemp}" ${c.available ? '' : 'disabled'}>&minus;</button>
+            <span class="thermo-temp" data-target-for="${c.id}">${c.targetTemp != null ? Math.round(c.targetTemp) + '°' : '--'}</span>
+            <button type="button" class="thermo-btn ctl-temp-up" data-id="${c.id}" data-step="${c.step}" data-min="${c.minTemp}" data-max="${c.maxTemp}" ${c.available ? '' : 'disabled'}>+</button>
+          </div>
+          <div class="control-value">
+            Now ${c.currentTemp != null ? Math.round(c.currentTemp) + '°' : '--'}${c.currentHumidity != null ? ' · ' + Math.round(c.currentHumidity) + '%' : ''}
+          </div>
+        </div>
+      `;
+    }
+    if (c.type === 'media'){
+      const status = c.appName ? c.appName : (c.state === 'off' ? 'Off' : 'Idle');
+      return `
+        <div class="control-tile">
+          <div class="control-head">
+            <span class="control-name">${escapeHtml(c.name)}</span>
+            <label class="toggle">
+              <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <div class="control-value">${escapeHtml(status)}</div>
+          <div class="media-buttons">
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="previous" ${c.available ? '' : 'disabled'}>&#9198;</button>
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="play_pause" ${c.available ? '' : 'disabled'}>&#9199;</button>
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="next" ${c.available ? '' : 'disabled'}>&#9197;</button>
+          </div>
+          <div class="media-buttons">
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="volume_down" ${c.available ? '' : 'disabled'}>&minus;</button>
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="mute" ${c.available ? '' : 'disabled'}>Mute</button>
+            <button type="button" class="media-btn ctl-media-action" data-id="${c.id}" data-action="volume_up" ${c.available ? '' : 'disabled'}>+</button>
+          </div>
+          ${(c.sourceList || []).length ? `
+            <select class="control-effect ctl-media-source" data-id="${c.id}" ${c.available ? '' : 'disabled'}>
+              <option value="">Launch app&hellip;</option>
+              ${c.sourceList.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+            </select>
+          ` : ''}
+        </div>
+      `;
+    }
     return '';
   }).join('');
 
@@ -559,6 +690,34 @@ function renderControls(controls){
   });
   el.querySelectorAll('.ctl-preset').forEach(button => {
     button.addEventListener('click', () => setControl(button.dataset.id, { position: Number(button.dataset.position) }));
+  });
+  el.querySelectorAll('.ctl-hvac').forEach(select => {
+    select.addEventListener('change', () => setControl(select.dataset.id, { hvacMode: select.value }));
+  });
+  el.querySelectorAll('.ctl-temp-up, .ctl-temp-down').forEach(button => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.id;
+      const step = Number(button.dataset.step) || 1;
+      const min = Number(button.dataset.min);
+      const max = Number(button.dataset.max);
+      const tempEl = el.querySelector(`.thermo-temp[data-target-for="${id}"]`);
+      const current = parseFloat(tempEl.textContent) || 0;
+      const delta = button.classList.contains('ctl-temp-up') ? step : -step;
+      const next = Math.min(max, Math.max(min, current + delta));
+      tempEl.textContent = Math.round(next) + '°';
+      setControl(id, { temperature: next });
+    });
+  });
+  el.querySelectorAll('.ctl-media-power').forEach(input => {
+    input.addEventListener('change', () => setControl(input.dataset.id, { action: input.checked ? 'turn_on' : 'turn_off' }));
+  });
+  el.querySelectorAll('.ctl-media-action').forEach(button => {
+    button.addEventListener('click', () => setControl(button.dataset.id, { action: button.dataset.action }));
+  });
+  el.querySelectorAll('.ctl-media-source').forEach(select => {
+    select.addEventListener('change', () => {
+      if (select.value) setControl(select.dataset.id, { action: 'select_source', source: select.value });
+    });
   });
 }
 
@@ -707,6 +866,7 @@ async function refresh(){
       document.getElementById('cond-now').textContent = WMO[data.weather.current.weather_code] || 'Unknown';
     }
     renderWeek(data.weather?.daily);
+    renderHourly(data.weather?.hourly);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
     renderControls(data.controls);

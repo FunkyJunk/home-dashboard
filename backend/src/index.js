@@ -60,6 +60,13 @@ const CONTROLLABLE_DEVICES = {
     onData: { brightness: 255, hs_color: [0, 0] },
   },
   "cover.office_office_blinds": { type: "cover", name: "Office Blinds" },
+  // HA has no distinguishing name for these three (all just "Thermostat") and
+  // area assignment isn't exposed over the plain REST states API, so these
+  // are numbered rather than guessed - easy to relabel once known.
+  "climate.home_thermostat": { type: "climate", name: "Thermostat 1" },
+  "climate.home_thermostat_2": { type: "climate", name: "Thermostat 2" },
+  "climate.home_thermostat_3": { type: "climate", name: "Thermostat 3" },
+  "media_player.office_roku_streambar_pro_office": { type: "media", name: "Office Roku" },
 };
 
 function getControllableDevices(states) {
@@ -90,6 +97,33 @@ function getControllableDevices(states) {
           available,
           position: s.attributes?.current_position ?? null,
           isClosed: s.attributes?.is_closed ?? s.state === "closed",
+        };
+      }
+      if (meta.type === "climate") {
+        return {
+          id: entityId,
+          type: "climate",
+          name: meta.name,
+          available,
+          hvacMode: s.state,
+          hvacModes: s.attributes?.hvac_modes ?? [],
+          currentTemp: s.attributes?.current_temperature ?? null,
+          currentHumidity: s.attributes?.current_humidity ?? null,
+          targetTemp: s.attributes?.temperature ?? null,
+          minTemp: s.attributes?.min_temp ?? 60,
+          maxTemp: s.attributes?.max_temp ?? 90,
+          step: s.attributes?.target_temp_step ?? 1,
+        };
+      }
+      if (meta.type === "media") {
+        return {
+          id: entityId,
+          type: "media",
+          name: meta.name,
+          available,
+          state: s.state,
+          appName: s.attributes?.app_name ?? s.attributes?.source ?? null,
+          sourceList: s.attributes?.source_list ?? [],
         };
       }
       return null;
@@ -131,6 +165,52 @@ app.post("/api/ha/control/:entityId", async (req, res) => {
         return res.status(400).json({ error: "invalid position" });
       }
       await callHaService("cover", "set_cover_position", { entity_id: entityId, position });
+    } else if (meta.type === "climate") {
+      const { temperature, hvacMode } = req.body || {};
+      if (typeof hvacMode === "string") {
+        const current = await getHomeAssistantStates()
+          .then((states) => states.find((s) => s.entity_id === entityId))
+          .catch(() => null);
+        if (!current?.attributes?.hvac_modes?.includes(hvacMode)) {
+          return res.status(400).json({ error: "invalid hvac mode" });
+        }
+        await callHaService("climate", "set_hvac_mode", { entity_id: entityId, hvac_mode: hvacMode });
+      } else if (typeof temperature === "number") {
+        await callHaService("climate", "set_temperature", { entity_id: entityId, temperature });
+      } else {
+        return res.status(400).json({ error: "invalid request" });
+      }
+    } else if (meta.type === "media") {
+      const { action, source } = req.body || {};
+      if (action === "select_source") {
+        if (typeof source !== "string") {
+          return res.status(400).json({ error: "invalid source" });
+        }
+        const current = await getHomeAssistantStates()
+          .then((states) => states.find((s) => s.entity_id === entityId))
+          .catch(() => null);
+        if (!current?.attributes?.source_list?.includes(source)) {
+          return res.status(400).json({ error: "invalid source" });
+        }
+        await callHaService("media_player", "select_source", { entity_id: entityId, source });
+      } else if (action === "mute") {
+        await callHaService("media_player", "volume_mute", { entity_id: entityId, is_volume_muted: true });
+      } else {
+        const MEDIA_ACTIONS = {
+          turn_on: "turn_on",
+          turn_off: "turn_off",
+          volume_up: "volume_up",
+          volume_down: "volume_down",
+          play_pause: "media_play_pause",
+          previous: "media_previous_track",
+          next: "media_next_track",
+        };
+        const service = MEDIA_ACTIONS[action];
+        if (!service) {
+          return res.status(400).json({ error: "invalid action" });
+        }
+        await callHaService("media_player", service, { entity_id: entityId });
+      }
     }
     res.json({ ok: true });
   } catch (e) {
@@ -170,7 +250,7 @@ app.get("/api/ring/snapshot/:entityId", async (req, res) => {
 async function getWeather() {
   const lat = process.env.LAT;
   const lon = process.env.LON;
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&forecast_days=2&timezone=auto`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`weather fetch failed: ${r.status}`);
   return r.json();
