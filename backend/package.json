@@ -12,6 +12,7 @@
     "express": "^4.19.2",
     "dotenv": "^16.4.5",
     "googleapis": "^140.0.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.0"
   }
 }

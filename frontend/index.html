@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="hls.min.js"></script>
 <style>
   :root{
     --bg: #12161c;
@@ -201,7 +202,12 @@
     background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
     border-radius:4px; padding:.4em .8em; cursor:pointer; font-family:inherit; font-size:.85rem;
   }
-  .ring-modal img{width:100%; display:block; border-radius:6px; background:#000; aspect-ratio:16/9; object-fit:contain;}
+  .ring-modal video{width:100%; display:block; border-radius:6px; background:#000; aspect-ratio:16/9; object-fit:contain;}
+  .ring-modal-status{
+    text-align:center; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;
+    font-size:.85rem; padding:1rem 0;
+  }
+  .ring-modal-status.error{color:var(--coral);}
 
   .updated{
     margin-top:1.5rem;
@@ -263,7 +269,8 @@
         <span id="ring-modal-name"></span>
         <button class="ring-modal-close" id="ring-modal-close">Close</button>
       </div>
-      <img id="ring-modal-img" alt="Live view" />
+      <div class="ring-modal-status" id="ring-modal-status">Connecting&hellip;</div>
+      <video id="ring-modal-video" muted autoplay playsinline style="display:none;"></video>
     </div>
   </div>
 
@@ -450,7 +457,7 @@ function renderRing(cameras){
     const label = c.dingActive ? 'Ding' : (c.motionActive ? 'Motion' : (c.available ? 'Idle' : 'Offline'));
     const cls = (c.dingActive || c.motionActive) ? 'alert' : 'calm';
     return `
-      <button type="button" class="ring-cam" data-name="${escapeHtml(c.name)}" data-stream="${c.streamUrl}">
+      <button type="button" class="ring-cam" data-name="${escapeHtml(c.name)}" data-id="${c.id}">
         <img class="ring-thumb" src="${c.snapshotUrl}?t=${Date.now()}" alt="${escapeHtml(c.name)}" loading="lazy" />
         <div class="ring-cam-foot">
           <span class="ring-cam-name">${escapeHtml(c.name)}</span>
@@ -461,20 +468,67 @@ function renderRing(cameras){
   }).join('');
 
   el.querySelectorAll('.ring-cam').forEach(btn => {
-    btn.addEventListener('click', () => openRingModal(btn.dataset.name, btn.dataset.stream));
+    btn.addEventListener('click', () => openRingModal(btn.dataset.name, btn.dataset.id));
   });
 }
 
-function openRingModal(name, streamUrl){
+let currentHls = null;
+
+function setRingModalStatus(text, isError){
+  const status = document.getElementById('ring-modal-status');
+  const video = document.getElementById('ring-modal-video');
+  status.textContent = text;
+  status.className = 'ring-modal-status' + (isError ? ' error' : '');
+  status.style.display = text ? '' : 'none';
+  video.style.display = text ? 'none' : '';
+}
+
+async function openRingModal(name, entityId){
   document.getElementById('ring-modal-name').textContent = name;
-  document.getElementById('ring-modal-img').src = streamUrl;
   document.getElementById('ring-modal').classList.add('open');
+  setRingModalStatus('Connecting…', false);
+  stopRingModalPlayback();
+
+  const video = document.getElementById('ring-modal-video');
+  try {
+    const res = await fetch(`/api/ring/live/${entityId}`);
+    const data = await res.json();
+    if (!res.ok || !data.url) throw new Error(data.error || 'live view unavailable');
+
+    if (window.Hls && Hls.isSupported()){
+      const hls = new Hls();
+      currentHls = hls;
+      hls.on(Hls.Events.MANIFEST_PARSED, () => setRingModalStatus('', false));
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) setRingModalStatus('Live view error', true);
+      });
+      hls.loadSource(data.url);
+      hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')){
+      video.src = data.url;
+      video.addEventListener('loadedmetadata', () => setRingModalStatus('', false), { once: true });
+    } else {
+      throw new Error('live view not supported in this browser');
+    }
+  } catch (e){
+    setRingModalStatus(e.message || 'Unable to load live view', true);
+  }
+}
+
+function stopRingModalPlayback(){
+  if (currentHls){
+    currentHls.destroy();
+    currentHls = null;
+  }
+  const video = document.getElementById('ring-modal-video');
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
 }
 
 function closeRingModal(){
   document.getElementById('ring-modal').classList.remove('open');
-  // Clearing src drops the connection so the camera stops streaming.
-  document.getElementById('ring-modal-img').src = '';
+  stopRingModalPlayback();
 }
 
 async function refresh(){

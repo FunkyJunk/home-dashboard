@@ -1,11 +1,13 @@
 import express from "express";
 import "dotenv/config";
 import { google } from "googleapis";
+import WebSocket from "ws";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HA_URL = process.env.HOME_ASSISTANT_URL || "http://homeassistant:8123";
 const HA_TOKEN = process.env.HOME_ASSISTANT_TOKEN;
+const HA_WS_URL = HA_URL.replace(/^http/, "ws") + "/api/websocket";
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -56,20 +58,73 @@ app.get("/api/ring/snapshot/:entityId", async (req, res) => {
   }
 });
 
-app.get("/api/ring/stream/:entityId", async (req, res) => {
+// The plain snapshot/MJPEG-repeat endpoints just replay the entity's last
+// motion-event frame for Ring's "_live_view" cameras - not an actual live
+// capture. A genuine live look requires HA's real stream negotiation (over
+// its WebSocket API), which hands back an HLS playlist URL.
+app.get("/api/ring/live/:entityId", async (req, res) => {
   const { entityId } = req.params;
   if (!RING_CAMERA_ID.test(entityId)) {
     return res.status(400).json({ error: "invalid camera id" });
   }
+  try {
+    const url = await requestRingLiveUrl(entityId);
+    res.json({ url });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "live stream request failed" });
+  }
+});
+
+function requestRingLiveUrl(entityId) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(HA_WS_URL);
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("Home Assistant stream request timed out"));
+    }, 10000);
+    const finish = (fn, arg) => {
+      clearTimeout(timeout);
+      ws.terminate();
+      fn(arg);
+    };
+
+    ws.on("message", (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      if (msg.type === "auth_required") {
+        ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
+      } else if (msg.type === "auth_invalid") {
+        finish(reject, new Error("Home Assistant auth rejected"));
+      } else if (msg.type === "auth_ok") {
+        ws.send(JSON.stringify({ id: 1, type: "camera/stream", entity_id: entityId }));
+      } else if (msg.id === 1 && msg.type === "result") {
+        if (msg.success && msg.result?.url) {
+          finish(resolve, msg.result.url);
+        } else {
+          finish(reject, new Error(msg.error?.message || "stream request failed"));
+        }
+      }
+    });
+    ws.on("error", (err) => finish(reject, err));
+  });
+}
+
+// Mirrors HA's own /api/hls/ path so both relative and absolute references
+// inside the returned HLS playlist resolve back through this same proxy.
+app.get("/api/hls/*", async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => controller.abort());
   try {
-    const r = await fetch(`${HA_URL}/api/camera_proxy_stream/${entityId}`, {
+    const r = await fetch(`${HA_URL}/api/hls/${req.params[0]}`, {
       headers: { Authorization: `Bearer ${HA_TOKEN}` },
       signal: controller.signal,
     });
     if (!r.ok || !r.body) return res.status(r.status || 502).end();
-    res.set("Content-Type", r.headers.get("content-type") || "multipart/x-mixed-replace");
+    res.set("Content-Type", r.headers.get("content-type") || "application/octet-stream");
     res.set("Cache-Control", "no-store");
     for await (const chunk of r.body) {
       if (res.destroyed) break;
@@ -141,7 +196,6 @@ function getRingCameras(states) {
       motionActive: isActiveOrRecent(motion),
       dingActive: isActiveOrRecent(ding),
       snapshotUrl: `/api/ring/snapshot/${cam.entity_id}`,
-      streamUrl: `/api/ring/stream/${cam.entity_id}`,
     };
   });
 }
