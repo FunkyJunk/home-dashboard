@@ -5,3 +5,4 @@ infra/volumes/
 *.log
 .DS_Store
 credentials.json
+nest-credentials.json

@@ -91,7 +91,38 @@ email/password plus 2FA, exchanged once for a long-lived refresh token.
    cameras to limit the drain, but a camera add-on that hammers this more
    than the existing 60s poll cycle will burn through battery faster.
 
-## 4. Synology NAS setup
+## 4. Nest thermostat access (direct, bypassing Homey)
+
+The thermostats are also reachable through Home Assistant via the Homey
+bridge, but that integration has never surfaced correct names or reliable
+data for them and (as of writing) can't actually write a new setpoint -
+Homey's API is rejecting the write with a permissions error. This talks to
+Nest's own Smart Device Management (SDM) API directly instead.
+
+Google discontinued the old free Nest API - this is the current paid
+successor, the **Device Access** program:
+
+1. https://console.cloud.google.com → new project (or reuse an existing
+   one) → enable the **Smart Device Management API**.
+2. Credentials → Create Credentials → OAuth client ID → Application type:
+   **Web application**. Add `http://localhost:8092/oauth2callback` as an
+   authorized redirect URI. Download the JSON as
+   `backend/src/auth/nest-credentials.json`.
+3. https://console.nest.google.com/device-access → pay the **one-time $5
+   registration fee** → create a Device Access project, linking it to the
+   OAuth client from step 2. Note its **project ID**.
+4. Run `node backend/src/auth/get-nest-refresh-token.js <device-access-project-id>`
+   *locally on your desktop*. It opens a browser for Google sign-in against
+   whichever account owns the Nest structure, then prints
+   `NEST_PROJECT_ID` / `NEST_CLIENT_ID` / `NEST_CLIENT_SECRET` /
+   `NEST_REFRESH_TOKEN` to paste into `infra/.env` on the NAS.
+
+   Honest heads-up: SDM's refresh tokens can get silently revoked if the
+   linked Google Cloud project's OAuth consent screen is still in "Testing"
+   mode (those tokens expire after 7 days) - move it to "Production" in the
+   Cloud Console's OAuth consent screen settings to avoid that.
+
+## 5. Synology NAS setup
 
 1. **Control Panel → Terminal & SNMP** → enable SSH.
 2. **Package Center** → install **Container Manager** (DSM 7.x's Docker
@@ -130,7 +161,7 @@ email/password plus 2FA, exchanged once for a long-lived refresh token.
    access, so the MyQ integration in HA breaks periodically when they change
    something. Not a you-problem — just expect the occasional patch.
 
-## 5. Point the wall tablet
+## 6. Point the wall tablet
 
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
