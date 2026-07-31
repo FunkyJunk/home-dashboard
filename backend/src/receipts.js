@@ -514,6 +514,13 @@ export function createReceiptsRouter({ oauth2Client }) {
         const remoteImageUrls = extractRemoteImageUrls(parts.html);
 
         const ai = await extractWithAI(headers.Subject || "", bodyText);
+        // A confident "this isn't even a receipt" from the model (customer
+        // service threads, insurance paperwork, marketplace notifications)
+        // is worth trusting over the Gmail search terms alone - drop it
+        // rather than cluttering review with something nobody would ever
+        // call a receipt. Still counts toward the "scanned N emails" tally.
+        if (ai && ai.isReceipt === false) return null;
+
         const total = ai ? ai.total ?? null : findAmount(bodyText, ["total", "grand total", "order total", "amount charged", "amount due"]);
         const tax = ai ? ai.tax ?? null : findAmount(bodyText, ["tax", "sales tax"]);
         const shipping = ai ? ai.shipping ?? null : findAmount(bodyText, ["shipping", "delivery"]);
@@ -538,7 +545,7 @@ export function createReceiptsRouter({ oauth2Client }) {
         };
       });
 
-      const fulfilled = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      const fulfilled = results.filter((r) => r.status === "fulfilled" && r.value !== null).map((r) => r.value);
       const tx = db.transaction((rows) => {
         for (const c of rows) {
           const legacy = getLegacyResolved.get(c.id);
