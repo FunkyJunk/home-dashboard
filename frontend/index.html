@@ -375,7 +375,8 @@
   .receipts-table th .sort-arrow{margin-left:.3em; color:var(--teal); display:inline-block; width:.8em;}
   .receipts-table td{padding:.5rem .6rem; border-bottom:1px solid var(--panel-line); vertical-align:middle;}
   .receipts-table .empty{color:var(--text-dim); text-align:center; padding:1.5rem;}
-  .receipt-subject{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .receipt-subject{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--panel-line);}
+  .receipt-subject:hover{color:var(--teal); text-decoration-color:var(--teal);}
   .receipt-images{display:flex; gap:.3rem;}
   .receipt-thumb{
     width:32px; height:32px; object-fit:cover; border-radius:4px; cursor:pointer;
@@ -394,8 +395,32 @@
   .receipt-btn.business{border-color:var(--teal); color:var(--teal);}
   .receipt-btn.split{border-color:var(--amber); color:var(--amber);}
   .receipt-btn.personal{color:var(--text-dim);}
+  .receipt-btn.ignore{color:var(--text-dim);}
+  .receipt-btn.ignore.ignore-match{border-color:var(--coral); color:var(--coral); font-weight:600;}
   .receipt-btn:hover{filter:brightness(1.2);}
   .receipt-btn:disabled{opacity:.5; cursor:not-allowed;}
+
+  .ignore-modal-inner{max-width:min(90vw, 480px);}
+  .ignore-modal-hint{color:var(--text-dim); font-size:.85rem; margin-bottom:.5rem;}
+  .ignore-modal-words{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;}
+  .ignore-keyword-chip{
+    display:flex; align-items:center; gap:.35rem; background:#0d1116; border:1px solid var(--panel-line);
+    border-radius:4px; padding:.35em .6em; font-size:.8rem; cursor:pointer;
+  }
+  .ignore-modal-actions{display:flex; gap:.5rem; flex-wrap:wrap;}
+
+  .receipt-detail-modal-inner{max-width:min(90vw, 640px); max-height:85vh; overflow-y:auto;}
+  .receipt-detail-row{margin-bottom:.75rem; font-size:.85rem;}
+  .receipt-detail-label{
+    display:block; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-size:.7rem;
+    letter-spacing:.05em; text-transform:uppercase; margin-bottom:.2rem;
+  }
+  .receipt-detail-items{width:100%; border-collapse:collapse;}
+  .receipt-detail-items td{padding:.3rem .5rem; border-bottom:1px solid var(--panel-line);}
+  .receipt-detail-snippet{
+    white-space:pre-wrap; background:#0d1116; border:1px solid var(--panel-line);
+    border-radius:6px; padding:.6rem; max-height:200px; overflow-y:auto;
+  }
 
   .split-panel{background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; padding:1rem; margin:.25rem 0;}
   .split-items-table{width:100%; border-collapse:collapse; margin-bottom:.75rem;}
@@ -498,6 +523,32 @@
           <button class="modal-close" id="receipt-image-modal-close">Close</button>
         </div>
         <img id="receipt-image-modal-img" alt="Receipt attachment" />
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="ignore-modal">
+      <div class="modal-inner ignore-modal-inner">
+        <div class="modal-head">
+          <span>Ignore this email</span>
+          <button class="modal-close" id="ignore-modal-close">Close</button>
+        </div>
+        <p class="ignore-modal-hint">Select any words from the subject below to permanently ignore similar emails in future scans:</p>
+        <div class="ignore-modal-words" id="ignore-modal-words"></div>
+        <div class="ignore-modal-actions">
+          <button type="button" class="receipt-btn business" id="ignore-modal-confirm">Add keywords &amp; ignore</button>
+          <button type="button" class="receipt-btn personal" id="ignore-modal-skip">Just ignore this one</button>
+          <button type="button" class="receipt-btn personal" id="ignore-modal-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="receipt-detail-modal">
+      <div class="modal-inner receipt-detail-modal-inner">
+        <div class="modal-head">
+          <span id="receipt-detail-modal-title">Receipt detail</span>
+          <button class="modal-close" id="receipt-detail-modal-close">Close</button>
+        </div>
+        <div id="receipt-detail-body"></div>
       </div>
     </div>
 
@@ -1447,6 +1498,115 @@ function closeReceiptImageModal(){
   document.getElementById('receipt-image-modal-img').src = '';
 }
 
+// ---------------------------------------------------------------------
+// Ignore list - for shipping-notification noise ("shipped", "delivered",
+// etc.) that isn't really a receipt at all. Persisted server-side so it
+// also excludes matching emails from future Gmail scans, not just the
+// current view.
+// ---------------------------------------------------------------------
+
+let ignoreKeywords = [];
+let pendingIgnoreIdx = null;
+
+const IGNORE_STOPWORDS = new Set([
+  'your', 'the', 'and', 'for', 'has', 'have', 'been', 'from', 'this', 'that',
+  'with', 'you', 'was', 'are', 'order', 'confirmation', 'receipt', 'payment',
+  'number', 'item', 'items', 'thank', 'thanks', 'now', 'new', 'out',
+]);
+
+async function loadIgnoreKeywords(){
+  try {
+    const res = await fetch('/api/receipts/ignore-keywords');
+    const data = await res.json();
+    ignoreKeywords = data.keywords || [];
+  } catch (e){ /* non-fatal - highlighting just won't reflect the list */ }
+}
+
+function extractSubjectWords(subject){
+  const words = (subject || '').toLowerCase().match(/[a-z]{3,}/g) || [];
+  return [...new Set(words)].filter(w => !IGNORE_STOPWORDS.has(w));
+}
+
+function candidateMatchesIgnore(c){
+  const subject = (c.subject || '').toLowerCase();
+  return ignoreKeywords.some(k => subject.includes(k));
+}
+
+function openIgnoreModal(idx){
+  pendingIgnoreIdx = idx;
+  const candidate = receiptCandidates[idx];
+  const words = extractSubjectWords(candidate.subject);
+  const wordsEl = document.getElementById('ignore-modal-words');
+  wordsEl.innerHTML = words.length
+    ? words.map(w => `<label class="ignore-keyword-chip"><input type="checkbox" value="${escapeHtml(w)}" checked> ${escapeHtml(w)}</label>`).join('')
+    : '<span class="receipts-status">No usable keywords found in this subject.</span>';
+  document.getElementById('ignore-modal').classList.add('open');
+}
+function closeIgnoreModal(){
+  document.getElementById('ignore-modal').classList.remove('open');
+  pendingIgnoreIdx = null;
+}
+
+async function confirmIgnore(withKeywords){
+  const idx = pendingIgnoreIdx;
+  const candidate = receiptCandidates[idx];
+  if (!candidate){ closeIgnoreModal(); return; }
+  if (withKeywords){
+    const selected = [...document.querySelectorAll('#ignore-modal-words input:checked')].map(inp => inp.value);
+    if (selected.length){
+      await fetch('/api/receipts/ignore-keywords', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords: selected }),
+      });
+      await loadIgnoreKeywords();
+    }
+  }
+  await fetch(`/api/receipts/${candidate.id}/resolve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision: 'ignore' }),
+  });
+  closeIgnoreModal();
+  removeReceiptByIndex(idx);
+}
+
+// ---------------------------------------------------------------------
+// Receipt detail modal - the full, non-truncated view of a receipt
+// (subject, snippet, line items, images), opened by clicking the subject
+// cell instead of relying on a hover-only title tooltip.
+// ---------------------------------------------------------------------
+
+function openReceiptDetail(idx){
+  const c = receiptCandidates[idx];
+  if (!c) return;
+  const dateFull = c.date && !isNaN(new Date(c.date)) ? new Date(c.date).toLocaleString('en-US') : (c.date || '');
+  const itemsHtml = (c.lineItems || []).length
+    ? `<table class="receipt-detail-items"><tbody>` +
+        c.lineItems.map(it => `<tr><td>${escapeHtml(it.description || '(no description)')}</td><td>${it.amount != null ? '$' + fmtMoney(it.amount) : ''}</td></tr>`).join('') +
+      `</tbody></table>`
+    : '<span class="receipts-status">No line items were detected for this receipt.</span>';
+  const imagesHtml = (c.images || []).map((img, k) =>
+    `<img class="receipt-thumb" data-idx="${idx}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
+  ).join('');
+
+  document.getElementById('receipt-detail-modal-title').textContent = receiptFromName(c.from);
+  document.getElementById('receipt-detail-body').innerHTML = `
+    <div class="receipt-detail-row"><span class="receipt-detail-label">Subject</span><div>${escapeHtml(c.subject || '(no subject)')}</div></div>
+    <div class="receipt-detail-row"><span class="receipt-detail-label">From</span><div>${escapeHtml(c.from || '')}</div></div>
+    <div class="receipt-detail-row"><span class="receipt-detail-label">Date</span><div>${escapeHtml(dateFull)}</div></div>
+    <div class="receipt-detail-row"><span class="receipt-detail-label">Total / Tax / Shipping</span><div>${c.total != null ? '$' + fmtMoney(c.total) : '--'} / ${c.tax != null ? '$' + fmtMoney(c.tax) : '--'} / ${c.shipping != null ? '$' + fmtMoney(c.shipping) : '--'}</div></div>
+    <div class="receipt-detail-row"><span class="receipt-detail-label">Line items</span>${itemsHtml}</div>
+    ${imagesHtml ? `<div class="receipt-detail-row"><span class="receipt-detail-label">Images</span><div class="receipt-images">${imagesHtml}</div></div>` : ''}
+    <div class="receipt-detail-row"><span class="receipt-detail-label">Email preview</span><div class="receipt-detail-snippet">${escapeHtml(c.snippet || c.bodyText || '(no preview available)')}</div></div>
+  `;
+  document.getElementById('receipt-detail-body').querySelectorAll('.receipt-thumb').forEach(img => {
+    img.addEventListener('click', () => openReceiptImageModal(img.src, c.subject));
+  });
+  document.getElementById('receipt-detail-modal').classList.add('open');
+}
+function closeReceiptDetail(){
+  document.getElementById('receipt-detail-modal').classList.remove('open');
+}
+
 function fmtMoney(n){
   return n == null || isNaN(n) ? '' : n.toFixed(2);
 }
@@ -1466,11 +1626,12 @@ function renderReceiptsGrid(){
     const imagesHtml = (c.images || []).map((img, k) =>
       `<img class="receipt-thumb" data-idx="${i}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
     ).join('');
+    const ignoreMatch = candidateMatchesIgnore(c);
     return `
       <tr class="receipt-row" data-idx="${i}">
         <td>${escapeHtml(dateShort)}</td>
         <td>${escapeHtml(receiptFromName(c.from))}</td>
-        <td class="receipt-subject" title="${escapeHtml(c.subject)}">${escapeHtml(c.subject)}</td>
+        <td class="receipt-subject" data-idx="${i}" title="Click for full details">${escapeHtml(c.subject)}</td>
         <td class="receipt-images">${imagesHtml}</td>
         <td><input type="number" step="0.01" class="receipt-input receipt-total" data-idx="${i}" value="${fmtMoney(c.total)}" placeholder="--"></td>
         <td><input type="number" step="0.01" class="receipt-input receipt-tax" data-idx="${i}" value="${fmtMoney(c.tax)}" placeholder="--"></td>
@@ -1479,6 +1640,7 @@ function renderReceiptsGrid(){
           <button type="button" class="receipt-btn business" data-idx="${i}" data-action="business">Business</button>
           <button type="button" class="receipt-btn split" data-idx="${i}" data-action="split">Split</button>
           <button type="button" class="receipt-btn personal" data-idx="${i}" data-action="personal">Personal</button>
+          <button type="button" class="receipt-btn ignore${ignoreMatch ? ' ignore-match' : ''}" data-idx="${i}" data-action="ignore" title="${ignoreMatch ? 'Subject matches a saved ignore keyword' : ''}">Ignore</button>
         </td>
       </tr>
       <tr class="receipt-split-row" id="split-row-${i}" style="display:none;">
@@ -1495,6 +1657,9 @@ function renderReceiptsGrid(){
       const c = receiptCandidates[Number(img.dataset.idx)];
       openReceiptImageModal(img.src, receiptFromName(c.from) + ' — ' + c.subject);
     });
+  });
+  tbody.querySelectorAll('.receipt-subject').forEach(td => {
+    td.addEventListener('click', () => openReceiptDetail(Number(td.dataset.idx)));
   });
 }
 
@@ -1523,6 +1688,11 @@ async function handleReceiptAction(idx, action, btn){
       body: JSON.stringify({ decision: 'personal' }),
     });
     removeReceiptByIndex(idx);
+    return;
+  }
+
+  if (action === 'ignore'){
+    openIgnoreModal(idx);
     return;
   }
 
@@ -1774,8 +1944,20 @@ document.getElementById('receipt-image-modal-close').addEventListener('click', c
 document.getElementById('receipt-image-modal').addEventListener('click', (e) => {
   if (e.target.id === 'receipt-image-modal') closeReceiptImageModal();
 });
+document.getElementById('ignore-modal-confirm').addEventListener('click', () => confirmIgnore(true));
+document.getElementById('ignore-modal-skip').addEventListener('click', () => confirmIgnore(false));
+document.getElementById('ignore-modal-cancel').addEventListener('click', closeIgnoreModal);
+document.getElementById('ignore-modal-close').addEventListener('click', closeIgnoreModal);
+document.getElementById('ignore-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'ignore-modal') closeIgnoreModal();
+});
+document.getElementById('receipt-detail-modal-close').addEventListener('click', closeReceiptDetail);
+document.getElementById('receipt-detail-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'receipt-detail-modal') closeReceiptDetail();
+});
 restoreTaxFolder();
 (async function initReceipts(){
+  await loadIgnoreKeywords();
   await loadMonths();
   await loadMonthCandidates(currentMonth);
 })();

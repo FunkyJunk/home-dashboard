@@ -44,6 +44,10 @@ db.exec(`
     decision TEXT,
     resolved_at TEXT
   );
+  CREATE TABLE IF NOT EXISTS ignore_keywords (
+    keyword TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+  );
 `);
 
 // One-time migration from the old flat-file state (pre-database version of
@@ -83,8 +87,11 @@ function monthRange(month) {
   return { after, before };
 }
 
-function buildQuery(after, before) {
-  const exclusions = RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`).join(" ");
+function buildQuery(after, before, ignoreKeywords) {
+  // ignoreKeywords is user-curated (via the "Ignore" button's keyword
+  // picker) on top of the static exclusion list, so shipping/delivery
+  // noise the user has already flagged stops coming back in future scans.
+  const exclusions = [...RECEIPT_QUERY_EXCLUSIONS, ...ignoreKeywords.map((k) => `"${k}"`)].map((t) => `-${t}`).join(" ");
   return `after:${after} before:${before} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
 }
 
@@ -254,6 +261,34 @@ export function createReceiptsRouter({ oauth2Client }) {
     res.json({ year, months });
   });
 
+  // The ignore list is user-curated: picked from a subject's words via the
+  // "Ignore" button's keyword popup. Used both to highlight matching
+  // candidates client-side and to exclude future Gmail scans (see buildQuery).
+  router.get("/ignore-keywords", (req, res) => {
+    const keywords = db.prepare("SELECT keyword FROM ignore_keywords ORDER BY added_at DESC").all().map((r) => r.keyword);
+    res.json({ keywords });
+  });
+
+  router.post("/ignore-keywords", (req, res) => {
+    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : [];
+    const insert = db.prepare("INSERT OR IGNORE INTO ignore_keywords (keyword, added_at) VALUES (?, ?)");
+    const now = new Date().toISOString();
+    const tx = db.transaction((words) => {
+      for (const w of words) {
+        const keyword = String(w || "").trim().toLowerCase();
+        if (keyword) insert.run(keyword, now);
+      }
+    });
+    tx(keywords);
+    const all = db.prepare("SELECT keyword FROM ignore_keywords ORDER BY added_at DESC").all().map((r) => r.keyword);
+    res.json({ keywords: all });
+  });
+
+  router.delete("/ignore-keywords/:keyword", (req, res) => {
+    db.prepare("DELETE FROM ignore_keywords WHERE keyword = ?").run(req.params.keyword.toLowerCase());
+    res.json({ ok: true });
+  });
+
   // Pure DB read - never touches Gmail. This is what the grid loads from
   // on every month switch/page load so browsing is instant and doesn't
   // re-run a search.
@@ -282,8 +317,9 @@ export function createReceiptsRouter({ oauth2Client }) {
         });
       }
 
+      const ignoreKeywords = db.prepare("SELECT keyword FROM ignore_keywords").all().map((r) => r.keyword);
       const { after, before } = monthRange(month);
-      const query = buildQuery(after, before);
+      const query = buildQuery(after, before, ignoreKeywords);
 
       let messages = [];
       let pageToken;
