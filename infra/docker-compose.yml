@@ -17,6 +17,8 @@ services:
     container_name: dashboard-backend
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./volumes/backend:/app/data   # persists which receipts have been resolved
     depends_on:
       - homeassistant
 

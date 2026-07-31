@@ -2,6 +2,7 @@ import express from "express";
 import "dotenv/config";
 import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
+import { createReceiptsRouter } from "./receipts.js";
 
 const app = express();
 app.use(express.json());
@@ -22,6 +23,8 @@ const oauth2Client = new google.auth.OAuth2(
 );
 oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
