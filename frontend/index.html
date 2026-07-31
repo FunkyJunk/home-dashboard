@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="xlsx.full.min.js"></script>
+<script src="jspdf.umd.min.js"></script>
 <style>
   :root{
     --bg: #12161c;
@@ -340,6 +342,65 @@
   @media (prefers-reduced-motion: no-preference){
     .flap{ transition: transform .15s ease; }
   }
+
+  /* Receipts */
+  .receipts-card{margin-top:1.5rem;}
+  .receipts-toolbar{
+    display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+    margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid var(--panel-line);
+  }
+  .receipts-toolbar-btn{
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.5em 1em; cursor:pointer; font-family:inherit; font-size:.85rem;
+  }
+  .receipts-toolbar-btn:hover{border-color:var(--teal);}
+  .receipts-toolbar-btn.primary{background:var(--teal-dim); border-color:var(--teal); color:var(--teal); font-weight:600;}
+  .receipts-toolbar-btn:disabled{opacity:.5; cursor:not-allowed;}
+  .receipts-folder-status{font-size:.8rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
+  .receipts-status{font-size:.8rem; color:var(--text-dim); margin-left:auto;}
+  .receipts-status.error{color:var(--coral);}
+
+  .receipts-table-wrap{overflow-x:auto;}
+  .receipts-table{width:100%; border-collapse:collapse; font-size:.85rem;}
+  .receipts-table th{
+    text-align:left; font-family:'IBM Plex Mono', monospace; font-size:.7rem;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim);
+    padding:.5rem .6rem; border-bottom:1px solid var(--panel-line); white-space:nowrap;
+  }
+  .receipts-table td{padding:.5rem .6rem; border-bottom:1px solid var(--panel-line); vertical-align:middle;}
+  .receipts-table .empty{color:var(--text-dim); text-align:center; padding:1.5rem;}
+  .receipt-subject{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .receipt-input{
+    width:5.5em; background:#0d1116; border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;
+  }
+  .receipt-actions{display:flex; gap:.4rem; white-space:nowrap;}
+  .receipt-btn{
+    border-radius:4px; padding:.4em .7em; cursor:pointer; font-family:inherit; font-size:.78rem;
+    border:1px solid var(--panel-line); background:var(--panel); color:var(--text);
+  }
+  .receipt-btn.business{border-color:var(--teal); color:var(--teal);}
+  .receipt-btn.split{border-color:var(--amber); color:var(--amber);}
+  .receipt-btn.personal{color:var(--text-dim);}
+  .receipt-btn:hover{filter:brightness(1.2);}
+  .receipt-btn:disabled{opacity:.5; cursor:not-allowed;}
+
+  .split-panel{background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; padding:1rem; margin:.25rem 0;}
+  .split-items-table{width:100%; border-collapse:collapse; margin-bottom:.75rem;}
+  .split-items-table th{
+    text-align:left; font-size:.7rem; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--text-dim); padding:.3rem .4rem; font-family:'IBM Plex Mono', monospace;
+  }
+  .split-items-table td{padding:.3rem .4rem;}
+  .split-desc{width:100%; background:var(--panel); border:1px solid var(--panel-line); color:var(--text); border-radius:4px; padding:.3em .5em; font-family:inherit; font-size:.8rem;}
+  .split-amount{width:6em; background:var(--panel); border:1px solid var(--panel-line); color:var(--text); border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;}
+  .split-summary{font-family:'IBM Plex Mono', monospace; font-size:.8rem; color:var(--text-dim); margin-bottom:.75rem; line-height:1.6;}
+  .split-summary strong{color:var(--teal);}
+  .split-actions{display:flex; gap:.5rem;}
+  .add-split-item{
+    background:none; border:1px dashed var(--panel-line); color:var(--text-dim); border-radius:4px;
+    padding:.3em .6em; cursor:pointer; font-family:inherit; font-size:.78rem; margin-bottom:.75rem;
+  }
 </style>
 </head>
 <body>
@@ -383,6 +444,27 @@
       <div class="card wide" data-tile-id="ring" id="ring-section" style="display:none;">
         <h2 class="card-handle">Ring cameras</h2>
         <div class="ring-strip" id="ring-cams"></div>
+      </div>
+    </div>
+
+    <div class="card receipts-card" id="receipts-section">
+      <h2>Business Receipts</h2>
+      <div class="receipts-toolbar">
+        <button type="button" id="receipts-pick-folder" class="receipts-toolbar-btn">Choose tax folder&hellip;</button>
+        <button type="button" id="receipts-reconnect-folder" class="receipts-toolbar-btn" style="display:none;">Reconnect folder</button>
+        <span class="receipts-folder-status" id="receipts-folder-status">No folder chosen yet</span>
+        <button type="button" id="receipts-scan" class="receipts-toolbar-btn primary">Scan Gmail for receipts</button>
+        <span class="receipts-status" id="receipts-status"></span>
+      </div>
+      <div class="receipts-table-wrap">
+        <table class="receipts-table">
+          <thead>
+            <tr><th>Date</th><th>From</th><th>Subject</th><th>Total</th><th>Tax</th><th>Shipping</th><th>Action</th></tr>
+          </thead>
+          <tbody id="receipts-tbody">
+            <tr><td colspan="7" class="empty">Click &quot;Scan Gmail for receipts&quot; to check for new ones.</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -1085,6 +1167,426 @@ const boardGrid = document.getElementById('board-grid');
 reorderDomToSaved(boardGrid, '.card', TILE_ORDER_KEY);
 makeSortable(boardGrid, { handleSelector: '.card-handle', itemSelector: '.card', storageKey: TILE_ORDER_KEY });
 makeSortable(document.getElementById('controls-grid'), { handleSelector: '.control-head-left', itemSelector: '.control-tile', storageKey: CONTROL_ORDER_KEY });
+
+// ---------------------------------------------------------------------
+// Business Receipts
+//
+// Everything about touching "the PC's filesystem" happens client-side via
+// the File System Access API (Chrome/Edge only) - the backend only knows
+// how to search Gmail and hand back candidate data/attachment bytes. Once
+// granted, the folder handle is kept in IndexedDB so it survives reloads;
+// the browser still requires re-confirming permission each session
+// (a security feature of the API, not something we can skip).
+// ---------------------------------------------------------------------
+
+const SPREADSHEET_FILENAME = 'business-expenses-' + new Date().getFullYear() + '.xlsx';
+const SPREADSHEET_HEADERS = ['Date', 'Vendor', 'Subject', 'Total', 'Tax', 'Shipping', 'Business Amount', 'Split?', 'PDF File'];
+
+let taxFolderHandle = null;
+let pendingTaxFolderHandle = null;
+let receiptCandidates = [];
+
+function openHandleDb(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('home-dashboard', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGet(key){
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('handles', 'readonly').objectStore('handles').get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value){
+  const db = await openHandleDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function updateFolderStatus(){
+  const statusEl = document.getElementById('receipts-folder-status');
+  const reconnectBtn = document.getElementById('receipts-reconnect-folder');
+  if (taxFolderHandle){
+    statusEl.textContent = 'Folder: ' + taxFolderHandle.name;
+    reconnectBtn.style.display = 'none';
+  } else if (pendingTaxFolderHandle){
+    statusEl.textContent = 'Folder: ' + pendingTaxFolderHandle.name + ' (needs reconnect)';
+    reconnectBtn.style.display = '';
+  } else {
+    statusEl.textContent = 'No folder chosen yet';
+    reconnectBtn.style.display = 'none';
+  }
+}
+
+async function pickTaxFolder(){
+  if (!window.showDirectoryPicker){
+    alert('This feature needs Chrome or Edge (File System Access API not supported here).');
+    return;
+  }
+  try {
+    taxFolderHandle = await window.showDirectoryPicker({ id: 'tax-folder', mode: 'readwrite' });
+    pendingTaxFolderHandle = null;
+    await idbSet('taxFolderHandle', taxFolderHandle);
+    updateFolderStatus();
+  } catch (e){
+    // User cancelled the picker - nothing to do.
+  }
+}
+
+async function restoreTaxFolder(){
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await idbGet('taxFolderHandle');
+    if (!handle) return;
+    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted'){
+      taxFolderHandle = handle;
+    } else {
+      pendingTaxFolderHandle = handle;
+    }
+  } catch (e){ /* ignore - just means no folder chosen yet */ }
+  updateFolderStatus();
+}
+
+async function reconnectTaxFolder(){
+  if (!pendingTaxFolderHandle) return;
+  try {
+    if ((await pendingTaxFolderHandle.requestPermission({ mode: 'readwrite' })) === 'granted'){
+      taxFolderHandle = pendingTaxFolderHandle;
+      pendingTaxFolderHandle = null;
+      updateFolderStatus();
+    }
+  } catch (e){ /* ignore */ }
+}
+
+function setReceiptsStatus(text, isError){
+  const el = document.getElementById('receipts-status');
+  el.textContent = text;
+  el.className = 'receipts-status' + (isError ? ' error' : '');
+}
+
+async function scanReceipts(){
+  const btn = document.getElementById('receipts-scan');
+  btn.disabled = true;
+  setReceiptsStatus('Scanning Gmail…', false);
+  try {
+    const res = await fetch('/api/receipts/candidates');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'scan failed');
+    receiptCandidates = data.candidates;
+    setReceiptsStatus(
+      `Scanned ${data.scanned} emails, ${data.candidates.length} candidate(s).` +
+      (data.errors.length ? ` (${data.errors.length} error(s))` : ''),
+      false
+    );
+    renderReceiptsGrid();
+  } catch (e){
+    setReceiptsStatus('Scan failed: ' + (e.message || 'unknown error'), true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function fmtMoney(n){
+  return n == null || isNaN(n) ? '' : n.toFixed(2);
+}
+
+function receiptFromName(from){
+  return (from || '').replace(/<.*/, '').trim() || from || '';
+}
+
+function renderReceiptsGrid(){
+  const tbody = document.getElementById('receipts-tbody');
+  if (!receiptCandidates.length){
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No pending receipts. Scan to check for new ones.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = receiptCandidates.map((c, i) => {
+    const dateShort = c.date ? new Date(c.date).toLocaleDateString('en-US') : '';
+    return `
+      <tr class="receipt-row" data-idx="${i}">
+        <td>${escapeHtml(dateShort)}</td>
+        <td>${escapeHtml(receiptFromName(c.from))}</td>
+        <td class="receipt-subject" title="${escapeHtml(c.subject)}">${escapeHtml(c.subject)}</td>
+        <td><input type="number" step="0.01" class="receipt-input receipt-total" data-idx="${i}" value="${fmtMoney(c.total)}" placeholder="--"></td>
+        <td><input type="number" step="0.01" class="receipt-input receipt-tax" data-idx="${i}" value="${fmtMoney(c.tax)}" placeholder="--"></td>
+        <td><input type="number" step="0.01" class="receipt-input receipt-shipping" data-idx="${i}" value="${fmtMoney(c.shipping)}" placeholder="--"></td>
+        <td class="receipt-actions">
+          <button type="button" class="receipt-btn business" data-idx="${i}" data-action="business">Business</button>
+          <button type="button" class="receipt-btn split" data-idx="${i}" data-action="split">Split</button>
+          <button type="button" class="receipt-btn personal" data-idx="${i}" data-action="personal">Personal</button>
+        </td>
+      </tr>
+      <tr class="receipt-split-row" id="split-row-${i}" style="display:none;">
+        <td colspan="7"><div class="split-panel" id="split-panel-${i}"></div></td>
+      </tr>
+    `;
+  }).join('');
+
+  tbody.querySelectorAll('.receipt-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleReceiptAction(Number(btn.dataset.idx), btn.dataset.action, btn));
+  });
+}
+
+function readRowValues(idx){
+  const row = document.querySelector(`.receipt-row[data-idx="${idx}"]`);
+  return {
+    total: parseFloat(row.querySelector('.receipt-total').value) || null,
+    tax: parseFloat(row.querySelector('.receipt-tax').value) || 0,
+    shipping: parseFloat(row.querySelector('.receipt-shipping').value) || 0,
+  };
+}
+
+async function handleReceiptAction(idx, action, btn){
+  const candidate = receiptCandidates[idx];
+  if (!candidate) return;
+
+  if (action === 'split'){
+    toggleSplitPanel(idx);
+    return;
+  }
+
+  if (action === 'personal'){
+    btn.disabled = true;
+    await fetch(`/api/receipts/${candidate.id}/resolve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'personal' }),
+    });
+    removeReceiptByIndex(idx);
+    return;
+  }
+
+  if (action === 'business'){
+    if (!taxFolderHandle){ alert('Choose a tax folder first.'); return; }
+    const vals = readRowValues(idx);
+    const buttons = document.querySelectorAll(`.receipt-row[data-idx="${idx}"] .receipt-btn`);
+    buttons.forEach(b => b.disabled = true);
+    try {
+      await saveReceipt(candidate, {
+        total: vals.total, tax: vals.tax, shipping: vals.shipping,
+        businessAmount: vals.total, isSplit: false,
+      });
+      await fetch(`/api/receipts/${candidate.id}/resolve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'business' }),
+      });
+      removeReceiptByIndex(idx);
+    } catch (e){
+      alert('Failed to save: ' + (e.message || 'unknown error'));
+      buttons.forEach(b => b.disabled = false);
+    }
+  }
+}
+
+function removeReceiptByIndex(idx){
+  receiptCandidates = receiptCandidates.filter((_, i) => i !== idx);
+  renderReceiptsGrid();
+}
+
+function toggleSplitPanel(idx){
+  const row = document.getElementById(`split-row-${idx}`);
+  const isOpen = row.style.display !== 'none';
+  if (isOpen){ row.style.display = 'none'; return; }
+  row.style.display = '';
+  renderSplitPanel(idx);
+}
+
+function renderSplitPanel(idx){
+  const candidate = receiptCandidates[idx];
+  const vals = readRowValues(idx);
+  const panel = document.getElementById(`split-panel-${idx}`);
+  const items = (candidate.lineItems.length ? candidate.lineItems : [{ description: '', amount: vals.total || 0 }])
+    .map(it => ({ ...it, business: true }));
+
+  function renderItemsTable(){
+    panel.querySelector('.split-items-table tbody').innerHTML = items.map((item, j) => `
+      <tr>
+        <td><input type="text" class="split-desc" data-j="${j}" value="${escapeHtml(item.description)}" placeholder="Item description"></td>
+        <td><input type="number" step="0.01" class="split-amount" data-j="${j}" value="${fmtMoney(item.amount)}"></td>
+        <td><input type="checkbox" class="split-business" data-j="${j}" ${item.business ? 'checked' : ''}></td>
+      </tr>
+    `).join('');
+    panel.querySelectorAll('.split-desc').forEach(inp => inp.addEventListener('input', () => {
+      items[Number(inp.dataset.j)].description = inp.value; updateSummary();
+    }));
+    panel.querySelectorAll('.split-amount').forEach(inp => inp.addEventListener('input', () => {
+      items[Number(inp.dataset.j)].amount = parseFloat(inp.value) || 0; updateSummary();
+    }));
+    panel.querySelectorAll('.split-business').forEach(inp => inp.addEventListener('change', () => {
+      items[Number(inp.dataset.j)].business = inp.checked; updateSummary();
+    }));
+    updateSummary();
+  }
+
+  function computeSplit(){
+    const allSubtotal = items.reduce((s, i) => s + (i.amount || 0), 0);
+    const bizSubtotal = items.filter(i => i.business).reduce((s, i) => s + (i.amount || 0), 0);
+    const ratio = allSubtotal > 0 ? bizSubtotal / allSubtotal : 0;
+    const bizTax = (vals.tax || 0) * ratio;
+    const bizShipping = (vals.shipping || 0) * ratio;
+    return { allSubtotal, bizSubtotal, ratio, bizTax, bizShipping, bizTotal: bizSubtotal + bizTax + bizShipping };
+  }
+
+  function updateSummary(){
+    const s = computeSplit();
+    panel.querySelector('.split-summary').innerHTML =
+      `Business subtotal: $${fmtMoney(s.bizSubtotal)} of $${fmtMoney(s.allSubtotal)} (${Math.round(s.ratio * 100)}%)<br>` +
+      `Prorated tax: $${fmtMoney(s.bizTax)} &middot; Prorated shipping: $${fmtMoney(s.bizShipping)}<br>` +
+      `<strong>Business total: $${fmtMoney(s.bizTotal)}</strong>`;
+  }
+
+  panel.innerHTML = `
+    <table class="split-items-table">
+      <thead><tr><th>Item</th><th>Amount</th><th>Business?</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <button type="button" class="add-split-item">+ Add item</button>
+    <div class="split-summary"></div>
+    <div class="split-actions">
+      <button type="button" class="receipt-btn business confirm-split">Save Business Portion</button>
+      <button type="button" class="receipt-btn personal cancel-split">Cancel</button>
+    </div>
+  `;
+  renderItemsTable();
+
+  panel.querySelector('.add-split-item').addEventListener('click', () => {
+    items.push({ description: '', amount: 0, business: true });
+    renderItemsTable();
+  });
+  panel.querySelector('.cancel-split').addEventListener('click', () => toggleSplitPanel(idx));
+  panel.querySelector('.confirm-split').addEventListener('click', async () => {
+    if (!taxFolderHandle){ alert('Choose a tax folder first.'); return; }
+    const s = computeSplit();
+    const buttons = panel.querySelectorAll('button');
+    buttons.forEach(b => b.disabled = true);
+    try {
+      await saveReceipt(candidate, {
+        total: vals.total, tax: s.bizTax, shipping: s.bizShipping,
+        businessAmount: s.bizTotal, isSplit: true,
+      });
+      await fetch(`/api/receipts/${candidate.id}/resolve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'split' }),
+      });
+      removeReceiptByIndex(idx);
+    } catch (e){
+      alert('Failed to save: ' + (e.message || 'unknown error'));
+      buttons.forEach(b => b.disabled = false);
+    }
+  });
+}
+
+function blobToDataUrl(blob){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Real PDF attachments are used as-is (they're the authoritative document).
+// Everything else - image attachments, or no attachment at all - gets
+// wrapped/generated into a simple PDF client-side via jsPDF, rather than
+// trying to faithfully re-render arbitrary marketing-HTML email bodies.
+async function getReceiptPdfBlob(candidate){
+  const { jsPDF } = window.jspdf;
+
+  if (candidate.attachment){
+    const res = await fetch(`/api/receipts/attachment/${candidate.id}/${candidate.attachment.attachmentId}`);
+    if (!res.ok) throw new Error('attachment download failed');
+    const bytes = await res.arrayBuffer();
+    if (candidate.attachment.mimeType === 'application/pdf'){
+      return new Blob([bytes], { type: 'application/pdf' });
+    }
+    const doc = new jsPDF();
+    const dataUrl = await blobToDataUrl(new Blob([bytes], { type: candidate.attachment.mimeType }));
+    const imgProps = doc.getImageProperties(dataUrl);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const ratio = pageWidth / imgProps.width;
+    doc.addImage(dataUrl, 'JPEG', 0, 10, pageWidth, imgProps.height * ratio);
+    return doc.output('blob');
+  }
+
+  const doc = new jsPDF();
+  let y = 20;
+  doc.setFontSize(14); doc.text('Receipt Record', 14, y); y += 10;
+  doc.setFontSize(10);
+  [
+    `From: ${candidate.from}`,
+    `Subject: ${candidate.subject}`,
+    `Date: ${candidate.date}`,
+    `Total: ${candidate.total != null ? '$' + fmtMoney(candidate.total) : 'n/a'}`,
+    `Tax: ${candidate.tax != null ? '$' + fmtMoney(candidate.tax) : 'n/a'}`,
+    `Shipping: ${candidate.shipping != null ? '$' + fmtMoney(candidate.shipping) : 'n/a'}`,
+    '', 'Email content:', '',
+  ].forEach(line => { doc.text(line, 14, y); y += 6; });
+  doc.splitTextToSize(candidate.bodyText || '(no content)', 180).forEach(line => {
+    if (y > 280){ doc.addPage(); y = 20; }
+    doc.text(line, 14, y); y += 5;
+  });
+  return doc.output('blob');
+}
+
+async function appendToSpreadsheet(row){
+  let fileHandle;
+  try {
+    fileHandle = await taxFolderHandle.getFileHandle(SPREADSHEET_FILENAME, { create: false });
+  } catch {
+    fileHandle = await taxFolderHandle.getFileHandle(SPREADSHEET_FILENAME, { create: true });
+  }
+  const file = await fileHandle.getFile();
+  let wb;
+  if (file.size > 0){
+    wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  } else {
+    wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([SPREADSHEET_HEADERS]), 'Expenses');
+  }
+  const sheetName = wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
+  if (!rows.length) rows.push(SPREADSHEET_HEADERS);
+  rows.push([
+    row.date, row.vendor, row.subject,
+    row.total ?? '', row.tax ?? '', row.shipping ?? '',
+    row.businessAmount ?? '', row.isSplit ? 'Yes' : 'No', row.pdfFilename,
+  ]);
+  wb.Sheets[sheetName] = XLSX.utils.aoa_to_sheet(rows);
+
+  const writable = await fileHandle.createWritable();
+  await writable.write(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+  await writable.close();
+}
+
+async function saveReceipt(candidate, { total, tax, shipping, businessAmount, isSplit }){
+  const pdfBlob = await getReceiptPdfBlob(candidate);
+  const vendorSlug = (candidate.from.match(/@([\w.-]+)/) || [, 'receipt'])[1].replace(/\./g, '-');
+  const dateStr = candidate.date && !isNaN(new Date(candidate.date)) ? new Date(candidate.date).toISOString().slice(0, 10) : 'unknown-date';
+  const filename = `${dateStr}_${vendorSlug}_${candidate.id.slice(0, 8)}.pdf`;
+
+  const pdfHandle = await taxFolderHandle.getFileHandle(filename, { create: true });
+  const writable = await pdfHandle.createWritable();
+  await writable.write(pdfBlob);
+  await writable.close();
+
+  await appendToSpreadsheet({
+    date: dateStr, vendor: candidate.from, subject: candidate.subject,
+    total, tax, shipping, businessAmount, isSplit, pdfFilename: filename,
+  });
+}
+
+document.getElementById('receipts-pick-folder').addEventListener('click', pickTaxFolder);
+document.getElementById('receipts-reconnect-folder').addEventListener('click', reconnectTaxFolder);
+document.getElementById('receipts-scan').addEventListener('click', scanReceipts);
+restoreTaxFolder();
 
 renderClock();
 setInterval(renderClock, 1000 * 15);

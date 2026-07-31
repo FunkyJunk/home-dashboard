@@ -27,8 +27,14 @@ const RECEIPT_QUERY_TERMS = [
   '"purchase receipt"', '"payment confirmation"',
 ];
 
+// Cuts the most obvious marketing noise that otherwise matches on "receipt"/
+// "order" in a promo subject line - not trying to be exhaustive here, the
+// review UI is the real filter for whatever slips through.
+const RECEIPT_QUERY_EXCLUSIONS = ['"% off"', "unsubscribe", "newsletter"];
+
 function buildQuery(after) {
-  return `after:${after} (${RECEIPT_QUERY_TERMS.join(" OR ")})`;
+  const exclusions = RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`).join(" ");
+  return `after:${after} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
 }
 
 function decodeBase64Url(data) {
@@ -171,8 +177,13 @@ export function createReceiptsRouter({ oauth2Client }) {
         };
       });
 
+      // Highest-confidence candidates (an actual dollar figure was found)
+      // first, so review starts with the most likely real receipts.
+      const candidates = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      candidates.sort((a, b) => (b.total != null) - (a.total != null));
+
       res.json({
-        candidates: results.filter((r) => r.status === "fulfilled").map((r) => r.value),
+        candidates,
         scanned: messages.length,
         errors: results.filter((r) => r.status === "rejected").map((r) => r.reason?.message || "unknown error"),
       });
