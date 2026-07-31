@@ -220,6 +220,9 @@
     padding:3vw;
   }
   .modal-overlay.open{display:flex;}
+  /* Image lightbox can be opened from within another modal (e.g. the
+     receipt detail view) - needs to stack above it regardless of DOM order. */
+  #receipt-image-modal{z-index:150;}
   .modal-inner{width:100%;}
   .modal-head{
     display:flex; justify-content:space-between; align-items:center;
@@ -1704,9 +1707,7 @@ function openReceiptDetail(idx){
         c.lineItems.map(it => `<tr><td>${escapeHtml(it.description || '(no description)')}</td><td>${it.amount != null ? '$' + fmtMoney(it.amount) : ''}</td></tr>`).join('') +
       `</tbody></table>`
     : '<span class="receipts-status">No line items were detected for this receipt.</span>';
-  const imagesHtml = (c.images || []).map((img, k) =>
-    `<img class="receipt-thumb" data-idx="${idx}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
-  ).join('');
+  const imagesHtml = buildImagesHtml(c, idx);
 
   const gmailUrl = 'https://mail.google.com/mail/u/0/#all/' + encodeURIComponent(c.id);
 
@@ -1730,6 +1731,21 @@ function closeReceiptDetail(){
   document.getElementById('receipt-detail-modal').classList.remove('open');
 }
 
+// Two image sources: real Gmail attachments (proxied through our own
+// backend, which has the Gmail credentials) and remote URLs pulled from
+// the email's HTML (loaded directly by the browser from the vendor's own
+// server - the only way to show product photos most retail emails only
+// link to rather than attach).
+function buildImagesHtml(c, idx){
+  const attached = (c.images || []).map((img, k) =>
+    `<img class="receipt-thumb" data-idx="${idx}" data-k="att${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
+  );
+  const remote = (c.remoteImageUrls || []).map((url, k) =>
+    `<img class="receipt-thumb" data-idx="${idx}" data-k="rem${k}" data-remote-src="${escapeHtml(url)}" src="${escapeHtml(url)}" alt="product image (loaded from vendor)" title="Loaded directly from the vendor's server" loading="lazy" referrerpolicy="no-referrer">`
+  );
+  return attached.concat(remote).join('');
+}
+
 function fmtMoney(n){
   return n == null || isNaN(n) ? '' : n.toFixed(2);
 }
@@ -1748,9 +1764,7 @@ function renderReceiptsGrid(){
   }
   tbody.innerHTML = receiptCandidates.map((c, i) => {
     const dateShort = c.date ? new Date(c.date).toLocaleDateString('en-US') : '';
-    const imagesHtml = (c.images || []).map((img, k) =>
-      `<img class="receipt-thumb" data-idx="${i}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
-    ).join('');
+    const imagesHtml = buildImagesHtml(c, i);
     const ignoreMatch = candidateMatchesIgnore(c);
     const checked = selectedIds.has(c.id) ? 'checked' : '';
     return `

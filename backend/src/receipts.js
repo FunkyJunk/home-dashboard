@@ -54,7 +54,7 @@ db.exec(`
 // the table already existed in production, so add them defensively.
 {
   const existingColumns = db.prepare("PRAGMA table_info(candidates)").all().map((c) => c.name);
-  for (const [name, type] of [["business_amount", "REAL"], ["is_split", "INTEGER"], ["pdf_filename", "TEXT"]]) {
+  for (const [name, type] of [["business_amount", "REAL"], ["is_split", "INTEGER"], ["pdf_filename", "TEXT"], ["remote_images", "TEXT"]]) {
     if (!existingColumns.includes(name)) db.exec(`ALTER TABLE candidates ADD COLUMN ${name} ${type}`);
   }
 }
@@ -109,8 +109,11 @@ function decodeBase64Url(data) {
 }
 
 // Gmail bodies are a MIME tree (plain/html/attachments as siblings or
-// nested multipart/*), not a flat list - both helpers below have to walk it.
-function findBodyText(payload) {
+// nested multipart/*), not a flat list - this walks it once and returns
+// both the plain and html parts, since callers need each for different
+// things (line-item text parsing wants plain text with real line breaks
+// preserved; remote image extraction needs the raw HTML).
+function findParts(payload) {
   let plain = null;
   let html = null;
   (function walk(part) {
@@ -123,7 +126,10 @@ function findBodyText(payload) {
     }
     (part.parts || []).forEach(walk);
   })(payload);
+  return { plain, html };
+}
 
+function bodyTextFromParts({ plain, html }) {
   if (plain) return plain;
   if (html) {
     return html
@@ -134,6 +140,36 @@ function findBodyText(payload) {
       .replace(/\s+/g, " ");
   }
   return "";
+}
+
+// Most retail emails (Amazon, etc.) embed product photos as remote
+// <img src="https://...cdn.../photo.jpg"> tags, not real Gmail
+// attachments - there is no attachment data to fetch for these at all,
+// so the only way to show them is to load the URL directly from the
+// vendor. That does mean the vendor learns the email was opened (same
+// mechanism as a tracking pixel) - accepted trade-off, opted into
+// explicitly. Skips obvious 1-2px tracking pixels and caps the count.
+function extractRemoteImageUrls(html) {
+  if (!html) return [];
+  const urls = [];
+  const seen = new Set();
+  const tagRe = /<img\b[^>]*>/gi;
+  let m;
+  while ((m = tagRe.exec(html)) && urls.length < 6) {
+    const tag = m[0];
+    const srcMatch = tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+    if (!srcMatch) continue;
+    const url = srcMatch[1];
+    if (!/^https?:\/\//i.test(url)) continue;
+    if (!/\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) continue;
+    const w = tag.match(/\bwidth\s*=\s*["']?(\d+)/i);
+    const h = tag.match(/\bheight\s*=\s*["']?(\d+)/i);
+    if ((w && Number(w[1]) <= 2) || (h && Number(h[1]) <= 2)) continue; // tracking pixel
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
 }
 
 function findAttachments(payload) {
@@ -175,16 +211,38 @@ function findAmount(text, labels) {
 // Best-effort only - arbitrary vendor email formats vary too much to parse
 // reliably. The review UI lets the user add/edit/remove items by hand;
 // this just saves typing when it happens to work.
+//
+// Two shapes are handled: "description  $12.34" on one line (simple
+// receipts like Staples), and Amazon-style multi-line blocks where a long
+// product title is followed by a "Quantity: N" line and then the price
+// alone on its own line, often as "12.34 USD" with no $ sign at all.
 function extractLineItems(text) {
   const skip = /(total|subtotal|tax|shipping|discount|balance|payment|card ending|confirmation|order number|thank you)/i;
+  const priceOnlyLine = /^\$?([\d,]+\.\d{2})\s*(?:USD)?$/i;
+  const fillerLine = /^(quantity|qty)\b/i;
   const items = [];
-  for (const raw of text.split(/\n+/)) {
-    const line = raw.trim();
-    const m = line.match(/^(.{3,80}?)\s+\$?([\d,]+\.\d{2})$/);
-    if (m && !skip.test(m[1])) {
-      items.push({ description: m[1].trim(), amount: parseFloat(m[2].replace(/,/g, "")) });
+
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length && items.length < 20; i++) {
+    const line = lines[i];
+    if (skip.test(line)) continue;
+
+    const sameLine = line.match(/^(.{3,300}?)\s+\$?([\d,]+\.\d{2})(?:\s*USD)?$/i);
+    if (sameLine && !skip.test(sameLine[1])) {
+      items.push({ description: sameLine[1].replace(/^\*\s*/, "").trim(), amount: parseFloat(sameLine[2].replace(/,/g, "")) });
+      continue;
     }
-    if (items.length >= 20) break; // sanity cap against runaway matches
+
+    if (line.length < 15 || priceOnlyLine.test(line)) continue;
+    for (let j = i + 1; j <= i + 3 && j < lines.length; j++) {
+      const priceMatch = lines[j].match(priceOnlyLine);
+      if (priceMatch) {
+        items.push({ description: line.replace(/^\*\s*/, "").trim(), amount: parseFloat(priceMatch[1].replace(/,/g, "")) });
+        i = j;
+        break;
+      }
+      if (!fillerLine.test(lines[j])) break; // only skip recognized "in-between" lines like Quantity: N
+    }
   }
   return items;
 }
@@ -220,6 +278,7 @@ function rowToCandidate(row) {
     lineItems: JSON.parse(row.line_items || "[]"),
     attachment: JSON.parse(row.attachment || "null"),
     images: JSON.parse(row.images || "[]"),
+    remoteImageUrls: JSON.parse(row.remote_images || "[]"),
     bodyText: row.body_text,
     status: row.status,
     businessAmount: row.business_amount,
@@ -236,12 +295,12 @@ export function createReceiptsRouter({ oauth2Client }) {
   const selectPending = db.prepare("SELECT * FROM candidates WHERE status = 'pending'");
   const selectScannedMonth = db.prepare("SELECT * FROM scanned_months WHERE month = ?");
   const upsertCandidate = db.prepare(`
-    INSERT INTO candidates (id, month, from_addr, subject, date, snippet, total, tax, shipping, line_items, attachment, images, body_text, status)
-    VALUES (@id, @month, @from_addr, @subject, @date, @snippet, @total, @tax, @shipping, @line_items, @attachment, @images, @body_text, @status)
+    INSERT INTO candidates (id, month, from_addr, subject, date, snippet, total, tax, shipping, line_items, attachment, images, remote_images, body_text, status)
+    VALUES (@id, @month, @from_addr, @subject, @date, @snippet, @total, @tax, @shipping, @line_items, @attachment, @images, @remote_images, @body_text, @status)
     ON CONFLICT(id) DO UPDATE SET
       from_addr = excluded.from_addr, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet,
       total = excluded.total, tax = excluded.tax, shipping = excluded.shipping, line_items = excluded.line_items,
-      attachment = excluded.attachment, images = excluded.images, body_text = excluded.body_text
+      attachment = excluded.attachment, images = excluded.images, remote_images = excluded.remote_images, body_text = excluded.body_text
     WHERE candidates.status = 'pending'
   `);
   const upsertScannedMonth = db.prepare(`
@@ -385,8 +444,10 @@ export function createReceiptsRouter({ oauth2Client }) {
           format: "full",
         });
         const headers = Object.fromEntries((full.payload.headers || []).map((h) => [h.name, h.value]));
-        const bodyText = findBodyText(full.payload);
+        const parts = findParts(full.payload);
+        const bodyText = bodyTextFromParts(parts);
         const { attachment, images } = extractAttachments(full.payload);
+        const remoteImageUrls = extractRemoteImageUrls(parts.html);
 
         return {
           id: m.id,
@@ -400,6 +461,7 @@ export function createReceiptsRouter({ oauth2Client }) {
           lineItems: extractLineItems(bodyText),
           attachment,
           images,
+          remoteImageUrls,
           bodyText: bodyText.slice(0, 4000),
         };
       });
@@ -421,6 +483,7 @@ export function createReceiptsRouter({ oauth2Client }) {
             line_items: JSON.stringify(c.lineItems),
             attachment: JSON.stringify(c.attachment),
             images: JSON.stringify(c.images),
+            remote_images: JSON.stringify(c.remoteImageUrls),
             body_text: c.bodyText,
             status: legacy ? legacy.decision : "pending",
           });
