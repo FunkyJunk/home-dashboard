@@ -166,3 +166,28 @@ successor, the **Device Access** program:
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
 there's no reverse proxy, no cert, no port forwarding to worry about.
+
+## 7. Business receipts (needs HTTPS)
+
+The Business Receipts card saves files straight to a folder on your PC via
+the browser's File System Access API (`showDirectoryPicker`), which only
+works in a "secure context" — plain `http://<nas-ip>` doesn't qualify, even
+on a LAN. The frontend container also listens on 443 with a self-signed
+cert for this reason; the wall tablet keeps using plain HTTP on 8080
+unaffected.
+
+One-time cert setup on the NAS (SAN must match whatever IP/hostname you'll
+actually browse to):
+```bash
+mkdir -p infra/ssl && cd infra/ssl
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+  -keyout home-dashboard.key -out home-dashboard.crt \
+  -subj "/CN=<nas-ip>" \
+  -addext "subjectAltName=IP:<nas-ip>"
+```
+
+Then browse to `https://<nas-ip>:8443` on the desktop where you want to use
+the receipts feature. Chrome/Edge will show a "connection is not private"
+warning for the self-signed cert — click **Advanced → Proceed** (a one-time
+trust exception per browser/device). Use **Choose tax folder** on the card
+to pick a local folder once; the app remembers it via IndexedDB after that.
