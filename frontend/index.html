@@ -380,12 +380,18 @@
   .receipts-table .empty{color:var(--text-dim); text-align:center; padding:1.5rem;}
   .receipt-subject{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--panel-line);}
   .receipt-subject:hover{color:var(--teal); text-decoration-color:var(--teal);}
-  .receipt-images{display:flex; gap:.3rem;}
+  .receipt-images{display:flex; gap:.3rem; max-width:90px; flex-wrap:wrap;}
   .receipt-thumb{
     width:32px; height:32px; object-fit:cover; border-radius:4px; cursor:pointer;
-    border:1px solid var(--panel-line);
+    border:1px solid var(--panel-line); flex-shrink:0;
   }
   .receipt-thumb:hover{border-color:var(--teal);}
+  .receipt-thumb-more{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:32px; height:32px; border-radius:4px; background:#0d1116; border:1px solid var(--panel-line);
+    color:var(--text-dim); font-size:.7rem; font-family:'IBM Plex Mono', monospace; flex-shrink:0;
+  }
+  .item-thumb{width:28px; height:28px; object-fit:cover; border-radius:4px; cursor:pointer; border:1px solid var(--panel-line); vertical-align:middle; margin-right:.4rem;}
   .receipt-input{
     width:5.5em; background:#0d1116; border:1px solid var(--panel-line); color:var(--text);
     border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;
@@ -455,7 +461,8 @@
     color:var(--text-dim); padding:.3rem .4rem; font-family:'IBM Plex Mono', monospace;
   }
   .split-items-table td{padding:.3rem .4rem;}
-  .split-desc{width:100%; background:var(--panel); border:1px solid var(--panel-line); color:var(--text); border-radius:4px; padding:.3em .5em; font-family:inherit; font-size:.8rem;}
+  .split-item-desc-wrap{display:flex; align-items:center; gap:.4rem;}
+  .split-desc{flex:1; min-width:0; background:var(--panel); border:1px solid var(--panel-line); color:var(--text); border-radius:4px; padding:.3em .5em; font-family:inherit; font-size:.8rem;}
   .split-amount{width:6em; background:var(--panel); border:1px solid var(--panel-line); color:var(--text); border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;}
   .split-summary{font-family:'IBM Plex Mono', monospace; font-size:.8rem; color:var(--text-dim); margin-bottom:.75rem; line-height:1.6;}
   .split-summary strong{color:var(--teal);}
@@ -1704,7 +1711,7 @@ function openReceiptDetail(idx){
   const dateFull = c.date && !isNaN(new Date(c.date)) ? new Date(c.date).toLocaleString('en-US') : (c.date || '');
   const itemsHtml = (c.lineItems || []).length
     ? `<table class="receipt-detail-items"><tbody>` +
-        c.lineItems.map(it => `<tr><td>${escapeHtml(it.description || '(no description)')}</td><td>${it.amount != null ? '$' + fmtMoney(it.amount) : ''}</td></tr>`).join('') +
+        c.lineItems.map((it, j) => `<tr><td>${it.imageUrl ? `<img class="item-thumb detail-item-thumb" data-j="${j}" src="${escapeHtml(it.imageUrl)}" alt="item photo" title="Loaded directly from the vendor's server" loading="lazy" referrerpolicy="no-referrer">` : ''}${escapeHtml(it.description || '(no description)')}</td><td>${it.amount != null ? '$' + fmtMoney(it.amount) : ''}</td></tr>`).join('') +
       `</tbody></table>`
     : '<span class="receipts-status">No line items were detected for this receipt.</span>';
   const imagesHtml = buildImagesHtml(c, idx);
@@ -1725,6 +1732,9 @@ function openReceiptDetail(idx){
   document.getElementById('receipt-detail-body').querySelectorAll('.receipt-thumb').forEach(img => {
     img.addEventListener('click', () => openReceiptImageModal(img.src, c.subject));
   });
+  document.getElementById('receipt-detail-body').querySelectorAll('.detail-item-thumb').forEach(img => {
+    img.addEventListener('click', () => openReceiptImageModal(img.src, c.lineItems[Number(img.dataset.j)]?.description || c.subject));
+  });
   document.getElementById('receipt-detail-modal').classList.add('open');
 }
 function closeReceiptDetail(){
@@ -1736,14 +1746,21 @@ function closeReceiptDetail(){
 // the email's HTML (loaded directly by the browser from the vendor's own
 // server - the only way to show product photos most retail emails only
 // link to rather than attach).
-function buildImagesHtml(c, idx){
+function remoteImgTag(url, idx, k){
+  return `<img class="receipt-thumb" data-idx="${idx}" data-k="rem${k}" src="${escapeHtml(url)}" alt="product image (loaded from vendor)" title="Loaded directly from the vendor's server" loading="lazy" referrerpolicy="no-referrer">`;
+}
+
+// limit caps how many thumbnails render (the grid row needs to stay
+// narrow enough that the action buttons don't scroll off-screen); the
+// detail modal passes no limit since it has room to show everything.
+function buildImagesHtml(c, idx, limit){
   const attached = (c.images || []).map((img, k) =>
     `<img class="receipt-thumb" data-idx="${idx}" data-k="att${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
   );
-  const remote = (c.remoteImageUrls || []).map((url, k) =>
-    `<img class="receipt-thumb" data-idx="${idx}" data-k="rem${k}" data-remote-src="${escapeHtml(url)}" src="${escapeHtml(url)}" alt="product image (loaded from vendor)" title="Loaded directly from the vendor's server" loading="lazy" referrerpolicy="no-referrer">`
-  );
-  return attached.concat(remote).join('');
+  const remote = (c.remoteImageUrls || []).map((url, k) => remoteImgTag(url, idx, k));
+  const all = attached.concat(remote);
+  if (limit == null || all.length <= limit) return all.join('');
+  return all.slice(0, limit).join('') + `<span class="receipt-thumb-more">+${all.length - limit}</span>`;
 }
 
 function fmtMoney(n){
@@ -1764,7 +1781,7 @@ function renderReceiptsGrid(){
   }
   tbody.innerHTML = receiptCandidates.map((c, i) => {
     const dateShort = c.date ? new Date(c.date).toLocaleDateString('en-US') : '';
-    const imagesHtml = buildImagesHtml(c, i);
+    const imagesHtml = buildImagesHtml(c, i, 2);
     const ignoreMatch = candidateMatchesIgnore(c);
     const checked = selectedIds.has(c.id) ? 'checked' : '';
     return `
@@ -1934,11 +1951,17 @@ function renderSplitPanel(idx){
   function renderItemsTable(){
     panel.querySelector('.split-items-table tbody').innerHTML = items.map((item, j) => `
       <tr>
-        <td><input type="text" class="split-desc" data-j="${j}" value="${escapeHtml(item.description)}" placeholder="Item description"></td>
+        <td>
+          <div class="split-item-desc-wrap">
+            ${item.imageUrl ? `<img class="item-thumb" data-j="${j}" src="${escapeHtml(item.imageUrl)}" alt="item photo" title="Loaded directly from the vendor's server" loading="lazy" referrerpolicy="no-referrer">` : ''}
+            <input type="text" class="split-desc" data-j="${j}" value="${escapeHtml(item.description)}" placeholder="Item description">
+          </div>
+        </td>
         <td><input type="number" step="0.01" class="split-amount" data-j="${j}" value="${fmtMoney(item.amount)}"></td>
         <td><input type="checkbox" class="split-business" data-j="${j}" ${item.business ? 'checked' : ''}></td>
       </tr>
     `).join('');
+    panel.querySelectorAll('.item-thumb').forEach(img => img.addEventListener('click', () => openReceiptImageModal(img.src, items[Number(img.dataset.j)].description)));
     panel.querySelectorAll('.split-desc').forEach(inp => inp.addEventListener('input', () => {
       items[Number(inp.dataset.j)].description = inp.value; updateSummary();
     }));

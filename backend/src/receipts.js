@@ -149,28 +149,45 @@ function bodyTextFromParts({ plain, html }) {
 // so the only way to show them is to load the URL directly from the
 // vendor. That does mean the vendor learns the email was opened (same
 // mechanism as a tracking pixel) - accepted trade-off, opted into
-// explicitly. Skips obvious 1-2px tracking pixels and caps the count.
-function extractRemoteImageUrls(html) {
-  if (!html) return [];
-  const urls = [];
-  const seen = new Set();
+// explicitly.
+//
+// Rather than handing back a flat pool of images (which mixes in header
+// logos, social icons, and footer badges alongside actual product
+// photos), this replaces each candidate <img> with an inline
+// "[[IMAGE n: alt text]]" marker at its original position in the HTML
+// flow, then flattens to text. The AI extractor sees these markers in
+// context and can tell "this image sits right next to this line item" -
+// and skip anything that clearly reads as decorative/branding rather
+// than a product photo.
+const LOGO_HINTS = /(logo|icon|sprite|badge|social|footer|header|banner|pixel|spacer|transparent|divider)/i;
+
+function htmlWithImageMarkers(html) {
+  if (!html) return { text: "", images: [] };
+  const images = [];
   const tagRe = /<img\b[^>]*>/gi;
-  let m;
-  while ((m = tagRe.exec(html)) && urls.length < 6) {
-    const tag = m[0];
+  const withMarkers = html.replace(tagRe, (tag) => {
+    if (images.length >= 12) return "";
     const srcMatch = tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
-    if (!srcMatch) continue;
+    if (!srcMatch) return "";
     const url = srcMatch[1];
-    if (!/^https?:\/\//i.test(url)) continue;
-    if (!/\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) continue;
+    if (!/^https?:\/\//i.test(url)) return "";
+    if (!/\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) return "";
+    const altMatch = tag.match(/\balt\s*=\s*["']([^"']*)["']/i);
+    const alt = altMatch ? altMatch[1] : "";
     const w = tag.match(/\bwidth\s*=\s*["']?(\d+)/i);
     const h = tag.match(/\bheight\s*=\s*["']?(\d+)/i);
-    if ((w && Number(w[1]) <= 2) || (h && Number(h[1]) <= 2)) continue; // tracking pixel
-    if (seen.has(url)) continue;
-    seen.add(url);
-    urls.push(url);
-  }
-  return urls;
+    if ((w && Number(w[1]) <= 40) || (h && Number(h[1]) <= 40)) return ""; // tracking pixels & tiny icons
+    if (LOGO_HINTS.test(url) || LOGO_HINTS.test(alt)) return ""; // obvious branding/decoration
+    images.push({ url, alt });
+    return ` [[IMAGE ${images.length - 1}${alt ? ": " + alt : ""}]] `;
+  });
+  const text = withMarkers
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+  return { text, images };
 }
 
 function findAttachments(payload) {
@@ -278,6 +295,10 @@ const EXTRACTION_TOOL = {
           properties: {
             description: { type: "string", description: "The product/item name or description, as written in the email." },
             amount: { type: ["number", "null"], description: "That item's price in dollars, or null if not shown separately." },
+            imageIndex: {
+              type: ["integer", "null"],
+              description: "The number from an [[IMAGE n: ...]] marker in the body that is a genuine photo of THIS specific item (usually appears right next to its description/price). Null if none is clearly associated with this item - do not guess, and never use a marker that reads as a logo, banner, icon, or generic branding image rather than an actual product photo.",
+            },
           },
           required: ["description"],
         },
@@ -292,12 +313,12 @@ async function extractWithAI(subject, bodyText) {
   try {
     const msg = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
+      max_tokens: 1536,
       tools: [EXTRACTION_TOOL],
       tool_choice: { type: "tool", name: "extract_receipt" },
       messages: [{
         role: "user",
-        content: `Extract the purchase details from this email.\n\nSubject: ${subject}\n\nBody:\n${bodyText.slice(0, 6000)}`,
+        content: `Extract the purchase details from this email. [[IMAGE n: ...]] markers stand in for images that appeared inline in the original email at that position.\n\nSubject: ${subject}\n\nBody:\n${bodyText.slice(0, 8000)}`,
       }],
     });
     const toolUse = msg.content.find((b) => b.type === "tool_use");
@@ -511,9 +532,9 @@ export function createReceiptsRouter({ oauth2Client }) {
         const parts = findParts(full.payload);
         const bodyText = bodyTextFromParts(parts);
         const { attachment, images } = extractAttachments(full.payload);
-        const remoteImageUrls = extractRemoteImageUrls(parts.html);
+        const { text: markedText, images: imageMarkers } = htmlWithImageMarkers(parts.html);
 
-        const ai = await extractWithAI(headers.Subject || "", bodyText);
+        const ai = await extractWithAI(headers.Subject || "", markedText || bodyText);
         // A confident "this isn't even a receipt" from the model (customer
         // service threads, insurance paperwork, marketplace notifications)
         // is worth trusting over the Gmail search terms alone - drop it
@@ -524,9 +545,19 @@ export function createReceiptsRouter({ oauth2Client }) {
         const total = ai ? ai.total ?? null : findAmount(bodyText, ["total", "grand total", "order total", "amount charged", "amount due"]);
         const tax = ai ? ai.tax ?? null : findAmount(bodyText, ["tax", "sales tax"]);
         const shipping = ai ? ai.shipping ?? null : findAmount(bodyText, ["shipping", "delivery"]);
+        const usedImageIndexes = new Set();
         const lineItems = ai
-          ? (ai.lineItems || []).map((it) => ({ description: it.description, amount: it.amount ?? null }))
+          ? (ai.lineItems || []).map((it) => {
+              const marker = it.imageIndex != null ? imageMarkers[it.imageIndex] : null;
+              if (marker) usedImageIndexes.add(it.imageIndex);
+              return { description: it.description, amount: it.amount ?? null, imageUrl: marker ? marker.url : null };
+            })
           : extractLineItems(bodyText);
+        // Anything left over (a photo the model saw but didn't tie to a
+        // specific item, or all of them when AI extraction isn't
+        // configured) still shows up as a general receipt image rather
+        // than being thrown away.
+        const remoteImageUrls = imageMarkers.filter((_, i) => !usedImageIndexes.has(i)).map((img) => img.url);
 
         return {
           id: m.id,
