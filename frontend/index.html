@@ -400,6 +400,23 @@
   .receipt-btn:hover{filter:brightness(1.2);}
   .receipt-btn:disabled{opacity:.5; cursor:not-allowed;}
 
+  .receipts-tabs{display:flex; gap:.4rem; margin-bottom:.75rem;}
+  .receipts-tab{
+    background:none; border:none; border-bottom:2px solid transparent; color:var(--text-dim);
+    padding:.4em .2em; cursor:pointer; font-family:inherit; font-size:.85rem;
+  }
+  .receipts-tab:hover{color:var(--text);}
+  .receipts-tab.active{color:var(--teal); border-bottom-color:var(--teal); font-weight:600;}
+
+  .receipts-bulk-bar{
+    display:flex; align-items:center; gap:.6rem; margin-bottom:.75rem; padding:.5rem .75rem;
+    background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; font-size:.85rem;
+  }
+
+  .keywords-modal-inner{max-width:min(90vw, 480px);}
+  .keywords-modal-add{display:flex; gap:.5rem; margin-top:.25rem;}
+  .keywords-modal-add .keywords-modal-input{width:auto; flex:1;}
+
   .ignore-modal-inner{max-width:min(90vw, 480px);}
   .ignore-modal-hint{color:var(--text-dim); font-size:.85rem; margin-bottom:.5rem;}
   .ignore-modal-words{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;}
@@ -407,9 +424,15 @@
     display:flex; align-items:center; gap:.35rem; background:#0d1116; border:1px solid var(--panel-line);
     border-radius:4px; padding:.35em .6em; font-size:.8rem; cursor:pointer;
   }
+  .keyword-remove{
+    background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1rem;
+    line-height:1; padding:0; margin-left:.1rem;
+  }
+  .keyword-remove:hover{color:var(--coral);}
   .ignore-modal-actions{display:flex; gap:.5rem; flex-wrap:wrap;}
 
   .receipt-detail-modal-inner{max-width:min(90vw, 640px); max-height:85vh; overflow-y:auto;}
+  .receipt-detail-modal-inner a{color:var(--teal);}
   .receipt-detail-row{margin-bottom:.75rem; font-size:.85rem;}
   .receipt-detail-label{
     display:block; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-size:.7rem;
@@ -493,12 +516,27 @@
         <select id="receipts-month-select" class="receipts-toolbar-btn"></select>
         <button type="button" id="receipts-scan" class="receipts-toolbar-btn primary">Scan month</button>
         <button type="button" id="receipts-rescan" class="receipts-toolbar-btn" style="display:none;">Force rescan</button>
+        <button type="button" id="receipts-download-spreadsheet" class="receipts-toolbar-btn">Download spreadsheet&hellip;</button>
+        <button type="button" id="receipts-manage-keywords" class="receipts-toolbar-btn">Manage ignore keywords&hellip;</button>
         <span class="receipts-status" id="receipts-status"></span>
+      </div>
+      <div class="receipts-tabs" id="receipts-tabs">
+        <button type="button" class="receipts-tab active" data-tab="pending">Pending</button>
+        <button type="button" class="receipts-tab" data-tab="business">Business</button>
+        <button type="button" class="receipts-tab" data-tab="personal">Personal</button>
+        <button type="button" class="receipts-tab" data-tab="ignore">Ignored</button>
+      </div>
+      <div class="receipts-bulk-bar" id="receipts-bulk-bar" style="display:none;">
+        <span id="receipts-bulk-count"></span>
+        <button type="button" class="receipt-btn business" id="bulk-business">Mark Business</button>
+        <button type="button" class="receipt-btn personal" id="bulk-personal">Mark Personal</button>
+        <button type="button" class="receipt-btn ignore" id="bulk-ignore">Mark Ignored</button>
       </div>
       <div class="receipts-table-wrap">
         <table class="receipts-table">
           <thead>
             <tr>
+              <th><input type="checkbox" id="receipts-select-all"></th>
               <th class="sortable" data-sort="date">Date<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="from">From<span class="sort-arrow"></span></th>
               <th class="sortable" data-sort="subject">Subject<span class="sort-arrow"></span></th>
@@ -510,7 +548,7 @@
             </tr>
           </thead>
           <tbody id="receipts-tbody">
-            <tr><td colspan="8" class="empty">Pick a month above and scan for receipts.</td></tr>
+            <tr><td colspan="9" class="empty">Pick a month above and scan for receipts.</td></tr>
           </tbody>
         </table>
       </div>
@@ -549,6 +587,20 @@
           <button class="modal-close" id="receipt-detail-modal-close">Close</button>
         </div>
         <div id="receipt-detail-body"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="keywords-modal">
+      <div class="modal-inner keywords-modal-inner">
+        <div class="modal-head">
+          <span>Ignore keywords</span>
+          <button class="modal-close" id="keywords-modal-close">Close</button>
+        </div>
+        <div class="ignore-modal-words" id="keywords-modal-list"></div>
+        <div class="keywords-modal-add">
+          <input type="text" class="receipt-input keywords-modal-input" id="keywords-modal-input" placeholder="Add a keyword&hellip;">
+          <button type="button" class="receipt-btn business" id="keywords-modal-add-btn">Add</button>
+        </div>
       </div>
     </div>
 
@@ -1276,6 +1328,12 @@ let receiptCandidates = [];
 let monthsMeta = [];
 let currentMonth = null;
 let sortState = { key: null, dir: 1 };
+let currentTab = 'pending';
+let selectedIds = new Set();
+
+// "Business" tab groups the 'split' decision in too - a partial-split
+// save is still a business expense, just with a prorated amount.
+const TAB_STATUS_QUERY = { pending: 'pending', business: 'business,split', personal: 'personal', ignore: 'ignore' };
 
 function openHandleDb(){
   return new Promise((resolve, reject) => {
@@ -1412,16 +1470,40 @@ async function loadMonths(){
 // two scan buttons below do that.
 async function loadMonthCandidates(month){
   setReceiptsStatus('Loading…', false);
+  selectedIds.clear();
+  updateBulkBar();
   try {
-    const res = await fetch(`/api/receipts/candidates?month=${encodeURIComponent(month)}`);
+    const status = TAB_STATUS_QUERY[currentTab];
+    const res = await fetch(`/api/receipts/candidates?month=${encodeURIComponent(month)}&status=${encodeURIComponent(status)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'load failed');
     receiptCandidates = data.candidates;
-    setReceiptsStatus(`${data.candidates.length} pending receipt(s) for ${monthLabel(month)}.`, false);
+    setReceiptsStatus(`${data.candidates.length} ${currentTab} receipt(s) for ${monthLabel(month)}.`, false);
     renderReceiptsGrid();
+    loadStatusCounts(month);
   } catch (e){
     setReceiptsStatus('Load failed: ' + (e.message || 'unknown error'), true);
   }
+}
+
+async function loadStatusCounts(month){
+  try {
+    const res = await fetch(`/api/receipts/status-counts?month=${encodeURIComponent(month)}`);
+    const data = await res.json();
+    const labels = { pending: 'Pending', business: 'Business', personal: 'Personal', ignore: 'Ignored' };
+    document.querySelectorAll('#receipts-tabs .receipts-tab').forEach(btn => {
+      const tab = btn.dataset.tab;
+      btn.textContent = `${labels[tab]} (${data.counts[tab] ?? 0})`;
+    });
+  } catch (e){ /* non-fatal - tabs just won't show counts */ }
+}
+
+function switchTab(tab){
+  currentTab = tab;
+  document.querySelectorAll('#receipts-tabs .receipts-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  loadMonthCandidates(currentMonth);
 }
 
 // force=false is the normal "Scan month" button, which the backend no-ops
@@ -1450,6 +1532,7 @@ async function scanMonth(force){
     );
     renderReceiptsGrid();
     await loadMonths();
+    await loadStatusCounts(currentMonth);
   } catch (e){
     setReceiptsStatus('Scan failed: ' + (e.message || 'unknown error'), true);
   } finally {
@@ -1524,7 +1607,11 @@ async function loadIgnoreKeywords(){
 
 function extractSubjectWords(subject){
   const words = (subject || '').toLowerCase().match(/[a-z]{3,}/g) || [];
-  return [...new Set(words)].filter(w => !IGNORE_STOPWORDS.has(w));
+  const known = new Set(ignoreKeywords.map(k => k.toLowerCase()));
+  // Words already in the ignore list are dropped - re-adding one is a
+  // no-op server-side anyway, and showing it as a pickable option here
+  // would just be confusing clutter.
+  return [...new Set(words)].filter(w => !IGNORE_STOPWORDS.has(w) && !known.has(w));
 }
 
 function candidateMatchesIgnore(c){
@@ -1539,7 +1626,7 @@ function openIgnoreModal(idx){
   const wordsEl = document.getElementById('ignore-modal-words');
   wordsEl.innerHTML = words.length
     ? words.map(w => `<label class="ignore-keyword-chip"><input type="checkbox" value="${escapeHtml(w)}" checked> ${escapeHtml(w)}</label>`).join('')
-    : '<span class="receipts-status">No usable keywords found in this subject.</span>';
+    : '<span class="receipts-status">No new keywords to add (all words are either already ignored or too common).</span>';
   document.getElementById('ignore-modal').classList.add('open');
 }
 function closeIgnoreModal(){
@@ -1561,12 +1648,45 @@ async function confirmIgnore(withKeywords){
       await loadIgnoreKeywords();
     }
   }
-  await fetch(`/api/receipts/${candidate.id}/resolve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ decision: 'ignore' }),
-  });
+  await resolveCandidate(candidate.id, { decision: 'ignore' });
   closeIgnoreModal();
-  removeReceiptByIndex(idx);
+  removeReceiptById(candidate.id);
+  loadStatusCounts(currentMonth);
+}
+
+function renderKeywordsModal(){
+  const list = document.getElementById('keywords-modal-list');
+  list.innerHTML = ignoreKeywords.length
+    ? ignoreKeywords.map(k => `<span class="ignore-keyword-chip">${escapeHtml(k)}<button type="button" class="keyword-remove" data-k="${escapeHtml(k)}" title="Remove">&times;</button></span>`).join('')
+    : '<span class="receipts-status">No ignore keywords yet.</span>';
+  list.querySelectorAll('.keyword-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.k)}`, { method: 'DELETE' });
+      await loadIgnoreKeywords();
+      renderKeywordsModal();
+      renderReceiptsGrid();
+    });
+  });
+}
+function openKeywordsModal(){
+  renderKeywordsModal();
+  document.getElementById('keywords-modal').classList.add('open');
+}
+function closeKeywordsModal(){
+  document.getElementById('keywords-modal').classList.remove('open');
+}
+async function addKeywordManually(){
+  const input = document.getElementById('keywords-modal-input');
+  const value = input.value.trim().toLowerCase();
+  if (!value) return;
+  await fetch('/api/receipts/ignore-keywords', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keywords: [value] }),
+  });
+  input.value = '';
+  await loadIgnoreKeywords();
+  renderKeywordsModal();
+  renderReceiptsGrid();
 }
 
 // ---------------------------------------------------------------------
@@ -1588,8 +1708,11 @@ function openReceiptDetail(idx){
     `<img class="receipt-thumb" data-idx="${idx}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
   ).join('');
 
+  const gmailUrl = 'https://mail.google.com/mail/u/0/#all/' + encodeURIComponent(c.id);
+
   document.getElementById('receipt-detail-modal-title').textContent = receiptFromName(c.from);
   document.getElementById('receipt-detail-body').innerHTML = `
+    <div class="receipt-detail-row"><a href="${gmailUrl}" target="_blank" rel="noopener">View full email in Gmail &rarr;</a></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">Subject</span><div>${escapeHtml(c.subject || '(no subject)')}</div></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">From</span><div>${escapeHtml(c.from || '')}</div></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">Date</span><div>${escapeHtml(dateFull)}</div></div>
@@ -1617,8 +1740,10 @@ function receiptFromName(from){
 
 function renderReceiptsGrid(){
   const tbody = document.getElementById('receipts-tbody');
+  const selectAll = document.getElementById('receipts-select-all');
+  selectAll.checked = false;
   if (!receiptCandidates.length){
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">No pending receipts for this month. Scan to check for new ones.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">No ${currentTab} receipts for this month.</td></tr>`;
     return;
   }
   tbody.innerHTML = receiptCandidates.map((c, i) => {
@@ -1627,8 +1752,10 @@ function renderReceiptsGrid(){
       `<img class="receipt-thumb" data-idx="${i}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
     ).join('');
     const ignoreMatch = candidateMatchesIgnore(c);
+    const checked = selectedIds.has(c.id) ? 'checked' : '';
     return `
       <tr class="receipt-row" data-idx="${i}">
+        <td><input type="checkbox" class="receipt-select" data-id="${escapeHtml(c.id)}" ${checked}></td>
         <td>${escapeHtml(dateShort)}</td>
         <td>${escapeHtml(receiptFromName(c.from))}</td>
         <td class="receipt-subject" data-idx="${i}" title="Click for full details">${escapeHtml(c.subject)}</td>
@@ -1644,7 +1771,7 @@ function renderReceiptsGrid(){
         </td>
       </tr>
       <tr class="receipt-split-row" id="split-row-${i}" style="display:none;">
-        <td colspan="8"><div class="split-panel" id="split-panel-${i}"></div></td>
+        <td colspan="9"><div class="split-panel" id="split-panel-${i}"></div></td>
       </tr>
     `;
   }).join('');
@@ -1661,6 +1788,64 @@ function renderReceiptsGrid(){
   tbody.querySelectorAll('.receipt-subject').forEach(td => {
     td.addEventListener('click', () => openReceiptDetail(Number(td.dataset.idx)));
   });
+  tbody.querySelectorAll('.receipt-select').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedIds.add(cb.dataset.id); else selectedIds.delete(cb.dataset.id);
+      updateBulkBar();
+    });
+  });
+}
+
+function updateBulkBar(){
+  const bar = document.getElementById('receipts-bulk-bar');
+  const count = document.getElementById('receipts-bulk-count');
+  bar.style.display = selectedIds.size ? '' : 'none';
+  count.textContent = `${selectedIds.size} selected`;
+}
+
+function removeReceiptById(id){
+  receiptCandidates = receiptCandidates.filter(c => c.id !== id);
+  selectedIds.delete(id);
+  renderReceiptsGrid();
+  updateBulkBar();
+}
+
+async function resolveCandidate(id, body){
+  await fetch(`/api/receipts/${id}/resolve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+// Bulk business still needs the tax folder (each receipt gets its own PDF
+// saved individually); bulk personal/ignore are pure status changes. Bulk
+// ignore skips the keyword popup entirely - prompting once per email would
+// defeat the point of doing this in bulk. Use "Manage ignore keywords" or
+// the single-item Ignore button to curate keywords instead.
+async function bulkResolve(decision){
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  if (decision === 'business' && !taxFolderHandle){ alert('Choose a tax folder first.'); return; }
+  const bar = document.getElementById('receipts-bulk-bar');
+  bar.querySelectorAll('button').forEach(b => b.disabled = true);
+  for (const id of ids){
+    const idx = receiptCandidates.findIndex(c => c.id === id);
+    if (idx === -1) continue;
+    const candidate = receiptCandidates[idx];
+    try {
+      if (decision === 'business'){
+        const vals = readRowValues(idx);
+        const { filename } = await saveReceipt(candidate, { total: vals.total, tax: vals.tax, shipping: vals.shipping, businessAmount: vals.total, isSplit: false });
+        await resolveCandidate(id, { decision: 'business', total: vals.total, tax: vals.tax, shipping: vals.shipping, businessAmount: vals.total, isSplit: false, pdfFilename: filename });
+      } else {
+        await resolveCandidate(id, { decision });
+      }
+    } catch (e){
+      console.error('bulk action failed for', id, e);
+    }
+  }
+  await loadMonthCandidates(currentMonth);
+  bar.querySelectorAll('button').forEach(b => b.disabled = false);
 }
 
 function readRowValues(idx){
@@ -1683,11 +1868,9 @@ async function handleReceiptAction(idx, action, btn){
 
   if (action === 'personal'){
     btn.disabled = true;
-    await fetch(`/api/receipts/${candidate.id}/resolve`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'personal' }),
-    });
-    removeReceiptByIndex(idx);
+    await resolveCandidate(candidate.id, { decision: 'personal' });
+    removeReceiptById(candidate.id);
+    loadStatusCounts(currentMonth);
     return;
   }
 
@@ -1702,25 +1885,21 @@ async function handleReceiptAction(idx, action, btn){
     const buttons = document.querySelectorAll(`.receipt-row[data-idx="${idx}"] .receipt-btn`);
     buttons.forEach(b => b.disabled = true);
     try {
-      await saveReceipt(candidate, {
+      const { filename } = await saveReceipt(candidate, {
         total: vals.total, tax: vals.tax, shipping: vals.shipping,
         businessAmount: vals.total, isSplit: false,
       });
-      await fetch(`/api/receipts/${candidate.id}/resolve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'business' }),
+      await resolveCandidate(candidate.id, {
+        decision: 'business', total: vals.total, tax: vals.tax, shipping: vals.shipping,
+        businessAmount: vals.total, isSplit: false, pdfFilename: filename,
       });
-      removeReceiptByIndex(idx);
+      removeReceiptById(candidate.id);
+      loadStatusCounts(currentMonth);
     } catch (e){
       alert('Failed to save: ' + (e.message || 'unknown error'));
       buttons.forEach(b => b.disabled = false);
     }
   }
-}
-
-function removeReceiptByIndex(idx){
-  receiptCandidates = receiptCandidates.filter((_, i) => i !== idx);
-  renderReceiptsGrid();
 }
 
 function toggleSplitPanel(idx){
@@ -1800,15 +1979,16 @@ function renderSplitPanel(idx){
     const buttons = panel.querySelectorAll('button');
     buttons.forEach(b => b.disabled = true);
     try {
-      await saveReceipt(candidate, {
+      const { filename } = await saveReceipt(candidate, {
         total: vals.total, tax: s.bizTax, shipping: s.bizShipping,
         businessAmount: s.bizTotal, isSplit: true,
       });
-      await fetch(`/api/receipts/${candidate.id}/resolve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'split' }),
+      await resolveCandidate(candidate.id, {
+        decision: 'split', total: vals.total, tax: s.bizTax, shipping: s.bizShipping,
+        businessAmount: s.bizTotal, isSplit: true, pdfFilename: filename,
       });
-      removeReceiptByIndex(idx);
+      removeReceiptById(candidate.id);
+      loadStatusCounts(currentMonth);
     } catch (e){
       alert('Failed to save: ' + (e.message || 'unknown error'));
       buttons.forEach(b => b.disabled = false);
@@ -1876,39 +2056,11 @@ async function getYearFolder(year){
   return taxFolderHandle.getDirectoryHandle(String(year), { create: true });
 }
 
-async function appendToSpreadsheet(row){
-  const year = row.date.slice(0, 4);
-  const spreadsheetFilename = `business-expenses-${year}.xlsx`;
-  const yearFolder = await getYearFolder(year);
-  let fileHandle;
-  try {
-    fileHandle = await yearFolder.getFileHandle(spreadsheetFilename, { create: false });
-  } catch {
-    fileHandle = await yearFolder.getFileHandle(spreadsheetFilename, { create: true });
-  }
-  const file = await fileHandle.getFile();
-  let wb;
-  if (file.size > 0){
-    wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-  } else {
-    wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([SPREADSHEET_HEADERS]), 'Expenses');
-  }
-  const sheetName = wb.SheetNames[0];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
-  if (!rows.length) rows.push(SPREADSHEET_HEADERS);
-  rows.push([
-    row.date, row.vendor, row.subject,
-    row.total ?? '', row.tax ?? '', row.shipping ?? '',
-    row.businessAmount ?? '', row.isSplit ? 'Yes' : 'No', row.pdfFilename,
-  ]);
-  wb.Sheets[sheetName] = XLSX.utils.aoa_to_sheet(rows);
-
-  const writable = await fileHandle.createWritable();
-  await writable.write(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
-  await writable.close();
-}
-
+// The spreadsheet is no longer written incrementally here - it's
+// generated on demand from the DB (see downloadSpreadsheet), which is the
+// only way to keep it correct once receipts can be reclassified after
+// the fact. This just writes the PDF and hands back its filename so the
+// caller can persist it alongside the resolve decision.
 async function saveReceipt(candidate, { total, tax, shipping, businessAmount, isSplit }){
   const pdfBlob = await getReceiptPdfBlob(candidate);
   const vendorSlug = (candidate.from.match(/@([\w.-]+)/) || [, 'receipt'])[1].replace(/\./g, '-');
@@ -1922,10 +2074,41 @@ async function saveReceipt(candidate, { total, tax, shipping, businessAmount, is
   await writable.write(pdfBlob);
   await writable.close();
 
-  await appendToSpreadsheet({
-    date: dateStr, vendor: candidate.from, subject: candidate.subject,
-    total, tax, shipping, businessAmount, isSplit, pdfFilename: filename,
-  });
+  return { filename };
+}
+
+// Plain browser download (not written into the tax folder) - regenerated
+// fresh from the DB every time, so a receipt reclassified after its PDF
+// was saved (business -> personal, etc.) is never stale in the sheet.
+async function downloadSpreadsheet(){
+  const year = new Date().getFullYear();
+  const btn = document.getElementById('receipts-download-spreadsheet');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/receipts/export?year=${year}`);
+    const data = await res.json();
+    const rows = [SPREADSHEET_HEADERS, ...data.receipts.map(r => [
+      r.date && !isNaN(new Date(r.date)) ? new Date(r.date).toISOString().slice(0, 10) : (r.date || ''),
+      r.from, r.subject,
+      r.total ?? '', r.tax ?? '', r.shipping ?? '',
+      r.businessAmount ?? '', r.isSplit ? 'Yes' : 'No', r.pdfFilename || '',
+    ])];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Expenses');
+    const blob = new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `business-expenses-${year}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e){
+    alert('Failed to build spreadsheet: ' + (e.message || 'unknown error'));
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 document.getElementById('receipts-pick-folder').addEventListener('click', pickTaxFolder);
@@ -1954,6 +2137,29 @@ document.getElementById('ignore-modal').addEventListener('click', (e) => {
 document.getElementById('receipt-detail-modal-close').addEventListener('click', closeReceiptDetail);
 document.getElementById('receipt-detail-modal').addEventListener('click', (e) => {
   if (e.target.id === 'receipt-detail-modal') closeReceiptDetail();
+});
+document.querySelectorAll('#receipts-tabs .receipts-tab').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+document.getElementById('receipts-select-all').addEventListener('change', (e) => {
+  document.querySelectorAll('.receipt-select').forEach(cb => {
+    cb.checked = e.target.checked;
+    if (e.target.checked) selectedIds.add(cb.dataset.id); else selectedIds.delete(cb.dataset.id);
+  });
+  updateBulkBar();
+});
+document.getElementById('bulk-business').addEventListener('click', () => bulkResolve('business'));
+document.getElementById('bulk-personal').addEventListener('click', () => bulkResolve('personal'));
+document.getElementById('bulk-ignore').addEventListener('click', () => bulkResolve('ignore'));
+document.getElementById('receipts-download-spreadsheet').addEventListener('click', downloadSpreadsheet);
+document.getElementById('receipts-manage-keywords').addEventListener('click', openKeywordsModal);
+document.getElementById('keywords-modal-close').addEventListener('click', closeKeywordsModal);
+document.getElementById('keywords-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'keywords-modal') closeKeywordsModal();
+});
+document.getElementById('keywords-modal-add-btn').addEventListener('click', addKeywordManually);
+document.getElementById('keywords-modal-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addKeywordManually();
 });
 restoreTaxFolder();
 (async function initReceipts(){

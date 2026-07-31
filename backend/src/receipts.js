@@ -50,6 +50,15 @@ db.exec(`
   );
 `);
 
+// SQLite has no "ADD COLUMN IF NOT EXISTS" - these three were added after
+// the table already existed in production, so add them defensively.
+{
+  const existingColumns = db.prepare("PRAGMA table_info(candidates)").all().map((c) => c.name);
+  for (const [name, type] of [["business_amount", "REAL"], ["is_split", "INTEGER"], ["pdf_filename", "TEXT"]]) {
+    if (!existingColumns.includes(name)) db.exec(`ALTER TABLE candidates ADD COLUMN ${name} ${type}`);
+  }
+}
+
 // One-time migration from the old flat-file state (pre-database version of
 // this feature) so receipts already marked business/personal don't
 // reappear once their month gets scanned under the new system.
@@ -213,6 +222,9 @@ function rowToCandidate(row) {
     images: JSON.parse(row.images || "[]"),
     bodyText: row.body_text,
     status: row.status,
+    businessAmount: row.business_amount,
+    isSplit: !!row.is_split,
+    pdfFilename: row.pdf_filename,
   };
 }
 
@@ -290,12 +302,44 @@ export function createReceiptsRouter({ oauth2Client }) {
   });
 
   // Pure DB read - never touches Gmail. This is what the grid loads from
-  // on every month switch/page load so browsing is instant and doesn't
-  // re-run a search.
+  // on every month/tab switch, so browsing is instant and doesn't re-run
+  // a search. status is comma-separated ("business,split" for the
+  // Business tab, since a partial split-save is still a business receipt).
   router.get("/candidates", (req, res) => {
-    const { month } = req.query;
-    const rows = month ? selectPendingByMonth.all(month) : selectPending.all();
+    const { month, status } = req.query;
+    const statuses = (status || "pending").split(",").map((s) => s.trim()).filter(Boolean);
+    const placeholders = statuses.map(() => "?").join(",");
+    const rows = month
+      ? db.prepare(`SELECT * FROM candidates WHERE month = ? AND status IN (${placeholders})`).all(month, ...statuses)
+      : db.prepare(`SELECT * FROM candidates WHERE status IN (${placeholders})`).all(...statuses);
     res.json({ candidates: rows.map(rowToCandidate) });
+  });
+
+  // Per-tab counts for the currently selected month, so tab labels can
+  // show "Business (3)" without a separate round trip per tab.
+  router.get("/status-counts", (req, res) => {
+    const { month } = req.query;
+    if (!month) return res.status(400).json({ error: "month is required" });
+    const rows = db.prepare("SELECT status, COUNT(*) AS c FROM candidates WHERE month = ? GROUP BY status").all(month);
+    const counts = { pending: 0, business: 0, personal: 0, ignore: 0 };
+    for (const r of rows) {
+      if (r.status === "business" || r.status === "split") counts.business += r.c;
+      else if (Object.prototype.hasOwnProperty.call(counts, r.status)) counts[r.status] = r.c;
+    }
+    res.json({ counts });
+  });
+
+  // Everything marked business/split for the year, in final (possibly
+  // hand-edited) form - the source the "Download spreadsheet" button
+  // generates from. Nothing is written incrementally to a spreadsheet on
+  // each save anymore, so reclassifying a receipt later never leaves a
+  // stale row behind.
+  router.get("/export", (req, res) => {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const rows = db.prepare(
+      "SELECT * FROM candidates WHERE month LIKE ? AND status IN ('business', 'split') ORDER BY date ASC"
+    ).all(`${year}-%`);
+    res.json({ year, receipts: rows.map(rowToCandidate) });
   });
 
   // The only route that calls Gmail. Skips the search entirely if the
@@ -416,10 +460,24 @@ export function createReceiptsRouter({ oauth2Client }) {
     }
   });
 
+  // total/tax/shipping/businessAmount/isSplit/pdfFilename are only
+  // meaningful for business/split decisions (the frontend sends them then);
+  // COALESCE keeps whatever was already stored when they're omitted, e.g.
+  // for a personal/ignore decision, or a later reclassification that
+  // doesn't touch the dollar figures.
   router.post("/:messageId/resolve", (req, res) => {
-    db.prepare("UPDATE candidates SET status = ?, resolved_at = ? WHERE id = ?").run(
-      req.body?.decision || "dismissed",
+    const { decision, total, tax, shipping, businessAmount, isSplit, pdfFilename } = req.body || {};
+    db.prepare(`
+      UPDATE candidates SET
+        status = ?, resolved_at = ?,
+        total = COALESCE(?, total), tax = COALESCE(?, tax), shipping = COALESCE(?, shipping),
+        business_amount = ?, is_split = ?, pdf_filename = COALESCE(?, pdf_filename)
+      WHERE id = ?
+    `).run(
+      decision || "dismissed",
       new Date().toISOString(),
+      total ?? null, tax ?? null, shipping ?? null,
+      businessAmount ?? null, isSplit ? 1 : 0, pdfFilename ?? null,
       req.params.messageId
     );
     res.json({ ok: true });
