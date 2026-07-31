@@ -238,6 +238,9 @@
   }
   .ring-modal-status.error{color:var(--coral);}
 
+  .receipt-image-modal-inner{max-width:min(90vw, 800px);}
+  .receipt-image-modal-inner img{width:100%; display:block; border-radius:6px; background:#000;}
+
   .roku-modal-inner{max-width:min(90vw, 320px);}
   .roku-modal-app{
     text-align:center; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;
@@ -367,9 +370,18 @@
     letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim);
     padding:.5rem .6rem; border-bottom:1px solid var(--panel-line); white-space:nowrap;
   }
+  .receipts-table th.sortable{cursor:pointer; user-select:none;}
+  .receipts-table th.sortable:hover{color:var(--text);}
+  .receipts-table th .sort-arrow{margin-left:.3em; color:var(--teal); display:inline-block; width:.8em;}
   .receipts-table td{padding:.5rem .6rem; border-bottom:1px solid var(--panel-line); vertical-align:middle;}
   .receipts-table .empty{color:var(--text-dim); text-align:center; padding:1.5rem;}
   .receipt-subject{max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .receipt-images{display:flex; gap:.3rem;}
+  .receipt-thumb{
+    width:32px; height:32px; object-fit:cover; border-radius:4px; cursor:pointer;
+    border:1px solid var(--panel-line);
+  }
+  .receipt-thumb:hover{border-color:var(--teal);}
   .receipt-input{
     width:5.5em; background:#0d1116; border:1px solid var(--panel-line); color:var(--text);
     border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;
@@ -453,18 +465,39 @@
         <button type="button" id="receipts-pick-folder" class="receipts-toolbar-btn">Choose tax folder&hellip;</button>
         <button type="button" id="receipts-reconnect-folder" class="receipts-toolbar-btn" style="display:none;">Reconnect folder</button>
         <span class="receipts-folder-status" id="receipts-folder-status">No folder chosen yet</span>
-        <button type="button" id="receipts-scan" class="receipts-toolbar-btn primary">Scan Gmail for receipts</button>
+        <select id="receipts-month-select" class="receipts-toolbar-btn"></select>
+        <button type="button" id="receipts-scan" class="receipts-toolbar-btn primary">Scan month</button>
+        <button type="button" id="receipts-rescan" class="receipts-toolbar-btn" style="display:none;">Force rescan</button>
         <span class="receipts-status" id="receipts-status"></span>
       </div>
       <div class="receipts-table-wrap">
         <table class="receipts-table">
           <thead>
-            <tr><th>Date</th><th>From</th><th>Subject</th><th>Total</th><th>Tax</th><th>Shipping</th><th>Action</th></tr>
+            <tr>
+              <th class="sortable" data-sort="date">Date<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="from">From<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="subject">Subject<span class="sort-arrow"></span></th>
+              <th>Images</th>
+              <th class="sortable" data-sort="total">Total<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="tax">Tax<span class="sort-arrow"></span></th>
+              <th class="sortable" data-sort="shipping">Shipping<span class="sort-arrow"></span></th>
+              <th>Action</th>
+            </tr>
           </thead>
           <tbody id="receipts-tbody">
-            <tr><td colspan="7" class="empty">Click &quot;Scan Gmail for receipts&quot; to check for new ones.</td></tr>
+            <tr><td colspan="8" class="empty">Pick a month above and scan for receipts.</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="receipt-image-modal">
+      <div class="modal-inner receipt-image-modal-inner">
+        <div class="modal-head">
+          <span id="receipt-image-modal-name"></span>
+          <button class="modal-close" id="receipt-image-modal-close">Close</button>
+        </div>
+        <img id="receipt-image-modal-img" alt="Receipt attachment" />
       </div>
     </div>
 
@@ -590,7 +623,11 @@ function renderEvents(events){
 function escapeHtml(s){
   const d = document.createElement('div');
   d.textContent = s;
-  return d.innerHTML;
+  // innerHTML doesn't escape quotes (not needed for text nodes), but this
+  // helper's output routinely lands inside quoted HTML attributes too -
+  // an unescaped " in the source text (e.g. a 5" cable) would otherwise
+  // close the attribute early and truncate everything after it.
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function renderHomeStatus(entities){
@@ -1179,12 +1216,15 @@ makeSortable(document.getElementById('controls-grid'), { handleSelector: '.contr
 // (a security feature of the API, not something we can skip).
 // ---------------------------------------------------------------------
 
-const SPREADSHEET_FILENAME = 'business-expenses-' + new Date().getFullYear() + '.xlsx';
 const SPREADSHEET_HEADERS = ['Date', 'Vendor', 'Subject', 'Total', 'Tax', 'Shipping', 'Business Amount', 'Split?', 'PDF File'];
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 let taxFolderHandle = null;
 let pendingTaxFolderHandle = null;
 let receiptCandidates = [];
+let monthsMeta = [];
+let currentMonth = null;
+let sortState = { key: null, dir: 1 };
 
 function openHandleDb(){
   return new Promise((resolve, reject) => {
@@ -1273,12 +1313,82 @@ function setReceiptsStatus(text, isError){
   el.className = 'receipts-status' + (isError ? ' error' : '');
 }
 
-async function scanReceipts(){
-  const btn = document.getElementById('receipts-scan');
-  btn.disabled = true;
-  setReceiptsStatus('Scanning Gmail…', false);
+function currentMonthKey(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthLabel(month){
+  const [, mm] = month.split('-');
+  return MONTH_NAMES[Number(mm) - 1];
+}
+
+function monthStatusLabel(meta){
+  if (!meta.scanned) return 'not scanned';
+  return meta.pendingCount ? `${meta.pendingCount} pending` : 'all resolved';
+}
+
+function updateScanButtons(){
+  const meta = monthsMeta.find(m => m.month === currentMonth);
+  const scanBtn = document.getElementById('receipts-scan');
+  const rescanBtn = document.getElementById('receipts-rescan');
+  const scanned = meta && meta.scanned;
+  scanBtn.style.display = scanned ? 'none' : '';
+  rescanBtn.style.display = scanned ? '' : 'none';
+}
+
+// Populates the month picker for the current year, capped at the current
+// month - scanning a month that hasn't happened yet would just come back
+// empty. Each option's label reflects whether it's been scanned already,
+// so it's clear at a glance which months still need a first pass.
+async function loadMonths(){
+  const res = await fetch('/api/receipts/months');
+  const data = await res.json();
+  const nowKey = currentMonthKey();
+  monthsMeta = data.months.filter(m => m.month <= nowKey);
+
+  const sel = document.getElementById('receipts-month-select');
+  const keep = currentMonth && monthsMeta.some(m => m.month === currentMonth) ? currentMonth : nowKey;
+  sel.innerHTML = monthsMeta.map(m =>
+    `<option value="${m.month}">${monthLabel(m.month)} (${monthStatusLabel(m)})</option>`
+  ).join('');
+  sel.value = keep;
+  currentMonth = sel.value;
+  updateScanButtons();
+}
+
+// Always a plain DB read - browsing months never re-hits Gmail. Only the
+// two scan buttons below do that.
+async function loadMonthCandidates(month){
+  setReceiptsStatus('Loading…', false);
   try {
-    const res = await fetch('/api/receipts/candidates');
+    const res = await fetch(`/api/receipts/candidates?month=${encodeURIComponent(month)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'load failed');
+    receiptCandidates = data.candidates;
+    setReceiptsStatus(`${data.candidates.length} pending receipt(s) for ${monthLabel(month)}.`, false);
+    renderReceiptsGrid();
+  } catch (e){
+    setReceiptsStatus('Load failed: ' + (e.message || 'unknown error'), true);
+  }
+}
+
+// force=false is the normal "Scan month" button, which the backend no-ops
+// against Gmail if this month was already scanned. force=true is the
+// separate "Force rescan" button for deliberately checking a month again
+// (e.g. a receipt arrived late) - it re-queries Gmail but still won't
+// resurface anything already marked business/personal.
+async function scanMonth(force){
+  const scanBtn = document.getElementById('receipts-scan');
+  const rescanBtn = document.getElementById('receipts-rescan');
+  scanBtn.disabled = true;
+  rescanBtn.disabled = true;
+  setReceiptsStatus(force ? 'Re-scanning Gmail…' : 'Scanning Gmail…', false);
+  try {
+    const res = await fetch('/api/receipts/scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ month: currentMonth, force: !!force }),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'scan failed');
     receiptCandidates = data.candidates;
@@ -1288,11 +1398,53 @@ async function scanReceipts(){
       false
     );
     renderReceiptsGrid();
+    await loadMonths();
   } catch (e){
     setReceiptsStatus('Scan failed: ' + (e.message || 'unknown error'), true);
   } finally {
-    btn.disabled = false;
+    scanBtn.disabled = false;
+    rescanBtn.disabled = false;
   }
+}
+
+function sortCandidates(key){
+  sortState = sortState.key === key ? { key, dir: sortState.dir * -1 } : { key, dir: 1 };
+  const getVal = (c) => {
+    switch (key){
+      case 'date': return c.date ? new Date(c.date).getTime() || 0 : 0;
+      case 'from': return receiptFromName(c.from).toLowerCase();
+      case 'subject': return (c.subject || '').toLowerCase();
+      case 'total': return c.total ?? -Infinity;
+      case 'tax': return c.tax ?? -Infinity;
+      case 'shipping': return c.shipping ?? -Infinity;
+      default: return 0;
+    }
+  };
+  receiptCandidates.sort((a, b) => {
+    const av = getVal(a), bv = getVal(b);
+    if (av < bv) return -sortState.dir;
+    if (av > bv) return sortState.dir;
+    return 0;
+  });
+  renderReceiptsGrid();
+  updateSortArrows();
+}
+
+function updateSortArrows(){
+  document.querySelectorAll('#receipts-section th.sortable').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    arrow.textContent = th.dataset.sort === sortState.key ? (sortState.dir === 1 ? '▲' : '▼') : '';
+  });
+}
+
+function openReceiptImageModal(url, name){
+  document.getElementById('receipt-image-modal-name').textContent = name || 'Image';
+  document.getElementById('receipt-image-modal-img').src = url;
+  document.getElementById('receipt-image-modal').classList.add('open');
+}
+function closeReceiptImageModal(){
+  document.getElementById('receipt-image-modal').classList.remove('open');
+  document.getElementById('receipt-image-modal-img').src = '';
 }
 
 function fmtMoney(n){
@@ -1306,16 +1458,20 @@ function receiptFromName(from){
 function renderReceiptsGrid(){
   const tbody = document.getElementById('receipts-tbody');
   if (!receiptCandidates.length){
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No pending receipts. Scan to check for new ones.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No pending receipts for this month. Scan to check for new ones.</td></tr>';
     return;
   }
   tbody.innerHTML = receiptCandidates.map((c, i) => {
     const dateShort = c.date ? new Date(c.date).toLocaleDateString('en-US') : '';
+    const imagesHtml = (c.images || []).map((img, k) =>
+      `<img class="receipt-thumb" data-idx="${i}" data-k="${k}" src="/api/receipts/attachment/${c.id}/${img.attachmentId}" alt="attachment thumbnail" loading="lazy">`
+    ).join('');
     return `
       <tr class="receipt-row" data-idx="${i}">
         <td>${escapeHtml(dateShort)}</td>
         <td>${escapeHtml(receiptFromName(c.from))}</td>
         <td class="receipt-subject" title="${escapeHtml(c.subject)}">${escapeHtml(c.subject)}</td>
+        <td class="receipt-images">${imagesHtml}</td>
         <td><input type="number" step="0.01" class="receipt-input receipt-total" data-idx="${i}" value="${fmtMoney(c.total)}" placeholder="--"></td>
         <td><input type="number" step="0.01" class="receipt-input receipt-tax" data-idx="${i}" value="${fmtMoney(c.tax)}" placeholder="--"></td>
         <td><input type="number" step="0.01" class="receipt-input receipt-shipping" data-idx="${i}" value="${fmtMoney(c.shipping)}" placeholder="--"></td>
@@ -1326,13 +1482,19 @@ function renderReceiptsGrid(){
         </td>
       </tr>
       <tr class="receipt-split-row" id="split-row-${i}" style="display:none;">
-        <td colspan="7"><div class="split-panel" id="split-panel-${i}"></div></td>
+        <td colspan="8"><div class="split-panel" id="split-panel-${i}"></div></td>
       </tr>
     `;
   }).join('');
 
   tbody.querySelectorAll('.receipt-btn').forEach(btn => {
     btn.addEventListener('click', () => handleReceiptAction(Number(btn.dataset.idx), btn.dataset.action, btn));
+  });
+  tbody.querySelectorAll('.receipt-thumb').forEach(img => {
+    img.addEventListener('click', () => {
+      const c = receiptCandidates[Number(img.dataset.idx)];
+      openReceiptImageModal(img.src, receiptFromName(c.from) + ' — ' + c.subject);
+    });
   });
 }
 
@@ -1536,12 +1698,23 @@ async function getReceiptPdfBlob(candidate){
   return doc.output('blob');
 }
 
+// The chosen tax folder stays the same connected root forever - we never
+// ask the user to re-pick it. Each calendar year just gets its own
+// subfolder underneath, created on first use with no extra permission
+// prompt (the readwrite grant on the root already covers children).
+async function getYearFolder(year){
+  return taxFolderHandle.getDirectoryHandle(String(year), { create: true });
+}
+
 async function appendToSpreadsheet(row){
+  const year = row.date.slice(0, 4);
+  const spreadsheetFilename = `business-expenses-${year}.xlsx`;
+  const yearFolder = await getYearFolder(year);
   let fileHandle;
   try {
-    fileHandle = await taxFolderHandle.getFileHandle(SPREADSHEET_FILENAME, { create: false });
+    fileHandle = await yearFolder.getFileHandle(spreadsheetFilename, { create: false });
   } catch {
-    fileHandle = await taxFolderHandle.getFileHandle(SPREADSHEET_FILENAME, { create: true });
+    fileHandle = await yearFolder.getFileHandle(spreadsheetFilename, { create: true });
   }
   const file = await fileHandle.getFile();
   let wb;
@@ -1571,8 +1744,10 @@ async function saveReceipt(candidate, { total, tax, shipping, businessAmount, is
   const vendorSlug = (candidate.from.match(/@([\w.-]+)/) || [, 'receipt'])[1].replace(/\./g, '-');
   const dateStr = candidate.date && !isNaN(new Date(candidate.date)) ? new Date(candidate.date).toISOString().slice(0, 10) : 'unknown-date';
   const filename = `${dateStr}_${vendorSlug}_${candidate.id.slice(0, 8)}.pdf`;
+  const year = dateStr.slice(0, 4);
 
-  const pdfHandle = await taxFolderHandle.getFileHandle(filename, { create: true });
+  const yearFolder = await getYearFolder(year);
+  const pdfHandle = await yearFolder.getFileHandle(filename, { create: true });
   const writable = await pdfHandle.createWritable();
   await writable.write(pdfBlob);
   await writable.close();
@@ -1585,8 +1760,25 @@ async function saveReceipt(candidate, { total, tax, shipping, businessAmount, is
 
 document.getElementById('receipts-pick-folder').addEventListener('click', pickTaxFolder);
 document.getElementById('receipts-reconnect-folder').addEventListener('click', reconnectTaxFolder);
-document.getElementById('receipts-scan').addEventListener('click', scanReceipts);
+document.getElementById('receipts-scan').addEventListener('click', () => scanMonth(false));
+document.getElementById('receipts-rescan').addEventListener('click', () => scanMonth(true));
+document.getElementById('receipts-month-select').addEventListener('change', (e) => {
+  currentMonth = e.target.value;
+  updateScanButtons();
+  loadMonthCandidates(currentMonth);
+});
+document.querySelectorAll('#receipts-section th.sortable').forEach(th => {
+  th.addEventListener('click', () => sortCandidates(th.dataset.sort));
+});
+document.getElementById('receipt-image-modal-close').addEventListener('click', closeReceiptImageModal);
+document.getElementById('receipt-image-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'receipt-image-modal') closeReceiptImageModal();
+});
 restoreTaxFolder();
+(async function initReceipts(){
+  await loadMonths();
+  await loadMonthCandidates(currentMonth);
+})();
 
 renderClock();
 setInterval(renderClock, 1000 * 15);

@@ -1,24 +1,66 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import Database from "better-sqlite3";
 import { google } from "googleapis";
 
-// Persisted here (mounted as a Docker volume) so "resolved" receipts stay
-// hidden across container restarts, not just within one running process.
+// SQLite lives on the mounted data volume, so scanned months and every
+// candidate/decision survive container restarts. Scanning Gmail is a real
+// cost (hundreds of message fetches) and something the user explicitly
+// asked to only pay once per month unless they force a re-check, so the
+// database is the source of truth for the UI - "candidates" is never a
+// live Gmail call, only "/scan" is.
 const DATA_DIR = process.env.RECEIPTS_DATA_DIR || "/app/data";
-const STATE_FILE = path.join(DATA_DIR, "receipts-state.json");
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const db = new Database(path.join(DATA_DIR, "receipts.db"));
+db.pragma("journal_mode = WAL");
 
-function loadState() {
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scanned_months (
+    month TEXT PRIMARY KEY,
+    scanned_at TEXT NOT NULL,
+    message_count INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS candidates (
+    id TEXT PRIMARY KEY,
+    month TEXT NOT NULL,
+    from_addr TEXT,
+    subject TEXT,
+    date TEXT,
+    snippet TEXT,
+    total REAL,
+    tax REAL,
+    shipping REAL,
+    line_items TEXT,
+    attachment TEXT,
+    images TEXT,
+    body_text TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_candidates_month ON candidates(month);
+  CREATE TABLE IF NOT EXISTS legacy_resolved (
+    id TEXT PRIMARY KEY,
+    decision TEXT,
+    resolved_at TEXT
+  );
+`);
+
+// One-time migration from the old flat-file state (pre-database version of
+// this feature) so receipts already marked business/personal don't
+// reappear once their month gets scanned under the new system.
+const LEGACY_STATE_FILE = path.join(DATA_DIR, "receipts-state.json");
+if (db.prepare("SELECT COUNT(*) AS c FROM legacy_resolved").get().c === 0 && fs.existsSync(LEGACY_STATE_FILE)) {
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    const legacy = JSON.parse(fs.readFileSync(LEGACY_STATE_FILE, "utf8"));
+    const insertLegacy = db.prepare("INSERT OR IGNORE INTO legacy_resolved (id, decision, resolved_at) VALUES (?, ?, ?)");
+    const tx = db.transaction((entries) => {
+      for (const [id, v] of entries) insertLegacy.run(id, v.decision || "dismissed", v.at || new Date().toISOString());
+    });
+    tx(Object.entries(legacy));
   } catch {
-    return {};
+    // Corrupt or unreadable legacy file - nothing to migrate, not fatal.
   }
-}
-
-function saveState(state) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 const RECEIPT_QUERY_TERMS = [
@@ -32,9 +74,18 @@ const RECEIPT_QUERY_TERMS = [
 // review UI is the real filter for whatever slips through.
 const RECEIPT_QUERY_EXCLUSIONS = ['"% off"', "unsubscribe", "newsletter"];
 
-function buildQuery(after) {
+function monthRange(month) {
+  const [y, m] = month.split("-").map(Number);
+  const after = `${y}/${m}/1`;
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  const before = `${nextY}/${nextM}/1`;
+  return { after, before };
+}
+
+function buildQuery(after, before) {
   const exclusions = RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`).join(" ");
-  return `after:${after} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
+  return `after:${after} before:${before} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
 }
 
 function decodeBase64Url(data) {
@@ -81,6 +132,20 @@ function findAttachments(payload) {
   return out;
 }
 
+// Splits attachments into the one to treat as "the receipt document" (a
+// PDF if there is one) and any images - a vendor email can carry both a
+// PDF invoice AND product photos, and the UI wants to show every image as
+// a clickable thumbnail, not just whichever attachment happened to sort
+// first.
+function extractAttachments(payload) {
+  const all = findAttachments(payload).filter(
+    (a) => a.mimeType === "application/pdf" || a.mimeType?.startsWith("image/")
+  );
+  const pdf = all.find((a) => a.mimeType === "application/pdf") || null;
+  const images = all.filter((a) => a.mimeType?.startsWith("image/"));
+  return { attachment: pdf || images[0] || null, images };
+}
+
 const MONEY = "\\$?\\s?([\\d,]{1,3}(?:,\\d{3})*\\.\\d{2})";
 
 function findAmount(text, labels) {
@@ -125,15 +190,100 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
+function rowToCandidate(row) {
+  return {
+    id: row.id,
+    month: row.month,
+    from: row.from_addr,
+    subject: row.subject,
+    date: row.date,
+    snippet: row.snippet,
+    total: row.total,
+    tax: row.tax,
+    shipping: row.shipping,
+    lineItems: JSON.parse(row.line_items || "[]"),
+    attachment: JSON.parse(row.attachment || "null"),
+    images: JSON.parse(row.images || "[]"),
+    bodyText: row.body_text,
+    status: row.status,
+  };
+}
+
 export function createReceiptsRouter({ oauth2Client }) {
   const router = express.Router();
   const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-  router.get("/candidates", async (req, res) => {
+  const selectPendingByMonth = db.prepare("SELECT * FROM candidates WHERE month = ? AND status = 'pending'");
+  const selectPending = db.prepare("SELECT * FROM candidates WHERE status = 'pending'");
+  const selectScannedMonth = db.prepare("SELECT * FROM scanned_months WHERE month = ?");
+  const upsertCandidate = db.prepare(`
+    INSERT INTO candidates (id, month, from_addr, subject, date, snippet, total, tax, shipping, line_items, attachment, images, body_text, status)
+    VALUES (@id, @month, @from_addr, @subject, @date, @snippet, @total, @tax, @shipping, @line_items, @attachment, @images, @body_text, @status)
+    ON CONFLICT(id) DO UPDATE SET
+      from_addr = excluded.from_addr, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet,
+      total = excluded.total, tax = excluded.tax, shipping = excluded.shipping, line_items = excluded.line_items,
+      attachment = excluded.attachment, images = excluded.images, body_text = excluded.body_text
+    WHERE candidates.status = 'pending'
+  `);
+  const upsertScannedMonth = db.prepare(`
+    INSERT INTO scanned_months (month, scanned_at, message_count) VALUES (?, ?, ?)
+    ON CONFLICT(month) DO UPDATE SET scanned_at = excluded.scanned_at, message_count = excluded.message_count
+  `);
+  const getLegacyResolved = db.prepare("SELECT decision FROM legacy_resolved WHERE id = ?");
+
+  // Month picker data: for each month of the requested year, whether it's
+  // been scanned yet and how many pending candidates are sitting in it.
+  router.get("/months", (req, res) => {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const scannedRows = db.prepare("SELECT month, scanned_at, message_count FROM scanned_months WHERE month LIKE ?").all(`${year}-%`);
+    const scannedMap = Object.fromEntries(scannedRows.map((r) => [r.month, r]));
+    const pendingRows = db.prepare("SELECT month, COUNT(*) AS c FROM candidates WHERE status = 'pending' AND month LIKE ?").all(`${year}-%`);
+    const pendingMap = Object.fromEntries(pendingRows.map((r) => [r.month, r.c]));
+
+    const months = [];
+    for (let m = 1; m <= 12; m++) {
+      const month = `${year}-${String(m).padStart(2, "0")}`;
+      months.push({
+        month,
+        scanned: !!scannedMap[month],
+        scannedAt: scannedMap[month]?.scanned_at || null,
+        messageCount: scannedMap[month]?.message_count || 0,
+        pendingCount: pendingMap[month] || 0,
+      });
+    }
+    res.json({ year, months });
+  });
+
+  // Pure DB read - never touches Gmail. This is what the grid loads from
+  // on every month switch/page load so browsing is instant and doesn't
+  // re-run a search.
+  router.get("/candidates", (req, res) => {
+    const { month } = req.query;
+    const rows = month ? selectPendingByMonth.all(month) : selectPending.all();
+    res.json({ candidates: rows.map(rowToCandidate) });
+  });
+
+  // The only route that calls Gmail. Skips the search entirely if the
+  // month was already scanned, unless force=true.
+  router.post("/scan", async (req, res) => {
     try {
-      const state = loadState();
-      const after = req.query.after || `${new Date().getFullYear()}/1/1`;
-      const query = buildQuery(after);
+      const { month, force } = req.body || {};
+      if (!/^\d{4}-\d{2}$/.test(month || "")) {
+        return res.status(400).json({ error: "month must be in YYYY-MM format" });
+      }
+
+      const already = selectScannedMonth.get(month);
+      if (already && !force) {
+        return res.json({
+          candidates: selectPendingByMonth.all(month).map(rowToCandidate),
+          scanned: already.message_count,
+          alreadyScanned: true,
+          errors: [],
+        });
+      }
+
+      const { after, before } = monthRange(month);
+      const query = buildQuery(after, before);
 
       let messages = [];
       let pageToken;
@@ -146,11 +296,9 @@ export function createReceiptsRouter({ oauth2Client }) {
         });
         messages.push(...(data.messages || []));
         pageToken = data.nextPageToken;
-      } while (pageToken && messages.length < 300); // sanity cap per scan
+      } while (pageToken && messages.length < 500); // sanity cap per month
 
-      const pending = messages.filter((m) => !state[m.id]);
-
-      const results = await mapWithConcurrency(pending, 8, async (m) => {
+      const results = await mapWithConcurrency(messages, 8, async (m) => {
         const { data: full } = await gmail.users.messages.get({
           userId: "me",
           id: m.id,
@@ -158,9 +306,7 @@ export function createReceiptsRouter({ oauth2Client }) {
         });
         const headers = Object.fromEntries((full.payload.headers || []).map((h) => [h.name, h.value]));
         const bodyText = findBodyText(full.payload);
-        const attachments = findAttachments(full.payload).filter(
-          (a) => a.mimeType === "application/pdf" || a.mimeType?.startsWith("image/")
-        );
+        const { attachment, images } = extractAttachments(full.payload);
 
         return {
           id: m.id,
@@ -172,19 +318,46 @@ export function createReceiptsRouter({ oauth2Client }) {
           tax: findAmount(bodyText, ["tax", "sales tax"]),
           shipping: findAmount(bodyText, ["shipping", "delivery"]),
           lineItems: extractLineItems(bodyText),
-          attachment: attachments[0] || null,
+          attachment,
+          images,
           bodyText: bodyText.slice(0, 4000),
         };
       });
 
+      const fulfilled = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      const tx = db.transaction((rows) => {
+        for (const c of rows) {
+          const legacy = getLegacyResolved.get(c.id);
+          upsertCandidate.run({
+            id: c.id,
+            month,
+            from_addr: c.from,
+            subject: c.subject,
+            date: c.date,
+            snippet: c.snippet,
+            total: c.total,
+            tax: c.tax,
+            shipping: c.shipping,
+            line_items: JSON.stringify(c.lineItems),
+            attachment: JSON.stringify(c.attachment),
+            images: JSON.stringify(c.images),
+            body_text: c.bodyText,
+            status: legacy ? legacy.decision : "pending",
+          });
+        }
+        upsertScannedMonth.run(month, new Date().toISOString(), messages.length);
+      });
+      tx(fulfilled);
+
+      const candidates = selectPendingByMonth.all(month).map(rowToCandidate);
       // Highest-confidence candidates (an actual dollar figure was found)
       // first, so review starts with the most likely real receipts.
-      const candidates = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
       candidates.sort((a, b) => (b.total != null) - (a.total != null));
 
       res.json({
         candidates,
         scanned: messages.length,
+        alreadyScanned: false,
         errors: results.filter((r) => r.status === "rejected").map((r) => r.reason?.message || "unknown error"),
       });
     } catch (e) {
@@ -208,17 +381,17 @@ export function createReceiptsRouter({ oauth2Client }) {
   });
 
   router.post("/:messageId/resolve", (req, res) => {
-    const state = loadState();
-    state[req.params.messageId] = { decision: req.body?.decision || "dismissed", at: new Date().toISOString() };
-    saveState(state);
+    db.prepare("UPDATE candidates SET status = ?, resolved_at = ? WHERE id = ?").run(
+      req.body?.decision || "dismissed",
+      new Date().toISOString(),
+      req.params.messageId
+    );
     res.json({ ok: true });
   });
 
   // Undo, in case a receipt gets marked resolved by mistake.
   router.post("/:messageId/unresolve", (req, res) => {
-    const state = loadState();
-    delete state[req.params.messageId];
-    saveState(state);
+    db.prepare("UPDATE candidates SET status = 'pending', resolved_at = NULL WHERE id = ?").run(req.params.messageId);
     res.json({ ok: true });
   });
 
