@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { google } from "googleapis";
+import Anthropic from "@anthropic-ai/sdk";
 
 // SQLite lives on the mounted data volume, so scanned months and every
 // candidate/decision survive container restarts. Scanning Gmail is a real
@@ -247,6 +248,66 @@ function extractLineItems(text) {
   return items;
 }
 
+// Regex-based extraction above is genuinely best-effort - every vendor
+// formats receipts differently, and pattern-matching only ever covers the
+// formats it was written against. When an API key is configured, an LLM
+// reads the actual email instead, which generalizes across formats far
+// better than more regex. Falls back to the regex heuristics above if no
+// key is set, or if the call fails for any reason (rate limit, etc.) -
+// scanning must never hard-fail just because extraction had a bad day.
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
+
+const EXTRACTION_TOOL = {
+  name: "extract_receipt",
+  description: "Extract structured purchase details from a receipt or order-confirmation email.",
+  input_schema: {
+    type: "object",
+    properties: {
+      isReceipt: {
+        type: "boolean",
+        description: "True if this email documents an actual purchase with financial data (receipt, order/payment confirmation). False for pure shipping/tracking status updates, marketing, or anything with no dollar amounts.",
+      },
+      total: { type: ["number", "null"], description: "Grand total charged, in dollars. Null if not stated." },
+      tax: { type: ["number", "null"], description: "Sales tax amount, in dollars. Null if not stated." },
+      shipping: { type: ["number", "null"], description: "Shipping/delivery fee, in dollars. Null if not stated." },
+      lineItems: {
+        type: "array",
+        description: "Every distinct item/product purchased, with its price if shown. Do not include tax, shipping, discounts, or the total itself as a line item.",
+        items: {
+          type: "object",
+          properties: {
+            description: { type: "string", description: "The product/item name or description, as written in the email." },
+            amount: { type: ["number", "null"], description: "That item's price in dollars, or null if not shown separately." },
+          },
+          required: ["description"],
+        },
+      },
+    },
+    required: ["isReceipt", "lineItems"],
+  },
+};
+
+async function extractWithAI(subject, bodyText) {
+  if (!anthropic) return null;
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      tools: [EXTRACTION_TOOL],
+      tool_choice: { type: "tool", name: "extract_receipt" },
+      messages: [{
+        role: "user",
+        content: `Extract the purchase details from this email.\n\nSubject: ${subject}\n\nBody:\n${bodyText.slice(0, 6000)}`,
+      }],
+    });
+    const toolUse = msg.content.find((b) => b.type === "tool_use");
+    return toolUse ? toolUse.input : null;
+  } catch (e) {
+    console.error("AI extraction failed, falling back to regex:", e.message);
+    return null;
+  }
+}
+
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
   let next = 0;
@@ -437,7 +498,10 @@ export function createReceiptsRouter({ oauth2Client }) {
         pageToken = data.nextPageToken;
       } while (pageToken && messages.length < 500); // sanity cap per month
 
-      const results = await mapWithConcurrency(messages, 8, async (m) => {
+      // Lower concurrency when calling out to the Anthropic API per message
+      // - the regex path is free and instant, but an LLM call per email
+      // benefits from being gentler on rate limits.
+      const results = await mapWithConcurrency(messages, anthropic ? 4 : 8, async (m) => {
         const { data: full } = await gmail.users.messages.get({
           userId: "me",
           id: m.id,
@@ -449,16 +513,24 @@ export function createReceiptsRouter({ oauth2Client }) {
         const { attachment, images } = extractAttachments(full.payload);
         const remoteImageUrls = extractRemoteImageUrls(parts.html);
 
+        const ai = await extractWithAI(headers.Subject || "", bodyText);
+        const total = ai ? ai.total ?? null : findAmount(bodyText, ["total", "grand total", "order total", "amount charged", "amount due"]);
+        const tax = ai ? ai.tax ?? null : findAmount(bodyText, ["tax", "sales tax"]);
+        const shipping = ai ? ai.shipping ?? null : findAmount(bodyText, ["shipping", "delivery"]);
+        const lineItems = ai
+          ? (ai.lineItems || []).map((it) => ({ description: it.description, amount: it.amount ?? null }))
+          : extractLineItems(bodyText);
+
         return {
           id: m.id,
           from: headers.From || "",
           subject: headers.Subject || "",
           date: headers.Date || "",
           snippet: full.snippet || "",
-          total: findAmount(bodyText, ["total", "grand total", "order total", "amount charged", "amount due"]),
-          tax: findAmount(bodyText, ["tax", "sales tax"]),
-          shipping: findAmount(bodyText, ["shipping", "delivery"]),
-          lineItems: extractLineItems(bodyText),
+          total,
+          tax,
+          shipping,
+          lineItems,
           attachment,
           images,
           remoteImageUrls,

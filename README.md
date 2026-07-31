@@ -191,3 +191,16 @@ the receipts feature. Chrome/Edge will show a "connection is not private"
 warning for the self-signed cert — click **Advanced → Proceed** (a one-time
 trust exception per browser/device). Use **Choose tax folder** on the card
 to pick a local folder once; the app remembers it via IndexedDB after that.
+
+### Optional: AI-based receipt extraction
+
+By default, totals/tax/shipping/line-items are pulled out of each email
+with regex heuristics, which only cover the specific formats they were
+written against — most vendors format receipts differently, so a lot of
+real emails come back with no line items detected even when a total was
+found. Setting `ANTHROPIC_API_KEY` in `infra/.env` (get one at
+[console.anthropic.com](https://console.anthropic.com)) switches scanning
+over to having an LLM (Haiku) read each email directly, which generalizes
+across vendor formats far better. It's a small per-email cost on a cheap
+model, and falls back to the regex heuristics automatically if the key
+isn't set or a call fails.
