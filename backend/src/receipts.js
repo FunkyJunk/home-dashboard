@@ -60,6 +60,28 @@ db.exec(`
   }
 }
 
+// ignore_keywords grew a second kind of entry (sender domains, excluded
+// via Gmail's `-from:` operator instead of a quoted-phrase match) - the
+// original schema's PK was just the keyword text, which can't
+// distinguish "amazon.com" the subject phrase from "amazon.com" the
+// domain, so this rebuilds the table with a composite (value, type) key.
+{
+  const ikColumns = db.prepare("PRAGMA table_info(ignore_keywords)").all().map((c) => c.name);
+  if (!ikColumns.includes("type")) {
+    db.exec(`
+      ALTER TABLE ignore_keywords RENAME TO ignore_keywords_old;
+      CREATE TABLE ignore_keywords (
+        value TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'keyword',
+        added_at TEXT NOT NULL,
+        PRIMARY KEY (value, type)
+      );
+      INSERT INTO ignore_keywords (value, type, added_at) SELECT keyword, 'keyword', added_at FROM ignore_keywords_old;
+      DROP TABLE ignore_keywords_old;
+    `);
+  }
+}
+
 // One-time migration from the old flat-file state (pre-database version of
 // this feature) so receipts already marked business/personal don't
 // reappear once their month gets scanned under the new system.
@@ -97,11 +119,16 @@ function monthRange(month) {
   return { after, before };
 }
 
-function buildQuery(after, before, ignoreKeywords) {
-  // ignoreKeywords is user-curated (via the "Ignore" button's keyword
-  // picker) on top of the static exclusion list, so shipping/delivery
-  // noise the user has already flagged stops coming back in future scans.
-  const exclusions = [...RECEIPT_QUERY_EXCLUSIONS, ...ignoreKeywords.map((k) => `"${k}"`)].map((t) => `-${t}`).join(" ");
+function buildQuery(after, before, ignoreItems) {
+  // ignoreItems is user-curated (via the "Ignore" button's picker) on top
+  // of the static exclusion list, so shipping/delivery noise or entire
+  // senders the user has already flagged stop coming back in future
+  // scans. Domains use Gmail's -from: operator (excludes by sender)
+  // rather than a quoted-phrase match (which would exclude any email
+  // merely mentioning that domain, e.g. a tracking link).
+  const wordExclusions = ignoreItems.filter((i) => i.type !== "domain").map((i) => `-"${i.value}"`);
+  const domainExclusions = ignoreItems.filter((i) => i.type === "domain").map((i) => `-from:${i.value}`);
+  const exclusions = [...RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`), ...wordExclusions, ...domainExclusions].join(" ");
   return `after:${after} before:${before} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
 }
 
@@ -414,31 +441,45 @@ export function createReceiptsRouter({ oauth2Client }) {
     res.json({ year, months });
   });
 
-  // The ignore list is user-curated: picked from a subject's words via the
-  // "Ignore" button's keyword popup. Used both to highlight matching
-  // candidates client-side and to exclude future Gmail scans (see buildQuery).
+  // The ignore list is user-curated: picked from a subject's words (or a
+  // sender's domain) via the "Ignore" button's popup. Used both to
+  // highlight matching candidates client-side and to exclude future
+  // Gmail scans (see buildQuery).
+  const selectIgnoreItems = db.prepare("SELECT value, type FROM ignore_keywords ORDER BY added_at DESC");
+  function currentIgnoreLists() {
+    const rows = selectIgnoreItems.all();
+    return {
+      keywords: rows.filter((r) => r.type !== "domain").map((r) => r.value),
+      domains: rows.filter((r) => r.type === "domain").map((r) => r.value),
+    };
+  }
+
   router.get("/ignore-keywords", (req, res) => {
-    const keywords = db.prepare("SELECT keyword FROM ignore_keywords ORDER BY added_at DESC").all().map((r) => r.keyword);
-    res.json({ keywords });
+    res.json(currentIgnoreLists());
   });
 
   router.post("/ignore-keywords", (req, res) => {
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : [];
-    const insert = db.prepare("INSERT OR IGNORE INTO ignore_keywords (keyword, added_at) VALUES (?, ?)");
+    const domains = Array.isArray(req.body?.domains) ? req.body.domains : [];
+    const insert = db.prepare("INSERT OR IGNORE INTO ignore_keywords (value, type, added_at) VALUES (?, ?, ?)");
     const now = new Date().toISOString();
-    const tx = db.transaction((words) => {
+    const tx = db.transaction((words, doms) => {
       for (const w of words) {
-        const keyword = String(w || "").trim().toLowerCase();
-        if (keyword) insert.run(keyword, now);
+        const value = String(w || "").trim().toLowerCase();
+        if (value) insert.run(value, "keyword", now);
+      }
+      for (const d of doms) {
+        const value = String(d || "").trim().toLowerCase();
+        if (value) insert.run(value, "domain", now);
       }
     });
-    tx(keywords);
-    const all = db.prepare("SELECT keyword FROM ignore_keywords ORDER BY added_at DESC").all().map((r) => r.keyword);
-    res.json({ keywords: all });
+    tx(keywords, domains);
+    res.json(currentIgnoreLists());
   });
 
-  router.delete("/ignore-keywords/:keyword", (req, res) => {
-    db.prepare("DELETE FROM ignore_keywords WHERE keyword = ?").run(req.params.keyword.toLowerCase());
+  router.delete("/ignore-keywords/:value", (req, res) => {
+    const type = req.query.type === "domain" ? "domain" : "keyword";
+    db.prepare("DELETE FROM ignore_keywords WHERE value = ? AND type = ?").run(req.params.value.toLowerCase(), type);
     res.json({ ok: true });
   });
 
@@ -502,9 +543,9 @@ export function createReceiptsRouter({ oauth2Client }) {
         });
       }
 
-      const ignoreKeywords = db.prepare("SELECT keyword FROM ignore_keywords").all().map((r) => r.keyword);
+      const ignoreItems = selectIgnoreItems.all();
       const { after, before } = monthRange(month);
-      const query = buildQuery(after, before, ignoreKeywords);
+      const query = buildQuery(after, before, ignoreItems);
 
       let messages = [];
       let pageToken;

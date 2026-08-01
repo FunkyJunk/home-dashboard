@@ -582,6 +582,7 @@
         </div>
         <p class="ignore-modal-hint">Select any words from the subject below to permanently ignore similar emails in future scans:</p>
         <div class="ignore-modal-words" id="ignore-modal-words"></div>
+        <div class="ignore-modal-words" id="ignore-modal-domain"></div>
         <div class="ignore-modal-actions">
           <button type="button" class="receipt-btn business" id="ignore-modal-confirm">Add keywords &amp; ignore</button>
           <button type="button" class="receipt-btn personal" id="ignore-modal-skip">Just ignore this one</button>
@@ -1599,6 +1600,7 @@ function closeReceiptImageModal(){
 // ---------------------------------------------------------------------
 
 let ignoreKeywords = [];
+let ignoreDomains = [];
 let pendingIgnoreIdx = null;
 
 const IGNORE_STOPWORDS = new Set([
@@ -1612,6 +1614,7 @@ async function loadIgnoreKeywords(){
     const res = await fetch('/api/receipts/ignore-keywords');
     const data = await res.json();
     ignoreKeywords = data.keywords || [];
+    ignoreDomains = data.domains || [];
   } catch (e){ /* non-fatal - highlighting just won't reflect the list */ }
 }
 
@@ -1624,23 +1627,70 @@ function extractSubjectWords(subject){
   return [...new Set(words)].filter(w => !IGNORE_STOPWORDS.has(w) && !known.has(w));
 }
 
-function candidateMatchesIgnore(c){
-  const subject = (c.subject || '').toLowerCase();
-  return ignoreKeywords.some(k => subject.includes(k));
+function extractSenderDomain(from){
+  const m = (from || '').match(/@([\w.-]+)/);
+  return m ? m[1].toLowerCase() : null;
 }
 
-function openIgnoreModal(idx){
+function candidateMatchesIgnore(c){
+  const subject = (c.subject || '').toLowerCase();
+  const domain = extractSenderDomain(c.from);
+  return ignoreKeywords.some(k => subject.includes(k)) || (domain && ignoreDomains.includes(domain));
+}
+
+// Positions the modal's card near whatever was clicked (the Ignore
+// button) instead of dead-center of the screen. Takes an already-captured
+// rect (DOMRect values are a snapshot, not live) rather than an element,
+// since callers sometimes need to read the position before hiding
+// whatever container the button lives in - reading it after would give a
+// collapsed, useless rect. Optional, falling back to the default centered
+// layout when omitted.
+function positionModalNear(inner, anchorRect){
+  if (!anchorRect){
+    inner.style.position = '';
+    inner.style.left = '';
+    inner.style.top = '';
+    inner.style.margin = '';
+    return;
+  }
+  const innerRect = inner.getBoundingClientRect();
+  const margin = 12;
+  let left = anchorRect.left;
+  let top = anchorRect.bottom + margin;
+  if (left + innerRect.width > window.innerWidth - margin) left = window.innerWidth - innerRect.width - margin;
+  if (left < margin) left = margin;
+  if (top + innerRect.height > window.innerHeight - margin) top = anchorRect.top - innerRect.height - margin;
+  if (top < margin) top = margin;
+  inner.style.position = 'fixed';
+  inner.style.margin = '0';
+  inner.style.left = left + 'px';
+  inner.style.top = top + 'px';
+}
+
+function openIgnoreModal(idx, anchorRect){
   pendingIgnoreIdx = idx;
   const candidate = receiptCandidates[idx];
   const words = extractSubjectWords(candidate.subject);
   const wordsEl = document.getElementById('ignore-modal-words');
   wordsEl.innerHTML = words.length
-    ? words.map(w => `<label class="ignore-keyword-chip"><input type="checkbox" value="${escapeHtml(w)}" checked> ${escapeHtml(w)}</label>`).join('')
+    ? words.map(w => `<label class="ignore-keyword-chip"><input type="checkbox" value="${escapeHtml(w)}"> ${escapeHtml(w)}</label>`).join('')
     : '<span class="receipts-status">No new keywords to add (all words are either already ignored or too common).</span>';
-  document.getElementById('ignore-modal').classList.add('open');
+
+  const domain = extractSenderDomain(candidate.from);
+  const domainEl = document.getElementById('ignore-modal-domain');
+  domainEl.innerHTML = (domain && !ignoreDomains.includes(domain))
+    ? `<label class="ignore-keyword-chip"><input type="checkbox" id="ignore-modal-domain-cb" value="${escapeHtml(domain)}"> Ignore all emails from @${escapeHtml(domain)}</label>`
+    : '';
+
+  const overlay = document.getElementById('ignore-modal');
+  const inner = overlay.querySelector('.ignore-modal-inner');
+  overlay.classList.add('open');
+  positionModalNear(inner, anchorRect);
 }
 function closeIgnoreModal(){
-  document.getElementById('ignore-modal').classList.remove('open');
+  const overlay = document.getElementById('ignore-modal');
+  overlay.classList.remove('open');
+  positionModalNear(overlay.querySelector('.ignore-modal-inner'), null);
   pendingIgnoreIdx = null;
 }
 
@@ -1649,11 +1699,13 @@ async function confirmIgnore(withKeywords){
   const candidate = receiptCandidates[idx];
   if (!candidate){ closeIgnoreModal(); return; }
   if (withKeywords){
-    const selected = [...document.querySelectorAll('#ignore-modal-words input:checked')].map(inp => inp.value);
-    if (selected.length){
+    const selectedWords = [...document.querySelectorAll('#ignore-modal-words input:checked')].map(inp => inp.value);
+    const domainCb = document.getElementById('ignore-modal-domain-cb');
+    const selectedDomains = domainCb && domainCb.checked ? [domainCb.value] : [];
+    if (selectedWords.length || selectedDomains.length){
       await fetch('/api/receipts/ignore-keywords', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords: selected }),
+        body: JSON.stringify({ keywords: selectedWords, domains: selectedDomains }),
       });
       await loadIgnoreKeywords();
     }
@@ -1666,12 +1718,14 @@ async function confirmIgnore(withKeywords){
 
 function renderKeywordsModal(){
   const list = document.getElementById('keywords-modal-list');
-  list.innerHTML = ignoreKeywords.length
-    ? ignoreKeywords.map(k => `<span class="ignore-keyword-chip">${escapeHtml(k)}<button type="button" class="keyword-remove" data-k="${escapeHtml(k)}" title="Remove">&times;</button></span>`).join('')
+  const wordChips = ignoreKeywords.map(k => `<span class="ignore-keyword-chip">${escapeHtml(k)}<button type="button" class="keyword-remove" data-v="${escapeHtml(k)}" data-type="keyword" title="Remove">&times;</button></span>`);
+  const domainChips = ignoreDomains.map(d => `<span class="ignore-keyword-chip">@${escapeHtml(d)}<button type="button" class="keyword-remove" data-v="${escapeHtml(d)}" data-type="domain" title="Remove">&times;</button></span>`);
+  list.innerHTML = (wordChips.length || domainChips.length)
+    ? wordChips.concat(domainChips).join('')
     : '<span class="receipts-status">No ignore keywords yet.</span>';
   list.querySelectorAll('.keyword-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.k)}`, { method: 'DELETE' });
+      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, { method: 'DELETE' });
       await loadIgnoreKeywords();
       renderKeywordsModal();
       renderReceiptsGrid();
@@ -1766,8 +1820,9 @@ async function handleDetailAction(idx, action, btn){
   }
 
   if (action === 'ignore'){
+    const rect = btn.getBoundingClientRect(); // capture before the modal underneath it closes
     closeReceiptDetail();
-    openIgnoreModal(idx);
+    openIgnoreModal(idx, rect);
     return;
   }
 
@@ -1944,7 +1999,7 @@ async function handleReceiptAction(idx, action, btn){
   }
 
   if (action === 'ignore'){
-    openIgnoreModal(idx);
+    openIgnoreModal(idx, btn.getBoundingClientRect());
     return;
   }
 
