@@ -1717,9 +1717,16 @@ function openReceiptDetail(idx){
   const imagesHtml = buildImagesHtml(c, idx);
 
   const gmailUrl = 'https://mail.google.com/mail/u/0/#all/' + encodeURIComponent(c.id);
+  const ignoreMatch = candidateMatchesIgnore(c);
 
   document.getElementById('receipt-detail-modal-title').textContent = receiptFromName(c.from);
   document.getElementById('receipt-detail-body').innerHTML = `
+    <div class="receipt-detail-row receipt-actions">
+      <button type="button" class="receipt-btn business" data-action="business">Business</button>
+      <button type="button" class="receipt-btn split" data-action="split">Split</button>
+      <button type="button" class="receipt-btn personal" data-action="personal">Personal</button>
+      <button type="button" class="receipt-btn ignore${ignoreMatch ? ' ignore-match' : ''}" data-action="ignore" title="${ignoreMatch ? 'Subject matches a saved ignore keyword' : ''}">Ignore</button>
+    </div>
     <div class="receipt-detail-row"><a href="${gmailUrl}" target="_blank" rel="noopener">View full email in Gmail &rarr;</a></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">Subject</span><div>${escapeHtml(c.subject || '(no subject)')}</div></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">From</span><div>${escapeHtml(c.from || '')}</div></div>
@@ -1735,7 +1742,38 @@ function openReceiptDetail(idx){
   document.getElementById('receipt-detail-body').querySelectorAll('.detail-item-thumb').forEach(img => {
     img.addEventListener('click', () => openReceiptImageModal(img.src, c.lineItems[Number(img.dataset.j)]?.description || c.subject));
   });
+  document.getElementById('receipt-detail-body').querySelectorAll('.receipt-actions .receipt-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleDetailAction(idx, btn.dataset.action, btn));
+  });
   document.getElementById('receipt-detail-modal').classList.add('open');
+}
+
+// Split/Ignore reuse the same flows as the grid row (split panel / ignore
+// keyword popup), just closing the detail modal first since both live
+// underneath it. Business/Personal resolve directly and only close the
+// modal once the candidate is actually gone (so a failed save, e.g. no
+// tax folder chosen, leaves the detail open to fix and retry).
+async function handleDetailAction(idx, action, btn){
+  const candidate = receiptCandidates[idx];
+  if (!candidate) return;
+
+  if (action === 'split'){
+    closeReceiptDetail();
+    const row = document.querySelector(`.receipt-row[data-idx="${idx}"]`);
+    if (!row || getComputedStyle(document.getElementById(`split-row-${idx}`)).display === 'none') toggleSplitPanel(idx);
+    document.getElementById(`split-row-${idx}`)?.scrollIntoView({ block: 'center' });
+    return;
+  }
+
+  if (action === 'ignore'){
+    closeReceiptDetail();
+    openIgnoreModal(idx);
+    return;
+  }
+
+  const id = candidate.id;
+  await handleReceiptAction(idx, action, btn);
+  if (!receiptCandidates.some(c => c.id === id)) closeReceiptDetail();
 }
 function closeReceiptDetail(){
   document.getElementById('receipt-detail-modal').classList.remove('open');
