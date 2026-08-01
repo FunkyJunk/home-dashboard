@@ -119,16 +119,15 @@ function monthRange(month) {
   return { after, before };
 }
 
-function buildQuery(after, before, ignoreItems) {
-  // ignoreItems is user-curated (via the "Ignore" button's picker) on top
-  // of the static exclusion list, so shipping/delivery noise or entire
-  // senders the user has already flagged stop coming back in future
-  // scans. Domains use Gmail's -from: operator (excludes by sender)
-  // rather than a quoted-phrase match (which would exclude any email
-  // merely mentioning that domain, e.g. a tracking link).
-  const wordExclusions = ignoreItems.filter((i) => i.type !== "domain").map((i) => `-"${i.value}"`);
-  const domainExclusions = ignoreItems.filter((i) => i.type === "domain").map((i) => `-from:${i.value}`);
-  const exclusions = [...RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`), ...wordExclusions, ...domainExclusions].join(" ");
+// Ignore keywords/domains no longer exclude anything from the Gmail
+// search itself - a single common word (shipped, tracking, delivered)
+// excludes by matching anywhere in the message, not just the subject,
+// which was silently dropping large numbers of genuine receipts from
+// ever being scanned at all. They're purely a client-side highlight now
+// (see candidateMatchesIgnore in the frontend) - every matching email
+// still comes back so the user can look at it and decide.
+function buildQuery(after, before) {
+  const exclusions = RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`).join(" ");
   return `after:${after} before:${before} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
 }
 
@@ -545,9 +544,8 @@ export function createReceiptsRouter({ oauth2Client }) {
         });
       }
 
-      const ignoreItems = selectIgnoreItems.all();
       const { after, before } = monthRange(month);
-      const query = buildQuery(after, before, ignoreItems);
+      const query = buildQuery(after, before);
 
       let messages = [];
       let pageToken;
