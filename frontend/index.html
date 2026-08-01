@@ -427,8 +427,14 @@
   .keywords-modal-add .keywords-modal-input{width:auto; flex:1;}
 
   .ignore-modal-inner{max-width:min(90vw, 480px);}
+  .ignore-modal-subject{
+    font-size:.85rem; background:#0d1116; border:1px solid var(--panel-line); border-radius:4px;
+    padding:.5em .7em; margin-bottom:.75rem; word-break:break-word;
+  }
   .ignore-modal-hint{color:var(--text-dim); font-size:.85rem; margin-bottom:.5rem;}
   .ignore-modal-words{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1rem;}
+  .ignore-modal-phrase-add{display:flex; gap:.5rem; margin-bottom:1rem;}
+  .ignore-modal-phrase-add .ignore-modal-phrase-input{width:auto; flex:1;}
   .ignore-keyword-chip{
     display:flex; align-items:center; gap:.35rem; background:#0d1116; border:1px solid var(--panel-line);
     border-radius:4px; padding:.35em .6em; font-size:.8rem; cursor:pointer;
@@ -584,12 +590,16 @@
           <span>Ignore this email</span>
           <button class="modal-close" id="ignore-modal-close">Close</button>
         </div>
-        <p class="ignore-modal-hint">Select any words from the subject below to permanently ignore similar emails in future scans:</p>
+        <p class="ignore-modal-subject" id="ignore-modal-subject"></p>
+        <p class="ignore-modal-hint">Select any words below (or add your own phrase) to permanently ignore similar emails in future scans - or just click Ignore to skip this one alone:</p>
         <div class="ignore-modal-words" id="ignore-modal-words"></div>
         <div class="ignore-modal-words" id="ignore-modal-domain"></div>
+        <div class="ignore-modal-phrase-add">
+          <input type="text" class="receipt-input ignore-modal-phrase-input" id="ignore-modal-phrase-input" placeholder="Or type a custom phrase to ignore&hellip;">
+          <button type="button" class="receipt-btn personal" id="ignore-modal-phrase-add-btn">+ Add</button>
+        </div>
         <div class="ignore-modal-actions">
-          <button type="button" class="receipt-btn business" id="ignore-modal-confirm">Add keywords &amp; ignore</button>
-          <button type="button" class="receipt-btn personal" id="ignore-modal-skip">Just ignore this one</button>
+          <button type="button" class="receipt-btn ignore" id="ignore-modal-confirm">Ignore</button>
           <button type="button" class="receipt-btn personal" id="ignore-modal-cancel">Cancel</button>
         </div>
       </div>
@@ -1674,11 +1684,14 @@ function positionModalNear(inner, anchorRect){
 function openIgnoreModal(idx, anchorRect){
   pendingIgnoreIdx = idx;
   const candidate = receiptCandidates[idx];
+  document.getElementById('ignore-modal-subject').textContent = 'Subject: ' + (candidate.subject || '(no subject)');
+  document.getElementById('ignore-modal-phrase-input').value = '';
+
   const words = extractSubjectWords(candidate.subject);
   const wordsEl = document.getElementById('ignore-modal-words');
   wordsEl.innerHTML = words.length
     ? words.map(w => `<label class="ignore-keyword-chip"><input type="checkbox" value="${escapeHtml(w)}"> ${escapeHtml(w)}</label>`).join('')
-    : '<span class="receipts-status">No new keywords to add (all words are either already ignored or too common).</span>';
+    : '';
 
   const domain = extractSenderDomain(candidate.from);
   const domainEl = document.getElementById('ignore-modal-domain');
@@ -1698,21 +1711,37 @@ function closeIgnoreModal(){
   pendingIgnoreIdx = null;
 }
 
-async function confirmIgnore(withKeywords){
+// Typing a phrase and clicking Add just drops another checked chip into
+// the same words list - it's picked up by confirmIgnore() below exactly
+// like an extracted subject word, no separate code path needed.
+function addIgnorePhrase(){
+  const input = document.getElementById('ignore-modal-phrase-input');
+  const phrase = input.value.trim().toLowerCase();
+  if (!phrase) return;
+  const chip = document.createElement('label');
+  chip.className = 'ignore-keyword-chip';
+  chip.innerHTML = `<input type="checkbox" value="${escapeHtml(phrase)}" checked> ${escapeHtml(phrase)}`;
+  document.getElementById('ignore-modal-words').appendChild(chip);
+  input.value = '';
+  input.focus();
+}
+
+// Single action now: whatever's checked (subject words, the domain
+// option, custom phrases) gets added, then the email is always ignored -
+// checking nothing just ignores this one email alone.
+async function confirmIgnore(){
   const idx = pendingIgnoreIdx;
   const candidate = receiptCandidates[idx];
   if (!candidate){ closeIgnoreModal(); return; }
-  if (withKeywords){
-    const selectedWords = [...document.querySelectorAll('#ignore-modal-words input:checked')].map(inp => inp.value);
-    const domainCb = document.getElementById('ignore-modal-domain-cb');
-    const selectedDomains = domainCb && domainCb.checked ? [domainCb.value] : [];
-    if (selectedWords.length || selectedDomains.length){
-      await fetch('/api/receipts/ignore-keywords', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords: selectedWords, domains: selectedDomains }),
-      });
-      await loadIgnoreKeywords();
-    }
+  const selectedWords = [...document.querySelectorAll('#ignore-modal-words input:checked')].map(inp => inp.value);
+  const domainCb = document.getElementById('ignore-modal-domain-cb');
+  const selectedDomains = domainCb && domainCb.checked ? [domainCb.value] : [];
+  if (selectedWords.length || selectedDomains.length){
+    await fetch('/api/receipts/ignore-keywords', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords: selectedWords, domains: selectedDomains }),
+    });
+    await loadIgnoreKeywords();
   }
   await resolveCandidate(candidate.id, { decision: 'ignore' });
   closeIgnoreModal();
@@ -2274,9 +2303,12 @@ document.getElementById('receipt-image-modal-close').addEventListener('click', c
 document.getElementById('receipt-image-modal').addEventListener('click', (e) => {
   if (e.target.id === 'receipt-image-modal') closeReceiptImageModal();
 });
-document.getElementById('ignore-modal-confirm').addEventListener('click', () => confirmIgnore(true));
-document.getElementById('ignore-modal-skip').addEventListener('click', () => confirmIgnore(false));
+document.getElementById('ignore-modal-confirm').addEventListener('click', () => confirmIgnore());
 document.getElementById('ignore-modal-cancel').addEventListener('click', closeIgnoreModal);
+document.getElementById('ignore-modal-phrase-add-btn').addEventListener('click', addIgnorePhrase);
+document.getElementById('ignore-modal-phrase-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); addIgnorePhrase(); }
+});
 document.getElementById('ignore-modal-close').addEventListener('click', closeIgnoreModal);
 document.getElementById('ignore-modal').addEventListener('click', (e) => {
   if (e.target.id === 'ignore-modal') closeIgnoreModal();
