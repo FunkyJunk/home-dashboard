@@ -426,7 +426,7 @@ export function createReceiptsRouter({ oauth2Client }) {
     const year = Number(req.query.year) || new Date().getFullYear();
     const scannedRows = db.prepare("SELECT month, scanned_at, message_count FROM scanned_months WHERE month LIKE ?").all(`${year}-%`);
     const scannedMap = Object.fromEntries(scannedRows.map((r) => [r.month, r]));
-    const pendingRows = db.prepare("SELECT month, COUNT(*) AS c FROM candidates WHERE status = 'pending' AND month LIKE ?").all(`${year}-%`);
+    const pendingRows = db.prepare("SELECT month, COUNT(*) AS c FROM candidates WHERE status = 'pending' AND month LIKE ? GROUP BY month").all(`${year}-%`);
     const pendingMap = Object.fromEntries(pendingRows.map((r) => [r.month, r.c]));
 
     const months = [];
