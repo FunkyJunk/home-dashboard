@@ -55,7 +55,7 @@ db.exec(`
 // the table already existed in production, so add them defensively.
 {
   const existingColumns = db.prepare("PRAGMA table_info(candidates)").all().map((c) => c.name);
-  for (const [name, type] of [["business_amount", "REAL"], ["is_split", "INTEGER"], ["pdf_filename", "TEXT"], ["remote_images", "TEXT"]]) {
+  for (const [name, type] of [["business_amount", "REAL"], ["is_split", "INTEGER"], ["pdf_filename", "TEXT"], ["remote_images", "TEXT"], ["body_html", "TEXT"]]) {
     if (!existingColumns.includes(name)) db.exec(`ALTER TABLE candidates ADD COLUMN ${name} ${type}`);
   }
 }
@@ -389,6 +389,7 @@ function rowToCandidate(row) {
     images: JSON.parse(row.images || "[]"),
     remoteImageUrls: JSON.parse(row.remote_images || "[]"),
     bodyText: row.body_text,
+    bodyHtml: row.body_html,
     status: row.status,
     businessAmount: row.business_amount,
     isSplit: !!row.is_split,
@@ -404,12 +405,13 @@ export function createReceiptsRouter({ oauth2Client }) {
   const selectPending = db.prepare("SELECT * FROM candidates WHERE status = 'pending'");
   const selectScannedMonth = db.prepare("SELECT * FROM scanned_months WHERE month = ?");
   const upsertCandidate = db.prepare(`
-    INSERT INTO candidates (id, month, from_addr, subject, date, snippet, total, tax, shipping, line_items, attachment, images, remote_images, body_text, status)
-    VALUES (@id, @month, @from_addr, @subject, @date, @snippet, @total, @tax, @shipping, @line_items, @attachment, @images, @remote_images, @body_text, @status)
+    INSERT INTO candidates (id, month, from_addr, subject, date, snippet, total, tax, shipping, line_items, attachment, images, remote_images, body_text, body_html, status)
+    VALUES (@id, @month, @from_addr, @subject, @date, @snippet, @total, @tax, @shipping, @line_items, @attachment, @images, @remote_images, @body_text, @body_html, @status)
     ON CONFLICT(id) DO UPDATE SET
       from_addr = excluded.from_addr, subject = excluded.subject, date = excluded.date, snippet = excluded.snippet,
       total = excluded.total, tax = excluded.tax, shipping = excluded.shipping, line_items = excluded.line_items,
-      attachment = excluded.attachment, images = excluded.images, remote_images = excluded.remote_images, body_text = excluded.body_text
+      attachment = excluded.attachment, images = excluded.images, remote_images = excluded.remote_images,
+      body_text = excluded.body_text, body_html = excluded.body_html
     WHERE candidates.status = 'pending'
   `);
   const upsertScannedMonth = db.prepare(`
@@ -614,6 +616,10 @@ export function createReceiptsRouter({ oauth2Client }) {
           images,
           remoteImageUrls,
           bodyText: bodyText.slice(0, 4000),
+          // Kept separately from bodyText (which is flattened for
+          // parsing) so the detail view can render something closer to
+          // what the email actually looked like, instead of stripped text.
+          bodyHtml: parts.html ? parts.html.slice(0, 300000) : null,
         };
       });
 
@@ -636,6 +642,7 @@ export function createReceiptsRouter({ oauth2Client }) {
             images: JSON.stringify(c.images),
             remote_images: JSON.stringify(c.remoteImageUrls),
             body_text: c.bodyText,
+            body_html: c.bodyHtml,
             status: legacy ? legacy.decision : "pending",
           });
         }

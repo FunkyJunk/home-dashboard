@@ -453,6 +453,10 @@
     white-space:pre-wrap; background:#0d1116; border:1px solid var(--panel-line);
     border-radius:6px; padding:.6rem; max-height:200px; overflow-y:auto;
   }
+  .receipt-detail-email-frame{
+    width:100%; height:420px; border:1px solid var(--panel-line); border-radius:6px;
+    background:#fff; /* most email HTML assumes a light background/dark text */
+  }
 
   .split-panel{background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; padding:1rem; margin:.25rem 0;}
   .split-items-table{width:100%; border-collapse:collapse; margin-bottom:.75rem;}
@@ -1788,7 +1792,12 @@ function openReceiptDetail(idx){
     <div class="receipt-detail-row"><span class="receipt-detail-label">Total / Tax / Shipping</span><div>${c.total != null ? '$' + fmtMoney(c.total) : '--'} / ${c.tax != null ? '$' + fmtMoney(c.tax) : '--'} / ${c.shipping != null ? '$' + fmtMoney(c.shipping) : '--'}</div></div>
     <div class="receipt-detail-row"><span class="receipt-detail-label">Line items</span>${itemsHtml}</div>
     ${imagesHtml ? `<div class="receipt-detail-row"><span class="receipt-detail-label">Images</span><div class="receipt-images">${imagesHtml}</div></div>` : ''}
-    <div class="receipt-detail-row"><span class="receipt-detail-label">Email preview</span><div class="receipt-detail-snippet">${escapeHtml(c.snippet || c.bodyText || '(no preview available)')}</div></div>
+    <div class="receipt-detail-row">
+      <span class="receipt-detail-label">Email preview</span>
+      ${c.bodyHtml
+        ? `<iframe class="receipt-detail-email-frame" id="receipt-detail-email-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" title="Email preview"></iframe>`
+        : `<div class="receipt-detail-snippet">${escapeHtml(c.snippet || c.bodyText || '(no preview available)')}</div>`}
+    </div>
   `;
   document.getElementById('receipt-detail-body').querySelectorAll('.receipt-thumb').forEach(img => {
     img.addEventListener('click', () => openReceiptImageModal(img.src, c.subject));
@@ -1799,6 +1808,14 @@ function openReceiptDetail(idx){
   document.getElementById('receipt-detail-body').querySelectorAll('.receipt-actions .receipt-btn').forEach(btn => {
     btn.addEventListener('click', () => handleDetailAction(idx, btn.dataset.action, btn));
   });
+  // Set as a property rather than embedding in the template string above -
+  // srcdoc holds an entire raw HTML document, and trying to escape that
+  // safely into an HTML attribute is exactly the kind of thing that goes
+  // wrong in subtle ways. sandbox="allow-same-origin" (no allow-scripts)
+  // means any <script> in the email is inert; it can still render layout,
+  // images, and styling like the real thing.
+  const frame = document.getElementById('receipt-detail-email-frame');
+  if (frame) frame.srcdoc = c.bodyHtml;
   document.getElementById('receipt-detail-modal').classList.add('open');
 }
 
