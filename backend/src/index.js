@@ -84,6 +84,35 @@ app.get("/api/tasks/lists", async (req, res) => {
   }
 });
 
+// TEMPORARY diagnostic - dumps the complete, unfiltered task objects Google
+// actually returns (every field, not just the subset getGoogleTasks() picks
+// out) so we can check for a time-of-day field we might be discarding.
+// Remove once the time-support question is settled.
+app.get("/api/tasks/raw", async (req, res) => {
+  try {
+    const { data: listsData } = await tasksApi.tasklists.list({ maxResults: 20 });
+    const lists = listsData.items || [];
+    const perList = await Promise.all(
+      lists.map((list) =>
+        tasksApi.tasks.list({
+          tasklist: list.id,
+          showCompleted: false,
+          showHidden: true,
+          maxResults: 50,
+        })
+      )
+    );
+    res.json(
+      perList.map(({ data }, i) => ({
+        list: lists[i],
+        tasks: data.items || [],
+      }))
+    );
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to load raw tasks" });
+  }
+});
+
 // Manual task creation. Confirmed against the live API that `due` is
 // hard date-only server-side - sending a non-midnight UTC instant here
 // gets silently truncated back to midnight on Google's end, so the
