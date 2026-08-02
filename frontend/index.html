@@ -308,9 +308,17 @@
     border:1px dashed var(--panel-line); border-radius:6px; padding:.9rem;
     text-align:center; font-size:.78rem; color:var(--text-dim);
     margin-bottom:.75rem; outline:none; transition:border-color .15s, color .15s;
+    min-height:1.2em; cursor:text;
   }
   .scratch-pad-dropzone:focus,
   .scratch-pad-dropzone.dragging{border-color:var(--teal); color:var(--teal);}
+  /* contenteditable rather than a plain div - a plain div never offers
+     "Paste" in the browser's own right-click menu, only editable surfaces
+     do. The placeholder text is CSS-only since contenteditable has no
+     native placeholder attribute; actual pasted content is intercepted
+     and never allowed to land in this element's DOM (see the paste
+     listener below), so it always stays empty/showing the hint. */
+  .scratch-pad-dropzone:empty::before{content:attr(data-placeholder);}
   .scratch-pad-notes{display:flex; flex-direction:column; gap:.6rem;}
   .scratch-pad-note{
     background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
@@ -803,9 +811,7 @@
           <h2 class="card-handle">Scratch Pad</h2>
           <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
         </div>
-        <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" tabindex="0">
-          Paste an image or drag a PDF here for a shipping label
-        </div>
+        <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" contenteditable="true" data-placeholder="Paste an image or drag a PDF here for a shipping label"></div>
         <div class="scratch-pad-notes" id="scratch-pad-notes"></div>
       </div>
 
@@ -1125,7 +1131,13 @@
           </div>
           <div class="add-task-field">
             <label>&nbsp;</label>
-            <button type="button" class="receipt-btn" id="label-crop-edit-presets-btn">Edit list&hellip;</button>
+            <div style="display:flex; gap:.5rem;">
+              <button type="button" class="receipt-btn" id="label-crop-rotate-btn" title="Rotate crop orientation">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em; height:1em; vertical-align:-.15em;"><path d="M2 12a10 10 0 1 1 3 7.1"></path><polyline points="2 20 2 12 10 12"></polyline></svg>
+                Rotate
+              </button>
+              <button type="button" class="receipt-btn" id="label-crop-edit-presets-btn">Edit list&hellip;</button>
+            </div>
           </div>
         </div>
         <div class="add-task-row">
@@ -2264,11 +2276,23 @@ function sanitizeFilenamePart(s){
 let labelImg = null;
 let cropBoxState = null;
 let cropDisplayScale = 1;
+// Per-session only (reset on every new paste/drop) - rotating never
+// touches the preset's own stored width/height, just swaps which way
+// they're applied for this one crop, since most labels turn out to be
+// landscape when cropped out of a wider screenshot or PDF page even
+// though the preset itself is defined portrait (or vice versa).
+let cropRotated = false;
 
 function getSelectedPreset(){
   const presets = loadLabelPresets();
   const sel = document.getElementById('label-crop-preset');
   return presets.find(p => p.id === sel.value) || presets[0];
+}
+function getEffectiveDimensions(){
+  const preset = getSelectedPreset();
+  return cropRotated
+    ? { widthIn: preset.heightIn, heightIn: preset.widthIn }
+    : { widthIn: preset.widthIn, heightIn: preset.heightIn };
 }
 
 function populateLabelPresetSelect(){
@@ -2313,6 +2337,17 @@ function updateCropBoxOverlay(){
   box.style.height = (cropBoxState.height * cropDisplayScale) + 'px';
 }
 
+// If the AI's suggested box is clearly closer to landscape than the
+// preset's own portrait ratio (or vice versa), start already rotated to
+// match it - this is just the *default*, the rotate button still overrides
+// it either way.
+function chooseInitialOrientation(aiBox, presetRatio){
+  if (!aiBox || !aiBox.widthPct || !aiBox.heightPct) return false;
+  const aiRatio = aiBox.widthPct / aiBox.heightPct;
+  const rotatedRatio = 1 / presetRatio;
+  return Math.abs(aiRatio - rotatedRatio) < Math.abs(aiRatio - presetRatio);
+}
+
 function renderLabelCropCanvas(img, analysis){
   document.getElementById('label-crop-status').style.display = 'none';
   document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
@@ -2327,7 +2362,9 @@ function renderLabelCropCanvas(img, analysis){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 
   const preset = getSelectedPreset();
-  cropBoxState = computeInitialCropBox(img.naturalWidth, img.naturalHeight, preset.widthIn / preset.heightIn, analysis?.cropBox);
+  cropRotated = chooseInitialOrientation(analysis?.cropBox, preset.widthIn / preset.heightIn);
+  const dims = getEffectiveDimensions();
+  cropBoxState = computeInitialCropBox(img.naturalWidth, img.naturalHeight, dims.widthIn / dims.heightIn, analysis?.cropBox);
   updateCropBoxOverlay();
 
   document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
@@ -2349,6 +2386,7 @@ function closeLabelCropModal(){
   document.getElementById('label-crop-modal').classList.remove('open');
   labelImg = null;
   cropBoxState = null;
+  cropRotated = false;
 }
 
 async function startLabelWorkflow(imageDataUrl, mediaType){
@@ -2381,6 +2419,8 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
 // anywhere on the page kicks this off, same as most native apps - but it
 // only ever intercepts when the clipboard actually contains an image, so
 // pasting text into any other field on the page is completely unaffected.
+const scratchPadDropzone = document.getElementById('scratch-pad-dropzone');
+
 document.addEventListener('paste', async (e) => {
   const items = e.clipboardData?.items || [];
   for (const item of items){
@@ -2392,9 +2432,12 @@ document.addEventListener('paste', async (e) => {
       return;
     }
   }
+  // The dropzone is contenteditable purely so the browser's own right-click
+  // menu offers "Paste" (a plain div never gets that option) - it isn't a
+  // real note field, so anything that wasn't an image (stray text, HTML,
+  // etc.) must never actually land in its DOM.
+  if (scratchPadDropzone.contains(e.target)) e.preventDefault();
 });
-
-const scratchPadDropzone = document.getElementById('scratch-pad-dropzone');
 scratchPadDropzone.addEventListener('dragover', (e) => { e.preventDefault(); scratchPadDropzone.classList.add('dragging'); });
 scratchPadDropzone.addEventListener('dragleave', () => scratchPadDropzone.classList.remove('dragging'));
 scratchPadDropzone.addEventListener('drop', async (e) => {
@@ -2411,14 +2454,12 @@ scratchPadDropzone.addEventListener('drop', async (e) => {
   }
 });
 
-document.getElementById('label-crop-preset').addEventListener('change', () => {
-  if (!labelImg) return;
-  const preset = getSelectedPreset();
-  // Re-fit the (possibly still AI-suggested) box to the new preset's ratio,
-  // anchored on its current center rather than restarting from scratch.
+// Re-fits the current crop box to a new aspect ratio, anchored on its
+// existing center rather than restarting from scratch - shared by both
+// switching presets and rotating.
+function refitCropBoxToRatio(ratio){
   const cx = cropBoxState.x + cropBoxState.width / 2;
   const cy = cropBoxState.y + cropBoxState.height / 2;
-  const ratio = preset.widthIn / preset.heightIn;
   let w = cropBoxState.width, h = w / ratio;
   if (h > cropBoxState.height * 3){ h = cropBoxState.height; w = h * ratio; }
   cropBoxState = {
@@ -2427,6 +2468,19 @@ document.getElementById('label-crop-preset').addEventListener('change', () => {
     width: w, height: h,
   };
   updateCropBoxOverlay();
+}
+
+document.getElementById('label-crop-preset').addEventListener('change', () => {
+  if (!labelImg) return;
+  const dims = getEffectiveDimensions();
+  refitCropBoxToRatio(dims.widthIn / dims.heightIn);
+});
+
+document.getElementById('label-crop-rotate-btn').addEventListener('click', () => {
+  if (!labelImg) return;
+  cropRotated = !cropRotated;
+  const dims = getEffectiveDimensions();
+  refitCropBoxToRatio(dims.widthIn / dims.heightIn);
 });
 
 // Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
@@ -2502,7 +2556,7 @@ async function confirmLabelCrop(){
   statusEl.className = 'receipts-status';
 
   try {
-    const preset = getSelectedPreset();
+    const dims = getEffectiveDimensions();
     const marketplace = document.getElementById('label-crop-marketplace').value.trim() || 'Other';
     const recipient = document.getElementById('label-crop-recipient').value.trim() || 'Unknown';
 
@@ -2517,8 +2571,8 @@ async function confirmLabelCrop(){
     const croppedDataUrl = cropCanvas.toDataURL('image/png');
 
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'in', format: [preset.widthIn, preset.heightIn] });
-    doc.addImage(croppedDataUrl, 'PNG', 0, 0, preset.widthIn, preset.heightIn);
+    const doc = new jsPDF({ unit: 'in', format: [dims.widthIn, dims.heightIn] });
+    doc.addImage(croppedDataUrl, 'PNG', 0, 0, dims.widthIn, dims.heightIn);
     const pdfBlob = doc.output('blob');
 
     const haveFolder = await ensureShippingFolder();
@@ -2538,7 +2592,7 @@ async function confirmLabelCrop(){
       statusEl.className = 'receipts-status error';
     }
 
-    printLabelImage(croppedDataUrl, preset);
+    printLabelImage(croppedDataUrl, dims);
     closeLabelCropModal();
   } catch (e){
     statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
