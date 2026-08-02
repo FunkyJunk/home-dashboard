@@ -258,3 +258,33 @@ over to having an LLM (Haiku) read each email directly, which generalizes
 across vendor formats far better. It's a small per-email cost on a cheap
 model, and falls back to the regex heuristics automatically if the key
 isn't set or a call fails.
+
+## 10. Scratch Pad (notes + shipping labels)
+
+Notes are local-only - there's no way to sync with Google Keep from here.
+Keep's API (`keep.googleapis.com`) only works for Google Workspace accounts
+with domain-wide delegation; it has no OAuth flow for a personal Google
+account at all, confirmed against Google's own docs.
+
+Pasting an image (or dragging in a PDF) opens a crop tool: paste/drop a
+label, Claude vision (same `ANTHROPIC_API_KEY` as receipt scanning above)
+reads it to identify the marketplace/carrier and recipient name and
+suggests roughly where the label sits in the image, then you drag/resize
+an aspect-ratio-locked crop box to fit it exactly before confirming. The
+"Action" dropdown holds crop presets (name + physical width/height in
+inches) - "Print shipping label" (4"x6") is the only built-in one; **Edit
+list…** adds more, all sharing the same crop/classify/save/print mechanic
+just at a different size.
+
+Confirming crops the image, builds a PDF sized to the exact preset
+dimensions, saves it to `{picked folder}/{marketplace}/` (creating the
+marketplace subfolder the first time a new one shows up) as
+`{marketplace}_{recipient}_{date}_{time}.pdf`, and opens the browser print
+dialog sized to match. Like Business Receipts, saving requires
+`showDirectoryPicker` (HTTPS - see the cert setup above) and remembers the
+picked root folder via IndexedDB after the first pick.
+
+Renders dragged-in PDFs with a self-hosted `pdf.js` (`frontend/pdf.min.js`
++ `frontend/pdf.worker.min.js`, same no-CDN convention as `xlsx.full.min.js`/
+`jspdf.umd.min.js`) so a PDF label goes through the identical crop step as
+a pasted image.

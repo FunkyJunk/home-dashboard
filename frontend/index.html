@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="xlsx.full.min.js"></script>
 <script src="jspdf.umd.min.js"></script>
+<script src="pdf.min.js"></script>
 <style>
   :root{
     --bg: #12161c;
@@ -302,6 +303,49 @@
   .task-repeat{display:inline-flex; color:var(--text-dim); flex-shrink:0;}
   .task-repeat svg{width:.85em; height:.85em;}
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
+
+  .scratch-pad-dropzone{
+    border:1px dashed var(--panel-line); border-radius:6px; padding:.9rem;
+    text-align:center; font-size:.78rem; color:var(--text-dim);
+    margin-bottom:.75rem; outline:none; transition:border-color .15s, color .15s;
+  }
+  .scratch-pad-dropzone:focus,
+  .scratch-pad-dropzone.dragging{border-color:var(--teal); color:var(--teal);}
+  .scratch-pad-notes{display:flex; flex-direction:column; gap:.6rem;}
+  .scratch-pad-note{
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
+    padding:.6rem .7rem; position:relative;
+  }
+  .scratch-pad-note-text{
+    width:100%; min-height:2.4em; resize:vertical; background:none; border:none;
+    color:var(--text); font-family:inherit; font-size:.85rem; padding:0; padding-right:1.5em;
+  }
+  .scratch-pad-note-text:focus{outline:none;}
+  .scratch-pad-note-delete{
+    position:absolute; top:.5rem; right:.5rem; width:1.3em; height:1.3em;
+    display:flex; align-items:center; justify-content:center;
+    background:none; border:none; color:var(--text-dim); cursor:pointer; padding:0;
+  }
+  .scratch-pad-note-delete:hover{color:var(--coral);}
+  .scratch-pad-note-delete svg{width:.9em; height:.9em;}
+
+  .label-crop-modal-inner{max-width:min(90vw, 640px);}
+  .label-crop-status{font-size:.9rem; color:var(--text-dim); padding:2rem 0; text-align:center;}
+  .label-crop-canvas-wrap{position:relative; display:inline-block; margin-bottom:1.25rem; max-width:100%;}
+  .label-crop-canvas-wrap canvas{display:block; max-width:100%; border-radius:4px;}
+  .label-crop-box{
+    position:absolute; border:2px solid var(--teal); background:rgba(79,184,174,.12);
+    box-shadow:0 0 0 9999px rgba(0,0,0,.45); cursor:move; touch-action:none;
+  }
+  .label-crop-handle{
+    position:absolute; width:14px; height:14px; background:var(--teal);
+    border:2px solid var(--panel); border-radius:50%; touch-action:none;
+  }
+  .label-crop-handle[data-handle="nw"]{top:-8px; left:-8px; cursor:nwse-resize;}
+  .label-crop-handle[data-handle="ne"]{top:-8px; right:-8px; cursor:nesw-resize;}
+  .label-crop-handle[data-handle="sw"]{bottom:-8px; left:-8px; cursor:nesw-resize;}
+  .label-crop-handle[data-handle="se"]{bottom:-8px; right:-8px; cursor:nwse-resize;}
+  .label-crop-fields{display:flex; flex-direction:column; gap:1rem; margin-bottom:1rem;}
 
   .add-task-modal-inner{
     max-width:min(90vw, 480px); box-sizing:border-box;
@@ -754,6 +798,17 @@
         <div class="task-list" id="tasks"><div class="empty">Loading&hellip;</div></div>
       </div>
 
+      <div class="card" data-tile-id="scratch-pad">
+        <div class="task-card-head">
+          <h2 class="card-handle">Scratch Pad</h2>
+          <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
+        </div>
+        <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" tabindex="0">
+          Paste an image or drag a PDF here for a shipping label
+        </div>
+        <div class="scratch-pad-notes" id="scratch-pad-notes"></div>
+      </div>
+
       <div class="card wide" data-tile-id="controls" id="controls-section" style="display:none;">
         <h2 class="card-handle">Controls</h2>
         <div class="controls-grid" id="controls-grid"></div>
@@ -1043,6 +1098,68 @@
         <button class="modal-close" id="roku-device-modal-close">Close</button>
       </div>
       <div id="roku-device-modal-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="label-crop-modal">
+    <div class="modal-inner label-crop-modal-inner">
+      <div class="modal-head">
+        <span>Shipping Label</span>
+        <button class="modal-close" id="label-crop-modal-close">Close</button>
+      </div>
+      <div class="label-crop-status" id="label-crop-status">Analyzing image&hellip;</div>
+      <div class="label-crop-canvas-wrap" id="label-crop-canvas-wrap" style="display:none;">
+        <canvas id="label-crop-canvas"></canvas>
+        <div class="label-crop-box" id="label-crop-box">
+          <div class="label-crop-handle" data-handle="nw"></div>
+          <div class="label-crop-handle" data-handle="ne"></div>
+          <div class="label-crop-handle" data-handle="sw"></div>
+          <div class="label-crop-handle" data-handle="se"></div>
+        </div>
+      </div>
+      <div class="label-crop-fields" id="label-crop-fields" style="display:none;">
+        <div class="add-task-row">
+          <div class="add-task-field">
+            <label>Action</label>
+            <select class="add-task-ctrl" id="label-crop-preset"></select>
+          </div>
+          <div class="add-task-field">
+            <label>&nbsp;</label>
+            <button type="button" class="receipt-btn" id="label-crop-edit-presets-btn">Edit list&hellip;</button>
+          </div>
+        </div>
+        <div class="add-task-row">
+          <div class="add-task-field">
+            <label>Marketplace / Carrier</label>
+            <input type="text" class="add-task-ctrl" id="label-crop-marketplace">
+          </div>
+          <div class="add-task-field">
+            <label>Recipient</label>
+            <input type="text" class="add-task-ctrl" id="label-crop-recipient">
+          </div>
+        </div>
+      </div>
+      <div class="receipts-status" id="label-crop-save-status"></div>
+      <div class="ignore-modal-actions">
+        <button type="button" class="receipt-btn business" id="label-crop-confirm-btn" style="display:none;">Print &amp; Save</button>
+        <button type="button" class="receipt-btn" id="label-crop-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="label-presets-modal">
+    <div class="modal-inner keywords-modal-inner">
+      <div class="modal-head">
+        <span>Edit Label Presets</span>
+        <button class="modal-close" id="label-presets-modal-close">Close</button>
+      </div>
+      <div id="label-presets-list"></div>
+      <div class="keywords-modal-add">
+        <input type="text" class="receipt-input" id="label-preset-name-input" placeholder="Name (e.g. Return label)">
+        <input type="number" class="receipt-input" id="label-preset-width-input" placeholder="Width in" step="0.1" style="width:5em;">
+        <input type="number" class="receipt-input" id="label-preset-height-input" placeholder="Height in" step="0.1" style="width:5em;">
+        <button type="button" class="receipt-btn business" id="label-preset-add-btn">+ Add</button>
+      </div>
     </div>
   </div>
 
@@ -1993,6 +2110,497 @@ document.getElementById('roku-device-modal').addEventListener('click', (e) => {
   if (e.target.id === 'roku-device-modal') closeRokuDeviceModal();
 });
 
+// ---------------------------------------------------------------------
+// Scratch Pad: local notes (no Google Keep sync - Keep's API has no path
+// for a personal Google account, confirmed against Google's own docs) plus
+// a paste/drag zone that kicks off the shipping-label workflow below.
+async function loadNotes(){
+  try {
+    const res = await fetch('/api/notes');
+    return await res.json();
+  } catch { return []; }
+}
+
+function scratchPadNoteHtml(note){
+  return `
+    <div class="scratch-pad-note" data-id="${escapeHtml(note.id)}">
+      <textarea class="scratch-pad-note-text" placeholder="Note&hellip;">${escapeHtml(note.text)}</textarea>
+      <button type="button" class="scratch-pad-note-delete" title="Delete note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+  `;
+}
+
+async function renderScratchPadNotes(){
+  const notes = await loadNotes();
+  const el = document.getElementById('scratch-pad-notes');
+  el.innerHTML = notes.map(scratchPadNoteHtml).join('');
+
+  el.querySelectorAll('.scratch-pad-note').forEach(row => {
+    const id = row.dataset.id;
+    const textarea = row.querySelector('.scratch-pad-note-text');
+    let saveTimer = null;
+    textarea.addEventListener('input', () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        fetch(`/api/notes/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: textarea.value }),
+        });
+      }, 600);
+    });
+    row.querySelector('.scratch-pad-note-delete').addEventListener('click', async () => {
+      await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      row.remove();
+    });
+  });
+}
+
+document.getElementById('scratch-pad-add-note-btn').addEventListener('click', async () => {
+  await fetch('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: '' }),
+  });
+  await renderScratchPadNotes();
+  document.querySelector('#scratch-pad-notes .scratch-pad-note:first-child .scratch-pad-note-text')?.focus();
+});
+
+renderScratchPadNotes();
+
+// ---------------------------------------------------------------------
+// Shipping label tool: paste an image or drag a PDF -> Claude vision reads
+// the marketplace/recipient and suggests a crop box -> user fits an
+// aspect-ratio-locked crop box over the label -> saved as a PDF into
+// {picked root}/{marketplace}/ and sent to the printer.
+//
+// Crop presets are just {name, widthIn, heightIn} - "Print shipping label"
+// (4x6) is the only built-in one; the edit-list modal lets more be added,
+// all sharing this same crop/classify/save/print mechanic parameterized by
+// size, rather than needing distinct behavior per preset.
+const LABEL_PRESETS_KEY = 'scratchpad-label-presets';
+const DEFAULT_LABEL_PRESETS = [
+  { id: 'shipping-label', name: 'Print shipping label', widthIn: 4, heightIn: 6 },
+];
+function loadLabelPresets(){
+  try {
+    const stored = JSON.parse(localStorage.getItem(LABEL_PRESETS_KEY) || 'null');
+    return (stored && stored.length) ? stored : DEFAULT_LABEL_PRESETS;
+  } catch { return DEFAULT_LABEL_PRESETS; }
+}
+function saveLabelPresets(presets){
+  localStorage.setItem(LABEL_PRESETS_KEY, JSON.stringify(presets));
+}
+
+// Folder handle persistence - same IndexedDB store/pattern the Business
+// Receipts tax folder already uses (openHandleDb/idbGet/idbSet above),
+// just a distinct key so the two features don't collide.
+let shippingFolderHandle = null;
+let pendingShippingFolderHandle = null;
+
+async function restoreShippingFolder(){
+  const handle = await idbGet('shippingFolderHandle');
+  if (!handle) return;
+  if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted'){
+    shippingFolderHandle = handle;
+  } else {
+    pendingShippingFolderHandle = handle;
+  }
+}
+async function pickShippingFolder(){
+  shippingFolderHandle = await window.showDirectoryPicker({ id: 'shipping-labels-folder', mode: 'readwrite' });
+  pendingShippingFolderHandle = null;
+  await idbSet('shippingFolderHandle', shippingFolderHandle);
+}
+async function ensureShippingFolder(){
+  if (shippingFolderHandle) return true;
+  if (pendingShippingFolderHandle){
+    if ((await pendingShippingFolderHandle.requestPermission({ mode: 'readwrite' })) === 'granted'){
+      shippingFolderHandle = pendingShippingFolderHandle;
+      pendingShippingFolderHandle = null;
+      return true;
+    }
+  }
+  try {
+    await pickShippingFolder();
+    return true;
+  } catch {
+    return false; // user cancelled the picker
+  }
+}
+restoreShippingFolder();
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
+
+async function renderPdfFirstPageToImageUrl(file){
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 2 }); // 2x for print-quality crops
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  return canvas.toDataURL('image/png');
+}
+
+// blobToDataUrl already defined further down (receipts feature) - reused
+// here as-is, no need to redeclare.
+function loadImage(src){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function sanitizeFilenamePart(s){
+  return String(s || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '-').slice(0, 60) || 'Unknown';
+}
+
+let labelImg = null;
+let cropBoxState = null;
+let cropDisplayScale = 1;
+
+function getSelectedPreset(){
+  const presets = loadLabelPresets();
+  const sel = document.getElementById('label-crop-preset');
+  return presets.find(p => p.id === sel.value) || presets[0];
+}
+
+function populateLabelPresetSelect(){
+  const presets = loadLabelPresets();
+  const sel = document.getElementById('label-crop-preset');
+  const prevValue = sel.value;
+  sel.innerHTML = presets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.widthIn}"x${p.heightIn}")</option>`).join('');
+  if (presets.some(p => p.id === prevValue)) sel.value = prevValue;
+}
+
+// Fits the preset's aspect ratio within (and centered on) the AI-suggested
+// box, or centered on the image at 80% scale if there's no suggestion -
+// either way it's just a starting point the user can still drag/resize.
+function computeInitialCropBox(naturalW, naturalH, aspectRatio, aiBox){
+  let boxW, boxH, boxX, boxY;
+  if (aiBox && aiBox.widthPct && aiBox.heightPct){
+    const aiX = (aiBox.xPct / 100) * naturalW;
+    const aiY = (aiBox.yPct / 100) * naturalH;
+    const aiW = (aiBox.widthPct / 100) * naturalW;
+    const aiH = (aiBox.heightPct / 100) * naturalH;
+    if (aiW / aiH > aspectRatio){ boxH = aiH; boxW = boxH * aspectRatio; }
+    else { boxW = aiW; boxH = boxW / aspectRatio; }
+    boxX = aiX + (aiW - boxW) / 2;
+    boxY = aiY + (aiH - boxH) / 2;
+  } else {
+    const maxW = naturalW * 0.8, maxH = naturalH * 0.8;
+    if (maxW / maxH > aspectRatio){ boxH = maxH; boxW = boxH * aspectRatio; }
+    else { boxW = maxW; boxH = boxW / aspectRatio; }
+    boxX = (naturalW - boxW) / 2;
+    boxY = (naturalH - boxH) / 2;
+  }
+  boxX = Math.max(0, Math.min(boxX, naturalW - boxW));
+  boxY = Math.max(0, Math.min(boxY, naturalH - boxH));
+  return { x: boxX, y: boxY, width: boxW, height: boxH };
+}
+
+function updateCropBoxOverlay(){
+  const box = document.getElementById('label-crop-box');
+  box.style.left = (cropBoxState.x * cropDisplayScale) + 'px';
+  box.style.top = (cropBoxState.y * cropDisplayScale) + 'px';
+  box.style.width = (cropBoxState.width * cropDisplayScale) + 'px';
+  box.style.height = (cropBoxState.height * cropDisplayScale) + 'px';
+}
+
+function renderLabelCropCanvas(img, analysis){
+  document.getElementById('label-crop-status').style.display = 'none';
+  document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
+  document.getElementById('label-crop-fields').style.display = 'flex';
+  document.getElementById('label-crop-confirm-btn').style.display = '';
+
+  const canvas = document.getElementById('label-crop-canvas');
+  const maxDisplayWidth = 560;
+  cropDisplayScale = Math.min(1, maxDisplayWidth / img.naturalWidth);
+  canvas.width = img.naturalWidth * cropDisplayScale;
+  canvas.height = img.naturalHeight * cropDisplayScale;
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const preset = getSelectedPreset();
+  cropBoxState = computeInitialCropBox(img.naturalWidth, img.naturalHeight, preset.widthIn / preset.heightIn, analysis?.cropBox);
+  updateCropBoxOverlay();
+
+  document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
+  document.getElementById('label-crop-recipient').value = analysis?.recipientName || '';
+}
+
+function openLabelCropModal(){
+  populateLabelPresetSelect();
+  document.getElementById('label-crop-status').style.display = '';
+  document.getElementById('label-crop-status').textContent = 'Analyzing image…';
+  document.getElementById('label-crop-canvas-wrap').style.display = 'none';
+  document.getElementById('label-crop-fields').style.display = 'none';
+  document.getElementById('label-crop-confirm-btn').style.display = 'none';
+  document.getElementById('label-crop-save-status').textContent = '';
+  document.getElementById('label-crop-save-status').className = 'receipts-status';
+  document.getElementById('label-crop-modal').classList.add('open');
+}
+function closeLabelCropModal(){
+  document.getElementById('label-crop-modal').classList.remove('open');
+  labelImg = null;
+  cropBoxState = null;
+}
+
+async function startLabelWorkflow(imageDataUrl, mediaType){
+  openLabelCropModal();
+  try {
+    labelImg = await loadImage(imageDataUrl);
+  } catch {
+    document.getElementById('label-crop-status').textContent = 'Could not read that image.';
+    return;
+  }
+
+  let analysis = null;
+  try {
+    const base64 = imageDataUrl.split(',')[1];
+    const res = await fetch('/api/shipping-label/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64, mediaType }),
+    });
+    if (res.ok) analysis = await res.json();
+  } catch {
+    // Analysis is best-effort - the crop tool still works without it, just
+    // with a centered default box and blank marketplace/recipient fields.
+  }
+
+  renderLabelCropCanvas(labelImg, analysis);
+}
+
+// Global paste listener (not scoped to the dropzone) so pasting an image
+// anywhere on the page kicks this off, same as most native apps - but it
+// only ever intercepts when the clipboard actually contains an image, so
+// pasting text into any other field on the page is completely unaffected.
+document.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items || [];
+  for (const item of items){
+    if (item.type.startsWith('image/')){
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const dataUrl = await blobToDataUrl(blob);
+      startLabelWorkflow(dataUrl, item.type);
+      return;
+    }
+  }
+});
+
+const scratchPadDropzone = document.getElementById('scratch-pad-dropzone');
+scratchPadDropzone.addEventListener('dragover', (e) => { e.preventDefault(); scratchPadDropzone.classList.add('dragging'); });
+scratchPadDropzone.addEventListener('dragleave', () => scratchPadDropzone.classList.remove('dragging'));
+scratchPadDropzone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  scratchPadDropzone.classList.remove('dragging');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  if (file.type === 'application/pdf'){
+    const dataUrl = await renderPdfFirstPageToImageUrl(file);
+    startLabelWorkflow(dataUrl, 'image/png');
+  } else if (file.type.startsWith('image/')){
+    const dataUrl = await blobToDataUrl(file);
+    startLabelWorkflow(dataUrl, file.type);
+  }
+});
+
+document.getElementById('label-crop-preset').addEventListener('change', () => {
+  if (!labelImg) return;
+  const preset = getSelectedPreset();
+  // Re-fit the (possibly still AI-suggested) box to the new preset's ratio,
+  // anchored on its current center rather than restarting from scratch.
+  const cx = cropBoxState.x + cropBoxState.width / 2;
+  const cy = cropBoxState.y + cropBoxState.height / 2;
+  const ratio = preset.widthIn / preset.heightIn;
+  let w = cropBoxState.width, h = w / ratio;
+  if (h > cropBoxState.height * 3){ h = cropBoxState.height; w = h * ratio; }
+  cropBoxState = {
+    x: Math.max(0, Math.min(cx - w / 2, labelImg.naturalWidth - w)),
+    y: Math.max(0, Math.min(cy - h / 2, labelImg.naturalHeight - h)),
+    width: w, height: h,
+  };
+  updateCropBoxOverlay();
+});
+
+// Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
+// whatever preset is selected - pointer events, matching the same
+// mouse+touch approach the card drag-reorder feature uses elsewhere.
+(() => {
+  const box = document.getElementById('label-crop-box');
+  let dragMode = null, startPointer = null, startBox = null;
+
+  box.addEventListener('pointerdown', (e) => {
+    dragMode = e.target.classList.contains('label-crop-handle') ? e.target.dataset.handle : 'move';
+    startPointer = { x: e.clientX, y: e.clientY };
+    startBox = { ...cropBoxState };
+    box.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  box.addEventListener('pointermove', (e) => {
+    if (!dragMode || !labelImg) return;
+    const dx = (e.clientX - startPointer.x) / cropDisplayScale;
+    const dy = (e.clientY - startPointer.y) / cropDisplayScale;
+    const naturalW = labelImg.naturalWidth, naturalH = labelImg.naturalHeight;
+    const ratio = startBox.width / startBox.height;
+
+    if (dragMode === 'move'){
+      cropBoxState.x = Math.max(0, Math.min(startBox.x + dx, naturalW - startBox.width));
+      cropBoxState.y = Math.max(0, Math.min(startBox.y + dy, naturalH - startBox.height));
+    } else {
+      let newWidth = startBox.width;
+      if (dragMode === 'se' || dragMode === 'ne') newWidth = startBox.width + dx;
+      else newWidth = startBox.width - dx;
+      newWidth = Math.max(40, newWidth);
+      let newHeight = newWidth / ratio;
+
+      let newX = startBox.x, newY = startBox.y;
+      if (dragMode === 'nw'){ newX = startBox.x + (startBox.width - newWidth); newY = startBox.y + (startBox.height - newHeight); }
+      else if (dragMode === 'ne'){ newY = startBox.y + (startBox.height - newHeight); }
+      else if (dragMode === 'sw'){ newX = startBox.x + (startBox.width - newWidth); }
+
+      newWidth = Math.max(40, Math.min(newWidth, naturalW - newX, (naturalH - newY) * ratio));
+      newHeight = newWidth / ratio;
+
+      cropBoxState = { x: Math.max(0, newX), y: Math.max(0, newY), width: newWidth, height: newHeight };
+    }
+    updateCropBoxOverlay();
+  });
+
+  const endDrag = () => { dragMode = null; };
+  box.addEventListener('pointerup', endDrag);
+  box.addEventListener('pointercancel', endDrag);
+})();
+
+function printLabelImage(dataUrl, preset){
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`<!doctype html><html><head><title>Print label</title><style>
+    @page { size: ${preset.widthIn}in ${preset.heightIn}in; margin: 0; }
+    html, body { margin: 0; padding: 0; }
+    img { width: ${preset.widthIn}in; height: ${preset.heightIn}in; display: block; }
+  </style></head><body><img src="${dataUrl}"></body></html>`);
+  printWindow.document.close();
+  printWindow.onload = () => {
+    printWindow.focus();
+    printWindow.print();
+    printWindow.onafterprint = () => printWindow.close();
+  };
+}
+
+async function confirmLabelCrop(){
+  const statusEl = document.getElementById('label-crop-save-status');
+  const btn = document.getElementById('label-crop-confirm-btn');
+  btn.disabled = true;
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'receipts-status';
+
+  try {
+    const preset = getSelectedPreset();
+    const marketplace = document.getElementById('label-crop-marketplace').value.trim() || 'Other';
+    const recipient = document.getElementById('label-crop-recipient').value.trim() || 'Unknown';
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = Math.round(cropBoxState.width);
+    cropCanvas.height = Math.round(cropBoxState.height);
+    cropCanvas.getContext('2d').drawImage(
+      labelImg,
+      cropBoxState.x, cropBoxState.y, cropBoxState.width, cropBoxState.height,
+      0, 0, cropCanvas.width, cropCanvas.height
+    );
+    const croppedDataUrl = cropCanvas.toDataURL('image/png');
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'in', format: [preset.widthIn, preset.heightIn] });
+    doc.addImage(croppedDataUrl, 'PNG', 0, 0, preset.widthIn, preset.heightIn);
+    const pdfBlob = doc.output('blob');
+
+    const haveFolder = await ensureShippingFolder();
+    if (haveFolder){
+      const folderName = sanitizeFilenamePart(marketplace);
+      const marketplaceFolder = await shippingFolderHandle.getDirectoryHandle(folderName, { create: true });
+      const now = new Date();
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+      const filename = `${folderName}_${sanitizeFilenamePart(recipient)}_${dateStr}_${timeStr}.pdf`;
+      const fileHandle = await marketplaceFolder.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(pdfBlob);
+      await writable.close();
+    } else {
+      statusEl.textContent = 'No folder selected - printing without saving a copy.';
+      statusEl.className = 'receipts-status error';
+    }
+
+    printLabelImage(croppedDataUrl, preset);
+    closeLabelCropModal();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('label-crop-confirm-btn').addEventListener('click', confirmLabelCrop);
+document.getElementById('label-crop-cancel-btn').addEventListener('click', closeLabelCropModal);
+document.getElementById('label-crop-modal-close').addEventListener('click', closeLabelCropModal);
+document.getElementById('label-crop-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'label-crop-modal') closeLabelCropModal();
+});
+
+function renderLabelPresetsList(){
+  const presets = loadLabelPresets();
+  const el = document.getElementById('label-presets-list');
+  el.innerHTML = presets.map(p => `
+    <div class="ignore-modal-words" data-id="${escapeHtml(p.id)}" style="justify-content:space-between; align-items:center; display:flex; margin-bottom:.5rem;">
+      <span>${escapeHtml(p.name)} (${p.widthIn}"&times;${p.heightIn}")</span>
+      <button type="button" class="receipt-btn ignore" data-remove-preset="${escapeHtml(p.id)}">Remove</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('[data-remove-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const remaining = loadLabelPresets().filter(p => p.id !== btn.dataset.removePreset);
+      saveLabelPresets(remaining.length ? remaining : DEFAULT_LABEL_PRESETS);
+      renderLabelPresetsList();
+      populateLabelPresetSelect();
+    });
+  });
+}
+function openLabelPresetsModal(){
+  renderLabelPresetsList();
+  document.getElementById('label-presets-modal').classList.add('open');
+}
+function closeLabelPresetsModal(){
+  document.getElementById('label-presets-modal').classList.remove('open');
+}
+document.getElementById('label-crop-edit-presets-btn').addEventListener('click', openLabelPresetsModal);
+document.getElementById('label-presets-modal-close').addEventListener('click', closeLabelPresetsModal);
+document.getElementById('label-presets-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'label-presets-modal') closeLabelPresetsModal();
+});
+document.getElementById('label-preset-add-btn').addEventListener('click', () => {
+  const nameInput = document.getElementById('label-preset-name-input');
+  const widthInput = document.getElementById('label-preset-width-input');
+  const heightInput = document.getElementById('label-preset-height-input');
+  const name = nameInput.value.trim();
+  const widthIn = parseFloat(widthInput.value);
+  const heightIn = parseFloat(heightInput.value);
+  if (!name || !(widthIn > 0) || !(heightIn > 0)) return;
+  const presets = loadLabelPresets();
+  presets.push({ id: 'preset-' + Date.now().toString(36), name, widthIn, heightIn });
+  saveLabelPresets(presets);
+  nameInput.value = ''; widthInput.value = ''; heightInput.value = '';
+  renderLabelPresetsList();
+  populateLabelPresetSelect();
+});
+
 let currentPc = null;
 let currentSignalWs = null;
 
@@ -2151,6 +2759,7 @@ const CARD_REGISTRY = [
   { id: 'home-status', label: 'Home Status' },
   { id: 'week', label: 'This Week' },
   { id: 'tasks', label: 'Tasks' },
+  { id: 'scratch-pad', label: 'Scratch Pad' },
   { id: 'controls', label: 'Controls' },
   { id: 'ring', label: 'Ring Cameras' },
   { id: 'roku-devices', label: 'Roku Devices' },

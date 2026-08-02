@@ -7,9 +7,14 @@ import { createThemeRouter } from "./theme.js";
 import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
 import { getAllRokuStatuses } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
+import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
+import { analyzeShippingLabel } from "./shippingLabels.js";
 
 const app = express();
-app.use(express.json());
+// Default 100kb limit rejects any real pasted photo/screenshot once
+// base64-encoded (a modest 5MB image becomes ~6.7MB as base64) - the
+// shipping-label analyzer needs real headroom for that.
+app.use(express.json({ limit: "20mb" }));
 const PORT = process.env.PORT || 3000;
 const HA_URL = process.env.HOME_ASSISTANT_URL || "http://homeassistant:8123";
 const HA_TOKEN = process.env.HOME_ASSISTANT_TOKEN;
@@ -83,6 +88,42 @@ app.get("/api/plex/image", async (req, res) => {
     res.send(Buffer.from(await upstream.arrayBuffer()));
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to fetch image" });
+  }
+});
+
+// Scratch Pad notes - local-only (see notes.js for why there's no Google
+// Keep sync).
+app.get("/api/notes", (_req, res) => {
+  res.json(getNotes());
+});
+app.post("/api/notes", (req, res) => {
+  const { text } = req.body || {};
+  res.json(createNote({ text }));
+});
+app.put("/api/notes/:id", (req, res) => {
+  try {
+    res.json(updateNote(req.params.id, { text: req.body?.text }));
+  } catch (e) {
+    res.status(404).json({ error: e.message || "note not found" });
+  }
+});
+app.delete("/api/notes/:id", (req, res) => {
+  deleteNote(req.params.id);
+  res.json({ ok: true });
+});
+
+// Analyzes a pasted/dragged shipping-label image: marketplace, recipient
+// name, and a suggested crop box - see shippingLabels.js.
+app.post("/api/shipping-label/analyze", async (req, res) => {
+  const { image, mediaType } = req.body || {};
+  if (!image || typeof image !== "string") {
+    return res.status(400).json({ error: "image is required" });
+  }
+  try {
+    const result = await analyzeShippingLabel(image, mediaType || "image/png");
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to analyze label" });
   }
 });
 
