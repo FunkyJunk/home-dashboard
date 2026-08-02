@@ -3,6 +3,7 @@ import "dotenv/config";
 import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
+import { createThemeRouter } from "./theme.js";
 
 const app = express();
 app.use(express.json());
@@ -25,6 +26,7 @@ oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN })
 const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
+app.use("/api/theme", createThemeRouter());
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 

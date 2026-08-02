@@ -12,6 +12,7 @@
 <style>
   :root{
     --bg: #12161c;
+    --bg-inset: #0d1116;
     --panel: #1b212b;
     --panel-line: #2a323f;
     --text: #ece7db;
@@ -21,6 +22,7 @@
     --teal: #4fb8ae;
     --teal-dim: #2c5b56;
     --coral: #e2574c;
+    --coral-dim: #5a2a26;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   body{
@@ -51,7 +53,7 @@
     font-family:'IBM Plex Mono', monospace;
     font-weight:600;
     font-size:clamp(2.2rem, 5vw, 3.6rem);
-    background:#0d1116;
+    background:var(--bg-inset);
     border:1px solid var(--panel-line);
     border-radius:4px;
     padding:.1em .25em;
@@ -66,6 +68,12 @@
     color:var(--text-dim);
     letter-spacing:.08em;
     text-transform:uppercase;
+  }
+  .weather-block{display:flex; flex-direction:column; align-items:flex-end; gap:.4rem;}
+  .theme-select{
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text-dim);
+    border-radius:4px; padding:.3em .6em; font-family:'IBM Plex Mono', monospace; font-size:.75rem;
+    cursor:pointer;
   }
   .weather-now{
     display:flex; align-items:baseline; gap:.6rem;
@@ -161,7 +169,7 @@
     color:var(--amber);
   }
   .pill.calm{background:var(--teal-dim); color:var(--teal);}
-  .pill.alert{background:#5a2a26; color:var(--coral);}
+  .pill.alert{background:var(--coral-dim); color:var(--coral);}
 
   /* Week strip */
   .week-strip{display:flex; flex-direction:column; gap:.1rem;}
@@ -177,7 +185,7 @@
     font-size:.8rem; color:var(--text-dim); text-transform:uppercase;
   }
   .week-bar-track{
-    height:6px; background:#0d1116; border-radius:100px; position:relative;
+    height:6px; background:var(--bg-inset); border-radius:100px; position:relative;
   }
   .week-bar-fill{
     position:absolute; top:0; bottom:0;
@@ -212,7 +220,7 @@
   .ring-cam{display:flex; flex-direction:column; gap:.5rem; cursor:pointer; background:none; border:none; padding:0; text-align:left; font:inherit; color:inherit;}
   .ring-thumb{
     width:100%; aspect-ratio:16/9; object-fit:cover;
-    border-radius:4px; background:#0d1116; border:1px solid var(--panel-line);
+    border-radius:4px; background:var(--bg-inset); border:1px solid var(--panel-line);
   }
   .ring-cam-foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
   .ring-cam-name{font-size:.95rem; color:var(--text);}
@@ -273,7 +281,7 @@
     gap:1rem;
   }
   .control-tile{
-    background:#0d1116; border:1px solid var(--panel-line); border-radius:6px;
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
     padding:.85rem; display:flex; flex-direction:column; gap:.6rem;
   }
   .control-head{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
@@ -328,7 +336,7 @@
   .toggle{position:relative; display:inline-block; width:2.4em; height:1.4em; flex-shrink:0;}
   .toggle input{opacity:0; width:0; height:0; position:absolute;}
   .toggle-track{
-    position:absolute; inset:0; background:#12161c; border:1px solid var(--panel-line);
+    position:absolute; inset:0; background:var(--bg); border:1px solid var(--panel-line);
     border-radius:100px; cursor:pointer; transition:background .15s ease;
   }
   .toggle-track::before{
@@ -393,12 +401,12 @@
   .receipt-thumb:hover{border-color:var(--teal);}
   .receipt-thumb-more{
     display:inline-flex; align-items:center; justify-content:center;
-    width:32px; height:32px; border-radius:4px; background:#0d1116; border:1px solid var(--panel-line);
+    width:32px; height:32px; border-radius:4px; background:var(--bg-inset); border:1px solid var(--panel-line);
     color:var(--text-dim); font-size:.7rem; font-family:'IBM Plex Mono', monospace; flex-shrink:0;
   }
   .item-thumb{width:28px; height:28px; object-fit:cover; border-radius:4px; cursor:pointer; border:1px solid var(--panel-line); vertical-align:middle; margin-right:.4rem;}
   .receipt-input{
-    width:5.5em; background:#0d1116; border:1px solid var(--panel-line); color:var(--text);
+    width:5.5em; background:var(--bg-inset); border:1px solid var(--panel-line); color:var(--text);
     border-radius:4px; padding:.3em .4em; font-family:'IBM Plex Mono', monospace; font-size:.8rem;
   }
   .receipt-actions{display:flex; gap:.4rem; white-space:nowrap;}
@@ -424,16 +432,32 @@
 
   .receipts-bulk-bar{
     display:flex; align-items:center; gap:.6rem; margin-bottom:.75rem; padding:.5rem .75rem;
-    background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; font-size:.85rem;
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px; font-size:.85rem;
   }
 
   .keywords-modal-inner{max-width:min(90vw, 480px);}
   .keywords-modal-add{display:flex; gap:.5rem; margin-top:.25rem;}
   .keywords-modal-add .keywords-modal-input{width:auto; flex:1;}
 
+  .theme-url-modal-inner{max-width:min(90vw, 480px);}
+  .theme-url-row{display:flex; gap:.5rem; margin-bottom:.75rem;}
+  .theme-url-row .theme-url-input{width:auto; flex:1;}
+  .theme-url-swatches{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.75rem;}
+  .theme-swatch-btn{
+    width:34px; height:34px; border-radius:6px; cursor:pointer;
+    border:2px solid var(--panel-line);
+  }
+  .theme-swatch-btn:hover{border-color:var(--text-dim);}
+  .theme-swatch-btn.picked-primary{border-color:var(--amber);}
+  .theme-swatch-btn.picked-secondary{border-color:var(--teal);}
+  .theme-url-picked-row{display:flex; align-items:center; gap:.5rem; margin-bottom:.75rem; font-size:.8rem; color:var(--text-dim);}
+  .theme-swatch{width:22px; height:22px; border-radius:4px; border:1px solid var(--panel-line); display:inline-block;}
+  .theme-swatch-label{margin-left:.5rem;}
+  .theme-swatch-label:first-child{margin-left:0;}
+
   .ignore-modal-inner{max-width:min(90vw, 480px);}
   .ignore-modal-subject{
-    font-size:.85rem; background:#0d1116; border:1px solid var(--panel-line); border-radius:4px;
+    font-size:.85rem; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:4px;
     padding:.5em .7em; margin-bottom:.75rem; word-break:break-word;
   }
   .ignore-modal-hint{color:var(--text-dim); font-size:.85rem; margin-bottom:.5rem;}
@@ -441,7 +465,7 @@
   .ignore-modal-phrase-add{display:flex; gap:.5rem; margin-bottom:1rem;}
   .ignore-modal-phrase-add .ignore-modal-phrase-input{width:auto; flex:1;}
   .ignore-keyword-chip{
-    display:flex; align-items:center; gap:.35rem; background:#0d1116; border:1px solid var(--panel-line);
+    display:flex; align-items:center; gap:.35rem; background:var(--bg-inset); border:1px solid var(--panel-line);
     border-radius:4px; padding:.35em .6em; font-size:.8rem; cursor:pointer;
   }
   .keyword-remove{
@@ -461,7 +485,7 @@
   .receipt-detail-items{width:100%; border-collapse:collapse;}
   .receipt-detail-items td{padding:.3rem .5rem; border-bottom:1px solid var(--panel-line);}
   .receipt-detail-snippet{
-    white-space:pre-wrap; background:#0d1116; border:1px solid var(--panel-line);
+    white-space:pre-wrap; background:var(--bg-inset); border:1px solid var(--panel-line);
     border-radius:6px; padding:.6rem; max-height:200px; overflow-y:auto;
   }
   .receipt-detail-email-frame{
@@ -469,7 +493,7 @@
     background:#fff; /* most email HTML assumes a light background/dark text */
   }
 
-  .split-panel{background:#0d1116; border:1px solid var(--panel-line); border-radius:6px; padding:1rem; margin:.25rem 0;}
+  .split-panel{background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px; padding:1rem; margin:.25rem 0;}
   .split-items-table{width:100%; border-collapse:collapse; margin-bottom:.75rem;}
   .split-items-table th{
     text-align:left; font-size:.7rem; text-transform:uppercase; letter-spacing:.05em;
@@ -496,10 +520,13 @@
           <div class="flap-group" id="clock"></div>
           <div class="date-block" id="date" style="margin-top:.6rem;"></div>
         </div>
-        <div class="weather-now">
-          <span class="temp" id="temp-now">--°</span>
-          <span class="cond" id="cond-now">loading</span>
-          <span class="humidity" id="humidity-now"></span>
+        <div class="weather-block">
+          <select class="theme-select" id="theme-select"></select>
+          <div class="weather-now">
+            <span class="temp" id="temp-now">--°</span>
+            <span class="cond" id="cond-now">loading</span>
+            <span class="humidity" id="humidity-now"></span>
+          </div>
         </div>
       </div>
       <div class="hourly-strip" id="hourly-strip"></div>
@@ -630,6 +657,33 @@
         <div class="keywords-modal-add">
           <input type="text" class="receipt-input keywords-modal-input" id="keywords-modal-input" placeholder="Add a keyword&hellip;">
           <button type="button" class="receipt-btn business" id="keywords-modal-add-btn">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="theme-url-modal">
+      <div class="modal-inner theme-url-modal-inner">
+        <div class="modal-head">
+          <span>Add a theme from a website</span>
+          <button class="modal-close" id="theme-url-modal-close">Close</button>
+        </div>
+        <p class="ignore-modal-hint">Paste a URL - it's scanned for the site's colors (best-effort; some sites yield better results than others).</p>
+        <div class="theme-url-row">
+          <input type="text" class="receipt-input theme-url-input" id="theme-url-input" placeholder="https://example.com">
+          <button type="button" class="receipt-btn business" id="theme-url-fetch-btn">Fetch colors</button>
+        </div>
+        <div class="receipts-status" id="theme-url-status"></div>
+        <div class="theme-url-swatches" id="theme-url-swatches"></div>
+        <div class="theme-url-picked" id="theme-url-picked" style="display:none;">
+          <p class="ignore-modal-hint">Click a swatch above for Primary, then another for Secondary:</p>
+          <div class="theme-url-picked-row">
+            <span class="theme-swatch-label">Primary</span><span class="theme-swatch" id="theme-picked-primary"></span>
+            <span class="theme-swatch-label">Secondary</span><span class="theme-swatch" id="theme-picked-secondary"></span>
+          </div>
+          <div class="theme-url-row">
+            <input type="text" class="receipt-input theme-url-input" id="theme-name-input" placeholder="Theme name">
+            <button type="button" class="receipt-btn business" id="theme-save-btn">Save theme</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2441,6 +2495,232 @@ restoreTaxFolder();
   await loadMonths();
   await loadMonthCandidates(currentMonth);
 })();
+
+// ---------------------------------------------------------------------
+// Themes - a handful of built-in dark palettes, plus the option to
+// derive a custom one from a pasted URL's colors. All themes just set
+// the same set of CSS custom properties the whole page already reads
+// from (see :root above) - applying one is nothing more than overwriting
+// those variables via inline style, which beats any selector-based CSS
+// rule regardless of specificity.
+// ---------------------------------------------------------------------
+
+const THEME_PRESETS = {
+  midnight: {
+    label: 'Midnight',
+    vars: { '--bg':'#12161c', '--bg-inset':'#0d1116', '--panel':'#1b212b', '--panel-line':'#2a323f', '--text':'#ece7db', '--text-dim':'#8b93a1', '--amber':'#e8a33d', '--amber-dim':'#6b5730', '--teal':'#4fb8ae', '--teal-dim':'#2c5b56', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
+  },
+  slate: {
+    label: 'Slate',
+    vars: { '--bg':'#15181d', '--bg-inset':'#0e1013', '--panel':'#1e2228', '--panel-line':'#323841', '--text':'#e8eaed', '--text-dim':'#8a929c', '--amber':'#5b9bf0', '--amber-dim':'#274873', '--teal':'#9d8cf0', '--teal-dim':'#3c3468', '--coral':'#f0615b', '--coral-dim':'#5c2a28' },
+  },
+  forest: {
+    label: 'Forest',
+    vars: { '--bg':'#12190f', '--bg-inset':'#0c120a', '--panel':'#1b2818', '--panel-line':'#2e4029', '--text':'#eef0e4', '--text-dim':'#8fa085', '--amber':'#c9a53d', '--amber-dim':'#5c4d22', '--teal':'#5fbf8a', '--teal-dim':'#28513a', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
+  },
+  sunset: {
+    label: 'Sunset',
+    vars: { '--bg':'#1b1219', '--bg-inset':'#140c12', '--panel':'#2a1c26', '--panel-line':'#402e3b', '--text':'#f2e6e9', '--text-dim':'#a08b95', '--amber':'#f0813d', '--amber-dim':'#6b3c1f', '--teal':'#e85f9a', '--teal-dim':'#5c2947', '--coral':'#ef4e4e', '--coral-dim':'#5c2626' },
+  },
+  ocean: {
+    label: 'Ocean',
+    vars: { '--bg':'#0d1a1f', '--bg-inset':'#081215', '--panel':'#132830', '--panel-line':'#204048', '--text':'#e3f2f0', '--text-dim':'#7fa3a8', '--amber':'#3dc6e8', '--amber-dim':'#1e5666', '--teal':'#4f8ab8', '--teal-dim':'#264a63', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
+  },
+  mono: {
+    label: 'Mono',
+    vars: { '--bg':'#15161a', '--bg-inset':'#0f1013', '--panel':'#1e2024', '--panel-line':'#33363c', '--text':'#eceef0', '--text-dim':'#8a8d93', '--amber':'#c8ccd2', '--amber-dim':'#4a4d54', '--teal':'#9aa0a8', '--teal-dim':'#383c42', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
+  },
+};
+
+const THEME_KEY = 'dashboard-theme';
+const CUSTOM_THEMES_KEY = 'dashboard-custom-themes';
+
+function applyThemeVars(vars){
+  const root = document.documentElement.style;
+  for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
+}
+
+function loadCustomThemes(){
+  try { return JSON.parse(localStorage.getItem(CUSTOM_THEMES_KEY) || '{}'); } catch { return {}; }
+}
+function saveCustomThemes(themes){
+  localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes));
+}
+
+function populateThemeSelect(){
+  const sel = document.getElementById('theme-select');
+  const custom = loadCustomThemes();
+  sel.innerHTML = [
+    ...Object.entries(THEME_PRESETS).map(([key, t]) => `<option value="${key}">${escapeHtml(t.label)}</option>`),
+    ...Object.entries(custom).map(([key, t]) => `<option value="custom:${key}">${escapeHtml(t.label)}</option>`),
+    `<option value="__add__">+ Add theme from URL&hellip;</option>`,
+  ].join('');
+}
+
+function applyTheme(themeKey){
+  let vars = null;
+  if (themeKey.startsWith('custom:')){
+    const t = loadCustomThemes()[themeKey.slice(7)];
+    if (t) vars = t.vars;
+  } else if (THEME_PRESETS[themeKey]){
+    vars = THEME_PRESETS[themeKey].vars;
+  }
+  if (!vars){ themeKey = 'midnight'; vars = THEME_PRESETS.midnight.vars; }
+  applyThemeVars(vars);
+  localStorage.setItem(THEME_KEY, themeKey);
+  const sel = document.getElementById('theme-select');
+  if (sel) sel.value = themeKey;
+}
+
+function initTheme(){
+  populateThemeSelect();
+  applyTheme(localStorage.getItem(THEME_KEY) || 'midnight');
+}
+
+document.getElementById('theme-select').addEventListener('change', (e) => {
+  if (e.target.value === '__add__'){
+    e.target.value = localStorage.getItem(THEME_KEY) || 'midnight'; // don't stick on the action item
+    openThemeUrlModal();
+    return;
+  }
+  applyTheme(e.target.value);
+});
+
+// --- Add-from-URL modal ---
+
+let themeUrlColors = [];
+let themePickedPrimary = null, themePickedSecondary = null;
+
+function openThemeUrlModal(){
+  document.getElementById('theme-url-input').value = '';
+  document.getElementById('theme-name-input').value = '';
+  document.getElementById('theme-url-status').textContent = '';
+  document.getElementById('theme-url-status').className = 'receipts-status';
+  document.getElementById('theme-url-swatches').innerHTML = '';
+  document.getElementById('theme-url-picked').style.display = 'none';
+  themeUrlColors = [];
+  themePickedPrimary = null;
+  themePickedSecondary = null;
+  document.getElementById('theme-url-modal').classList.add('open');
+}
+function closeThemeUrlModal(){
+  document.getElementById('theme-url-modal').classList.remove('open');
+}
+
+async function fetchThemeColorsFromUrl(){
+  const input = document.getElementById('theme-url-input');
+  const url = input.value.trim();
+  if (!url) return;
+  const status = document.getElementById('theme-url-status');
+  const btn = document.getElementById('theme-url-fetch-btn');
+  btn.disabled = true;
+  status.textContent = 'Fetching…';
+  status.className = 'receipts-status';
+  try {
+    const res = await fetch('/api/theme/from-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: /^https?:\/\//i.test(url) ? url : 'https://' + url }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'failed to analyze that URL');
+    themeUrlColors = data.colors || [];
+    themePickedPrimary = null;
+    themePickedSecondary = null;
+    document.getElementById('theme-url-picked').style.display = 'none';
+    if (!themeUrlColors.length){
+      status.textContent = 'No distinct colors found on that page - try another URL.';
+      status.className = 'receipts-status error';
+      document.getElementById('theme-url-swatches').innerHTML = '';
+      return;
+    }
+    status.textContent = `Found ${themeUrlColors.length} color(s) - click one for Primary, another for Secondary:`;
+    renderThemeSwatches();
+  } catch (e){
+    status.textContent = 'Failed: ' + (e.message || 'unknown error');
+    status.className = 'receipts-status error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderThemeSwatches(){
+  const el = document.getElementById('theme-url-swatches');
+  el.innerHTML = themeUrlColors.map(c =>
+    `<button type="button" class="theme-swatch-btn" data-hex="${c}" style="background:${c};" title="${c}"></button>`
+  ).join('');
+  el.querySelectorAll('.theme-swatch-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const hex = btn.dataset.hex;
+      if (hex === themePickedPrimary){ themePickedPrimary = null; }
+      else if (hex === themePickedSecondary){ themePickedSecondary = null; }
+      else if (!themePickedPrimary){ themePickedPrimary = hex; }
+      else if (!themePickedSecondary){ themePickedSecondary = hex; }
+      else { themePickedPrimary = hex; themePickedSecondary = null; } // start over
+      updateSwatchSelection();
+    });
+  });
+  updateSwatchSelection();
+}
+
+function updateSwatchSelection(){
+  document.querySelectorAll('.theme-swatch-btn').forEach(btn => {
+    btn.classList.toggle('picked-primary', btn.dataset.hex === themePickedPrimary);
+    btn.classList.toggle('picked-secondary', btn.dataset.hex === themePickedSecondary);
+  });
+  const wrap = document.getElementById('theme-url-picked');
+  wrap.style.display = themePickedPrimary ? '' : 'none';
+  if (themePickedPrimary){
+    document.getElementById('theme-picked-primary').style.background = themePickedPrimary;
+    document.getElementById('theme-picked-secondary').style.background = themePickedSecondary || 'transparent';
+  }
+}
+
+function darkenHex(hex, factor){
+  const r = Math.round(parseInt(hex.slice(1, 3), 16) * factor);
+  const g = Math.round(parseInt(hex.slice(3, 5), 16) * factor);
+  const b = Math.round(parseInt(hex.slice(5, 7), 16) * factor);
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+
+// Only the two accent colors come from the site - background/panel/text
+// stay the same known-readable dark base as Midnight, so a site with an
+// unusual palette can't produce an unreadable theme.
+function deriveThemeFromAccents(primaryHex, secondaryHex){
+  const base = THEME_PRESETS.midnight.vars;
+  return {
+    '--bg': base['--bg'], '--bg-inset': base['--bg-inset'],
+    '--panel': base['--panel'], '--panel-line': base['--panel-line'],
+    '--text': base['--text'], '--text-dim': base['--text-dim'],
+    '--amber': primaryHex, '--amber-dim': darkenHex(primaryHex, 0.35),
+    '--teal': secondaryHex, '--teal-dim': darkenHex(secondaryHex, 0.35),
+    '--coral': base['--coral'], '--coral-dim': base['--coral-dim'],
+  };
+}
+
+function saveUrlTheme(){
+  if (!themePickedPrimary) return;
+  const secondary = themePickedSecondary || themePickedPrimary;
+  const name = document.getElementById('theme-name-input').value.trim() || 'Custom theme';
+  const key = 'c' + Date.now();
+  const custom = loadCustomThemes();
+  custom[key] = { label: name, vars: deriveThemeFromAccents(themePickedPrimary, secondary) };
+  saveCustomThemes(custom);
+  populateThemeSelect();
+  applyTheme('custom:' + key);
+  closeThemeUrlModal();
+}
+
+document.getElementById('theme-url-modal-close').addEventListener('click', closeThemeUrlModal);
+document.getElementById('theme-url-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'theme-url-modal') closeThemeUrlModal();
+});
+document.getElementById('theme-url-fetch-btn').addEventListener('click', fetchThemeColorsFromUrl);
+document.getElementById('theme-url-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); fetchThemeColorsFromUrl(); }
+});
+document.getElementById('theme-save-btn').addEventListener('click', saveUrlTheme);
+
+initTheme();
 
 renderClock();
 setInterval(renderClock, 1000 * 15);
