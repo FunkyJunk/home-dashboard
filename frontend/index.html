@@ -757,15 +757,9 @@
           <label>Title</label>
           <input type="text" class="receipt-input add-task-input" id="add-task-title" placeholder="Task title">
         </div>
-        <div class="add-task-row">
-          <div class="add-task-field">
-            <label>Date</label>
-            <input type="date" class="receipt-input add-task-input" id="add-task-date">
-          </div>
-          <div class="add-task-field">
-            <label>Time (optional)</label>
-            <input type="time" class="receipt-input add-task-input" id="add-task-time">
-          </div>
+        <div class="add-task-field">
+          <label>Date</label>
+          <input type="date" class="receipt-input add-task-input" id="add-task-date">
         </div>
         <div class="add-task-field">
           <label>List</label>
@@ -774,6 +768,7 @@
         <div class="add-task-field">
           <label>Notes</label>
           <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes"></textarea>
+          <span class="ignore-modal-hint">Google Tasks has no real time field - include a word like "morning", "noon", "afternoon", "evening", or "night" in the title to get it sorted/shown with an approximate time.</span>
         </div>
         <div class="receipts-status" id="add-task-status"></div>
         <div class="ignore-modal-actions">
@@ -1023,20 +1018,40 @@ function renderWeek(daily){
 }
 
 let allTaskLists = [];
-const notifiedTaskIds = new Set();
 
-// Google Tasks' `due` field is date-only for most tasks (midnight UTC) but
-// carries a real time-of-day once one is set - via the Add Task time field,
-// or the Tasks app's own time picker - so a non-midnight UTC instant is how
-// we tell "has a time" apart from "date only", without ever converting a
-// true all-day date to local time (which could shift it a day either way
-// depending on the viewer's timezone).
-function taskDueInfo(dueIso){
-  const isAllDay = /T00:00:00(\.\d+)?Z$/.test(dueIso);
-  if (isAllDay) return { isAllDay: true, dateStr: dueIso.slice(0, 10), time: null };
-  const d = new Date(dueIso);
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-  return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d };
+// Confirmed directly against the Google Tasks API (both reading existing
+// tasks and round-tripping a test write through this dashboard's own
+// create-task endpoint): `due` is hard date-only server-side. Any time you
+// see in the Tasks app UI is not stored in a field this API exposes, and a
+// time we send on create gets silently truncated back to midnight UTC. So
+// the only time signal available at all is an informal one buried in the
+// title - "Medication Noon" / "...Evening" etc - which this maps to an
+// approximate hour for sorting/display purposes only.
+const DAYPART_KEYWORDS = [
+  { re: /\bmorning\b/i, hour: 8, minute: 0 },
+  { re: /\bnoon\b/i, hour: 12, minute: 0 },
+  { re: /\bafternoon\b/i, hour: 14, minute: 0 },
+  { re: /\bevening\b/i, hour: 18, minute: 0 },
+  { re: /\bnight\b/i, hour: 21, minute: 0 },
+];
+function guessTimeFromTitle(title, dateStr){
+  const kw = DAYPART_KEYWORDS.find(k => k.re.test(title || ''));
+  if (!kw) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, kw.hour, kw.minute);
+}
+
+function taskDueInfo(t){
+  const isAllDay = /T00:00:00(\.\d+)?Z$/.test(t.due);
+  if (!isAllDay){
+    const d = new Date(t.due);
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d, guessed: false };
+  }
+  const dateStr = t.due.slice(0, 10);
+  const guessed = guessTimeFromTitle(t.title, dateStr);
+  if (guessed) return { isAllDay: false, dateStr, time: guessed, guessed: true };
+  return { isAllDay: true, dateStr, time: null, guessed: false };
 }
 function todayDateOnly(){
   const d = new Date();
@@ -1068,7 +1083,7 @@ const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 function taskDueBadge(t){
   if (!t.due) return { html: '', overdue: false, dueNow: false };
   const today = todayDateOnly();
-  const info = taskDueInfo(t.due);
+  const info = taskDueInfo(t);
   if (info.dateStr < today){
     const label = overdueLabel(info.dateStr);
     const overdue = !!label;
@@ -1086,7 +1101,7 @@ function taskDueBadge(t){
 // all-day tasks come before timed ones, timed ones ascending by time.
 function sortTasks(tasks){
   const today = todayDateOnly();
-  const info = (t) => t.due ? { hasDue: true, ...taskDueInfo(t.due) } : { hasDue: false };
+  const info = (t) => t.due ? { hasDue: true, ...taskDueInfo(t) } : { hasDue: false };
   return [...tasks].sort((a, b) => {
     const ia = info(a), ib = info(b);
     const overdueA = ia.hasDue && ia.dateStr < today;
@@ -1132,7 +1147,7 @@ function renderTasks(tasks){
   // Only today's and overdue tasks clutter the widget - anything due later
   // is left for its own day. Tasks with no due date have no way to be
   // "later" so they stay visible rather than disappearing entirely.
-  const visible = sortTasks(tasks.filter(t => !t.due || taskDueInfo(t.due).dateStr <= today));
+  const visible = sortTasks(tasks.filter(t => !t.due || taskDueInfo(t).dateStr <= today));
 
   checkDueTasks(visible);
 
@@ -1142,23 +1157,40 @@ function renderTasks(tasks){
   wireTaskCheckboxes(el);
 }
 
-// Popup fires once per task the moment it becomes overdue or (for timed
-// tasks) its time passes - tracked in notifiedTaskIds so it doesn't nag on
-// every 60s refresh. When it fires it shows the *complete* current set of
-// due/overdue tasks together, not just the newly-triggered one.
+// The instant a task became overdue/due, or null if it isn't yet. Matches
+// overdueLabel's own definition of "overdue" (local midnight the day after
+// its due date), so the popup and the badge always agree on timing.
+function taskDueMoment(t){
+  if (!t.due) return null;
+  const today = todayDateOnly();
+  const info = taskDueInfo(t);
+  if (info.dateStr < today){
+    const [y, m, d] = info.dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d + 1);
+  }
+  if (!info.isAllDay && info.time.getTime() <= Date.now()) return info.time;
+  return null;
+}
+
+// Only tasks that became due/overdue within the last hour trigger the
+// popup - a task overdue by 14h has already been seen plenty and shouldn't
+// keep reappearing on every reload. It still shows normally (highlighted)
+// in the widget itself regardless of age.
+const DUE_POPUP_WINDOW_MS = 60 * 60 * 1000;
+const dismissedPopupIds = new Set();
+
 function checkDueTasks(visibleTasks){
-  const dueNow = visibleTasks.filter(t => {
-    const badge = taskDueBadge(t);
-    return badge.overdue || badge.dueNow;
+  const now = Date.now();
+  const poppable = visibleTasks.filter(t => {
+    const moment = taskDueMoment(t);
+    return moment && (now - moment.getTime()) <= DUE_POPUP_WINDOW_MS;
   });
-  const isFresh = dueNow.some(t => !notifiedTaskIds.has(t.id));
   const popup = document.getElementById('due-popup-modal');
-  if (isFresh){
-    dueNow.forEach(t => notifiedTaskIds.add(t.id));
-    renderDuePopupList(dueNow);
+  if (!poppable.length){ closeDuePopup(); return; }
+  const hasUndismissed = poppable.some(t => !dismissedPopupIds.has(t.id));
+  if (hasUndismissed || popup.classList.contains('open')){
+    renderDuePopupList(poppable);
     popup.classList.add('open');
-  } else if (popup.classList.contains('open')){
-    renderDuePopupList(dueNow); // keep an already-open popup in sync (e.g. one just got completed)
   }
 }
 function renderDuePopupList(tasks){
@@ -1168,6 +1200,9 @@ function renderDuePopupList(tasks){
   wireTaskCheckboxes(el);
 }
 function closeDuePopup(){
+  // Remember what was shown so a still-fresh task doesn't force the popup
+  // back open on the next refresh right after being dismissed.
+  document.querySelectorAll('#due-popup-list .task-row').forEach(row => dismissedPopupIds.add(row.dataset.taskId));
   document.getElementById('due-popup-modal').classList.remove('open');
 }
 
@@ -1176,7 +1211,7 @@ async function completeTask(taskListId, taskId, checkbox, row){
   try {
     const res = await fetch(`/api/tasks/${encodeURIComponent(taskListId)}/${encodeURIComponent(taskId)}/complete`, { method: 'POST' });
     if (!res.ok) throw new Error('request failed');
-    notifiedTaskIds.delete(taskId);
+    dismissedPopupIds.delete(taskId);
     row.style.opacity = '.4';
     setTimeout(() => row.remove(), 200);
   } catch (e){
@@ -3013,7 +3048,6 @@ async function loadTaskLists(){
 function openAddTaskModal(){
   document.getElementById('add-task-title').value = '';
   document.getElementById('add-task-date').value = todayDateOnly();
-  document.getElementById('add-task-time').value = '';
   document.getElementById('add-task-notes').value = '';
   document.getElementById('add-task-status').textContent = '';
   document.getElementById('add-task-status').className = 'receipts-status';
@@ -3031,7 +3065,6 @@ function closeAddTaskModal(){
 async function submitAddTask(){
   const title = document.getElementById('add-task-title').value.trim();
   const dateStr = document.getElementById('add-task-date').value;
-  const timeStr = document.getElementById('add-task-time').value;
   const notes = document.getElementById('add-task-notes').value.trim();
   const taskListId = document.getElementById('add-task-list').value;
   const statusEl = document.getElementById('add-task-status');
@@ -3042,16 +3075,7 @@ async function submitAddTask(){
     return;
   }
 
-  let due;
-  if (dateStr){
-    if (timeStr){
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const [hh, mm] = timeStr.split(':').map(Number);
-      due = new Date(y, m - 1, d, hh, mm).toISOString();
-    } else {
-      due = `${dateStr}T00:00:00.000Z`;
-    }
-  }
+  const due = dateStr ? `${dateStr}T00:00:00.000Z` : undefined;
 
   const btn = document.getElementById('add-task-submit');
   btn.disabled = true;

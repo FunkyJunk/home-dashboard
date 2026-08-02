@@ -84,11 +84,11 @@ app.get("/api/tasks/lists", async (req, res) => {
   }
 });
 
-// Manual task creation. `due` is a full RFC3339 timestamp - the Tasks API
-// itself only stores a date (it truncates the time-of-day server-side for
-// most clients), but in practice it round-trips whatever time we send, so a
-// non-midnight UTC instant here is what lets the dashboard show/sort a real
-// due time instead of just a date.
+// Manual task creation. Confirmed against the live API that `due` is
+// hard date-only server-side - sending a non-midnight UTC instant here
+// gets silently truncated back to midnight on Google's end, so the
+// frontend only ever sends a plain date (no time-of-day is achievable
+// through this API at all, on read or write).
 app.post("/api/tasks", async (req, res) => {
   const { taskListId, title, due, notes } = req.body || {};
   if (!title || !String(title).trim()) {
