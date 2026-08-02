@@ -244,17 +244,24 @@
   .task-repeat svg{width:.85em; height:.85em;}
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
 
-  .add-task-modal-inner{max-width:min(90vw, 420px);}
-  .add-task-field{margin-bottom:.75rem; display:flex; flex-direction:column; gap:.3rem;}
-  .add-task-field label{font-size:.75rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
-  .add-task-row{display:flex; gap:.75rem;}
-  .add-task-row .add-task-field{flex:1;}
-  .add-task-input{width:100%;}
-  .add-task-notes{min-height:4em; resize:vertical; font-family:inherit;}
-  .add-task-checkbox-row{
-    display:flex; align-items:center; gap:.5em; margin-bottom:.75rem;
-    font-size:.85rem; color:var(--text); cursor:pointer;
+  .add-task-modal-inner{max-width:min(90vw, 500px);}
+  .add-task-title-input{
+    font-size:1.1rem; font-weight:600; margin-bottom:1rem;
+    background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:8px; padding:.75rem; color:var(--text);
   }
+  .add-task-notes-input{
+    width:100%; min-height:3.5em; margin-bottom:1.5rem;
+    background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:8px; padding:.75rem; color:var(--text); font-family:inherit;
+    font-size:.9rem; resize:vertical;
+  }
+  .add-task-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.5rem;
+  }
+  .add-task-field{display:flex; flex-direction:column; gap:.4rem;}
+  .add-task-field label{font-size:.8rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-weight:600;}
+  .add-task-input{width:100%; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px; padding:.6rem .75rem; color:var(--text); font-size:.9rem;}
 
   .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
@@ -760,21 +767,17 @@
           <span>Add task</span>
           <button class="modal-close" id="add-task-modal-close">Close</button>
         </div>
-        <div class="add-task-field">
-          <label>Title</label>
-          <input type="text" class="receipt-input add-task-input" id="add-task-title" placeholder="Task title">
-        </div>
-        <div class="add-task-row">
+        <input type="text" class="receipt-input add-task-title-input" id="add-task-title" placeholder="Task title">
+        <textarea class="receipt-input add-task-notes-input" id="add-task-notes" placeholder="Description or notes (optional)"></textarea>
+        <div class="add-task-grid">
           <div class="add-task-field">
             <label>Date</label>
             <input type="date" class="receipt-input add-task-input" id="add-task-date">
           </div>
           <div class="add-task-field">
-            <label>Time (optional)</label>
+            <label>Time</label>
             <input type="time" class="receipt-input add-task-input" id="add-task-time" placeholder="--:--">
           </div>
-        </div>
-        <div class="add-task-row">
           <div class="add-task-field">
             <label>List</label>
             <select class="receipt-input add-task-input" id="add-task-list"></select>
@@ -790,10 +793,6 @@
               <option value="FREQ=YEARLY">Yearly</option>
             </select>
           </div>
-        </div>
-        <div class="add-task-field">
-          <label>Notes</label>
-          <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes (optional)"></textarea>
         </div>
         <div class="receipts-status" id="add-task-status"></div>
         <div class="ignore-modal-actions">
@@ -3058,10 +3057,11 @@ async function loadTaskLists(){
 
 function openAddTaskModal(){
   document.getElementById('add-task-title').value = '';
+  document.getElementById('add-task-notes').value = '';
   document.getElementById('add-task-date').value = todayDateOnly();
   document.getElementById('add-task-time').value = '';
+  document.getElementById('add-task-list').value = '';
   document.getElementById('add-task-recurrence').value = '';
-  document.getElementById('add-task-notes').value = '';
   document.getElementById('add-task-status').textContent = '';
   document.getElementById('add-task-status').className = 'receipts-status';
   const listSel = document.getElementById('add-task-list');
