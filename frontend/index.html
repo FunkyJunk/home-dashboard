@@ -229,7 +229,7 @@
   .task-checkbox:hover{border-color:var(--teal);}
   .task-checkbox:checked{background:var(--teal); border-color:var(--teal);}
   .task-checkbox:disabled{opacity:.5; cursor:not-allowed;}
-  .task-body{flex:1; min-width:0;}
+  .task-body{flex:1; min-width:0; cursor:pointer;}
   .task-title{font-size:.9rem; color:var(--text); word-break:break-word;}
   .task-due-row{display:flex; align-items:center; gap:.4em; margin-top:.3rem;}
   .task-due{
@@ -271,6 +271,13 @@
   }
   .add-task-field{display:flex; flex-direction:column; gap:.4rem;}
   .add-task-field label{font-size:.75rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-weight:600; letter-spacing:.02em; text-transform:uppercase;}
+  .is-hidden{display:none !important;}
+  .add-task-recurrence-detail{
+    display:flex; flex-direction:column; gap:1rem; margin:-.75rem 0 1.5rem;
+    padding:1rem; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:8px;
+  }
+  .add-task-recurrence-detail .add-task-row{display:grid; grid-template-columns:1fr 1fr; gap:1rem;}
+  .add-task-recurrence-keep{font-size:.8rem; color:var(--text-dim); margin:-1rem 0 1.5rem; line-height:1.4;}
 
   .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
@@ -773,7 +780,7 @@
     <div class="modal-overlay" id="add-task-modal">
       <div class="modal-inner add-task-modal-inner">
         <div class="modal-head">
-          <span>Add task</span>
+          <span id="add-task-modal-title">Add task</span>
           <button class="modal-close" id="add-task-modal-close">Close</button>
         </div>
         <input type="text" class="add-task-ctrl add-task-title-input" id="add-task-title" placeholder="Task title">
@@ -795,18 +802,65 @@
             <label>Repeats</label>
             <select class="add-task-ctrl" id="add-task-recurrence">
               <option value="">Never</option>
-              <option value="FREQ=DAILY">Daily</option>
-              <option value="FREQ=WEEKLY">Weekly</option>
-              <option value="FREQ=BIWEEKLY">Biweekly</option>
-              <option value="FREQ=MONTHLY">Monthly</option>
-              <option value="FREQ=YEARLY">Yearly</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
             </select>
+          </div>
+        </div>
+        <p class="add-task-recurrence-keep is-hidden" id="add-task-recurrence-keep"></p>
+        <div class="add-task-recurrence-detail is-hidden" id="add-task-recurrence-detail">
+          <div class="add-task-field" id="add-task-weekday-field">
+            <label>On</label>
+            <select class="add-task-ctrl" id="add-task-weekday">
+              <option value="sunday">Sunday</option>
+              <option value="monday">Monday</option>
+              <option value="tuesday">Tuesday</option>
+              <option value="wednesday">Wednesday</option>
+              <option value="thursday">Thursday</option>
+              <option value="friday">Friday</option>
+              <option value="saturday">Saturday</option>
+            </select>
+          </div>
+          <div class="add-task-field" id="add-task-monthly-mode-field">
+            <label>Monthly pattern</label>
+            <select class="add-task-ctrl" id="add-task-monthly-mode">
+              <option value="dayofmonth">Day of month (e.g. the 2nd)</option>
+              <option value="weekday">Day of week (e.g. first Monday)</option>
+            </select>
+          </div>
+          <div class="add-task-row" id="add-task-monthly-weekday-row">
+            <div class="add-task-field">
+              <label>Which</label>
+              <select class="add-task-ctrl" id="add-task-monthly-ordinal">
+                <option value="1st">First</option>
+                <option value="2nd">Second</option>
+                <option value="3rd">Third</option>
+                <option value="4th">Fourth</option>
+                <option value="last">Last</option>
+              </select>
+            </div>
+            <div class="add-task-field">
+              <label>Weekday</label>
+              <select class="add-task-ctrl" id="add-task-monthly-weekday">
+                <option value="sunday">Sunday</option>
+                <option value="monday">Monday</option>
+                <option value="tuesday">Tuesday</option>
+                <option value="wednesday">Wednesday</option>
+                <option value="thursday">Thursday</option>
+                <option value="friday">Friday</option>
+                <option value="saturday">Saturday</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="receipts-status" id="add-task-status"></div>
         <div class="ignore-modal-actions">
           <button type="button" class="receipt-btn business" id="add-task-submit">Add task</button>
           <button type="button" class="receipt-btn" id="add-task-cancel">Cancel</button>
+          <button type="button" class="receipt-btn ignore is-hidden" id="add-task-delete" style="margin-left:auto;">Delete</button>
         </div>
       </div>
     </div>
@@ -1052,16 +1106,9 @@ function renderWeek(daily){
 
 let allTaskLists = [];
 
-// Confirmed directly against the Google Tasks API (both reading existing
-// tasks and round-tripping a test write through this dashboard's own
-// create-task endpoint): `due` is hard date-only server-side. Any time you
-// see in the Tasks app UI is not stored in a field this API exposes, and a
-// time we send on create gets silently truncated back to midnight UTC -
-// confirmed by dumping the complete raw API response and by round-tripping
-// a write through our own endpoint. The Tasks widget now reads Apple
-// Reminders over CalDAV instead (backend/src/reminders.js), which carries a
-// real due time and recurrence, so the backend sends allDay/recurring
-// directly - no more guessing from the title.
+// Tasks widget reads/writes Todoist (backend/src/todoist.js), which carries
+// a real due time and recurrence - the backend sends allDay/recurring
+// directly, no guessing from the title.
 function taskDueInfo(t){
   if (t.allDay) return { isAllDay: true, dateStr: t.due };
   const d = new Date(t.due);
@@ -1134,13 +1181,14 @@ function sortTasks(tasks){
 
 function taskRowHtml(t){
   const badge = taskDueBadge(t);
+  const repeatTitle = t.recurrenceLabel ? `Repeats: ${t.recurrenceLabel}` : 'Repeats';
   const dueRowHtml = badge.html || t.recurring
-    ? `<div class="task-due-row">${badge.html}${t.recurring ? `<span class="task-repeat" title="Repeats">${REPEAT_ICON}</span>` : ''}</div>`
+    ? `<div class="task-due-row">${badge.html}${t.recurring ? `<span class="task-repeat" title="${escapeHtml(repeatTitle)}">${REPEAT_ICON}</span>` : ''}</div>`
     : '';
   return `
     <div class="task-row${badge.overdue || badge.dueNow ? ' overdue' : ''}" data-task-list-id="${escapeHtml(t.taskListId)}" data-task-id="${escapeHtml(t.id)}">
       <input type="checkbox" class="task-checkbox">
-      <div class="task-body">
+      <div class="task-body" title="Click to edit">
         <div class="task-title">${escapeHtml(t.title)}</div>
         ${dueRowHtml}
         ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
@@ -1158,8 +1206,21 @@ function wireTaskCheckboxes(container){
   });
 }
 
+function wireTaskEditClicks(container){
+  container.querySelectorAll('.task-body').forEach(body => {
+    body.addEventListener('click', () => {
+      const row = body.closest('.task-row');
+      const task = currentTasks.find(t => t.id === row.dataset.taskId);
+      if (task) openTaskModal(task);
+    });
+  });
+}
+
+let currentTasks = [];
+
 function renderTasks(tasks){
   const el = document.getElementById('tasks');
+  currentTasks = tasks || [];
   if (!tasks){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
 
   const today = todayDateOnly();
@@ -1174,6 +1235,7 @@ function renderTasks(tasks){
 
   el.innerHTML = visible.map(taskRowHtml).join('');
   wireTaskCheckboxes(el);
+  wireTaskEditClicks(el);
 }
 
 // The instant a task became overdue/due, or null if it isn't yet. Matches
@@ -3064,34 +3126,151 @@ async function loadTaskLists(){
   }
 }
 
-function openAddTaskModal(){
-  document.getElementById('add-task-title').value = '';
-  document.getElementById('add-task-notes').value = '';
-  document.getElementById('add-task-date').value = todayDateOnly();
-  document.getElementById('add-task-time').value = '';
-  document.getElementById('add-task-list').value = '';
-  document.getElementById('add-task-recurrence').value = '';
-  document.getElementById('add-task-status').textContent = '';
-  document.getElementById('add-task-status').className = 'receipts-status';
+const WEEKDAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+const MONTH_ABBREVS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+function weekdayNameFromDateStr(dateStr){
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()];
+}
+function ordinalSuffixForDay(day){
+  if (day >= 11 && day <= 13) return `${day}th`;
+  return `${day}${['th','st','nd','rd'][day % 10] || 'th'}`;
+}
+// Which occurrence of its weekday within the month (1st..4th) - used only
+// to default the "Which" ordinal select to match the chosen date.
+function ordinalWeekOfMonth(dateStr){
+  const day = Number(dateStr.split('-')[2]);
+  return ['1st','2nd','3rd','4th'][Math.min(Math.ceil(day / 7), 4) - 1];
+}
+function formatTimeNLP(timeStr){
+  const [hh, mm] = timeStr.split(':').map(Number);
+  const period = hh >= 12 ? 'pm' : 'am';
+  const h12 = hh % 12 || 12;
+  return `${h12}:${String(mm).padStart(2, '0')} ${period}`;
+}
+
+// Builds the natural-language due_string Todoist's own NLP parses into a
+// recurring due date - Todoist has no structured recurrence field at all
+// (confirmed against the live API), a due_string is the only way to set
+// one. Verified each of these phrasings against a real test task before
+// relying on them.
+function buildRecurrenceDueString(freq, dateStr, timeStr){
+  const timeSuffix = timeStr ? ` at ${formatTimeNLP(timeStr)}` : '';
+  const day = Number(dateStr.split('-')[2]);
+  if (freq === 'daily') return `every day${timeSuffix}`;
+  if (freq === 'weekly') return `every ${document.getElementById('add-task-weekday').value}${timeSuffix}`;
+  if (freq === 'biweekly') return `every other ${document.getElementById('add-task-weekday').value}${timeSuffix}`;
+  if (freq === 'monthly'){
+    const mode = document.getElementById('add-task-monthly-mode').value;
+    if (mode === 'weekday'){
+      const ordinal = document.getElementById('add-task-monthly-ordinal').value;
+      const weekday = document.getElementById('add-task-monthly-weekday').value;
+      return `every ${ordinal} ${weekday}${timeSuffix}`;
+    }
+    return `every month on the ${ordinalSuffixForDay(day)}${timeSuffix}`;
+  }
+  if (freq === 'yearly') return `every ${MONTH_ABBREVS[Number(dateStr.split('-')[1]) - 1]} ${day}${timeSuffix}`;
+  return null;
+}
+
+function updateRecurrenceDetailUI(){
+  const freq = document.getElementById('add-task-recurrence').value;
+  const detail = document.getElementById('add-task-recurrence-detail');
+  const weekdayField = document.getElementById('add-task-weekday-field');
+  const monthlyModeField = document.getElementById('add-task-monthly-mode-field');
+  const monthlyWeekdayRow = document.getElementById('add-task-monthly-weekday-row');
+  const monthlyMode = document.getElementById('add-task-monthly-mode').value;
+
+  const showDetail = freq === 'weekly' || freq === 'biweekly' || freq === 'monthly';
+  detail.classList.toggle('is-hidden', !showDetail);
+  weekdayField.classList.toggle('is-hidden', !(freq === 'weekly' || freq === 'biweekly'));
+  monthlyModeField.classList.toggle('is-hidden', freq !== 'monthly');
+  monthlyWeekdayRow.classList.toggle('is-hidden', !(freq === 'monthly' && monthlyMode === 'weekday'));
+}
+
+// Defaults the weekday/ordinal sub-fields to match whatever date is picked,
+// so switching to "Weekly" defaults to the day-of-week that date falls on.
+function syncRecurrenceDefaultsFromDate(){
+  const dateStr = document.getElementById('add-task-date').value;
+  if (!dateStr) return;
+  const weekday = weekdayNameFromDateStr(dateStr);
+  document.getElementById('add-task-weekday').value = weekday;
+  document.getElementById('add-task-monthly-weekday').value = weekday;
+  document.getElementById('add-task-monthly-ordinal').value = ordinalWeekOfMonth(dateStr);
+}
+
+document.getElementById('add-task-recurrence').addEventListener('change', updateRecurrenceDetailUI);
+document.getElementById('add-task-monthly-mode').addEventListener('change', updateRecurrenceDetailUI);
+document.getElementById('add-task-date').addEventListener('change', syncRecurrenceDefaultsFromDate);
+
+// null = Add mode. Pass an existing task object to edit it in place.
+let editingTask = null;
+
+function openTaskModal(task){
+  editingTask = task || null;
+  const isEdit = !!task;
+
+  document.getElementById('add-task-modal-title').textContent = isEdit ? 'Edit task' : 'Add task';
+  document.getElementById('add-task-submit').textContent = isEdit ? 'Save changes' : 'Add task';
+  document.getElementById('add-task-delete').classList.toggle('is-hidden', !isEdit);
+
+  document.getElementById('add-task-title').value = isEdit ? task.title : '';
+  document.getElementById('add-task-notes').value = isEdit ? (task.notes || '') : '';
+
+  let dateStr = todayDateOnly(), timeStr = '';
+  if (isEdit && task.due){
+    const info = taskDueInfo(task);
+    dateStr = info.dateStr;
+    if (!info.isAllDay){
+      timeStr = `${String(info.time.getHours()).padStart(2, '0')}:${String(info.time.getMinutes()).padStart(2, '0')}`;
+    }
+  }
+  document.getElementById('add-task-date').value = dateStr;
+  document.getElementById('add-task-time').value = timeStr;
+
   const listSel = document.getElementById('add-task-list');
   listSel.innerHTML = allTaskLists.length
     ? allTaskLists.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.title)}</option>`).join('')
     : '<option value="">Default list</option>';
+  if (isEdit) listSel.value = task.taskListId;
+
+  // Editing recurrence means picking a fresh pattern, not reverse-parsing
+  // Todoist's existing natural-language string - "Never" here just means
+  // "leave whatever repeat schedule is already there alone" when the task
+  // is already recurring (the keep-hint below explains this), and only
+  // means "no repeat" for a brand new task.
+  document.getElementById('add-task-recurrence').value = '';
+  const keepHint = document.getElementById('add-task-recurrence-keep');
+  if (isEdit && task.recurring){
+    keepHint.textContent = `Currently repeats: ${task.recurrenceLabel || 'yes'}. Leave "Never" to keep it, or pick a new pattern below to replace it.`;
+    keepHint.classList.remove('is-hidden');
+  } else {
+    keepHint.classList.add('is-hidden');
+  }
+
+  syncRecurrenceDefaultsFromDate();
+  updateRecurrenceDetailUI();
+
+  document.getElementById('add-task-status').textContent = '';
+  document.getElementById('add-task-status').className = 'receipts-status';
   document.getElementById('add-task-modal').classList.add('open');
   document.getElementById('add-task-title').focus();
 }
 function closeAddTaskModal(){
   document.getElementById('add-task-modal').classList.remove('open');
+  editingTask = null;
 }
 
 async function submitAddTask(){
   const title = document.getElementById('add-task-title').value.trim();
   const dateStr = document.getElementById('add-task-date').value;
   const timeStr = document.getElementById('add-task-time').value;
-  const recurrence = document.getElementById('add-task-recurrence').value;
+  const freq = document.getElementById('add-task-recurrence').value;
   const notes = document.getElementById('add-task-notes').value.trim();
   const taskListId = document.getElementById('add-task-list').value;
   const statusEl = document.getElementById('add-task-status');
+  const isEdit = !!editingTask;
 
   if (!title){
     statusEl.textContent = 'Title is required.';
@@ -3099,28 +3278,45 @@ async function submitAddTask(){
     return;
   }
 
-  let due, allDay;
-  if (dateStr){
+  let due, allDay, dueString = null;
+  const keepingExistingRecurrence = isEdit && editingTask.recurring && !freq;
+
+  if (keepingExistingRecurrence){
+    // Todoist's `due` object is all-or-nothing - setting a plain due_date/
+    // due_datetime replaces the whole thing and silently drops the existing
+    // recurrence. Leaving "Repeats" on its default while editing a task
+    // that's already recurring means "don't touch the schedule", so omit
+    // every due-related field entirely rather than resend the (unchanged)
+    // date/time fields, which would otherwise clear the repeat.
+  } else if (freq){
+    dueString = buildRecurrenceDueString(freq, dateStr, timeStr);
+  } else if (dateStr){
     if (timeStr){
-      const [y, m, d] = dateStr.split('-').map(Number);
-      const [hh, mm] = timeStr.split(':').map(Number);
-      due = new Date(y, m - 1, d, hh, mm).toISOString();
+      // Deliberately NOT .toISOString() - that forces UTC (a trailing "Z"),
+      // but Todoist's own API returns floating local times with no
+      // timezone at all (e.g. "date":"2026-08-03T08:00:00", timezone:
+      // null). Sending a UTC-suffixed string would silently shift every
+      // timed task by the server/account's UTC offset.
+      due = `${dateStr}T${timeStr}:00`;
       allDay = false;
     } else {
       due = dateStr;
       allDay = true;
     }
+  } else if (isEdit) {
+    due = null; // explicit clear
   }
 
   const btn = document.getElementById('add-task-submit');
   btn.disabled = true;
-  statusEl.textContent = 'Adding…';
+  statusEl.textContent = isEdit ? 'Saving…' : 'Adding…';
   statusEl.className = 'receipts-status';
   try {
-    const res = await fetch('/api/tasks', {
-      method: 'POST',
+    const url = isEdit ? `/api/tasks/${encodeURIComponent(editingTask.taskListId)}/${encodeURIComponent(editingTask.id)}` : '/api/tasks';
+    const res = await fetch(url, {
+      method: isEdit ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, recurrence: recurrence || null }),
+      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, dueString }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'request failed');
@@ -3134,9 +3330,31 @@ async function submitAddTask(){
   }
 }
 
-document.getElementById('task-add-btn').addEventListener('click', openAddTaskModal);
+async function deleteEditingTask(){
+  if (!editingTask) return;
+  const statusEl = document.getElementById('add-task-status');
+  statusEl.textContent = 'Deleting…';
+  statusEl.className = 'receipts-status';
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(editingTask.taskListId)}/${encodeURIComponent(editingTask.id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok){
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'request failed');
+    }
+    closeAddTaskModal();
+    refresh();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  }
+}
+
+document.getElementById('task-add-btn').addEventListener('click', () => openTaskModal(null));
 document.getElementById('add-task-modal-close').addEventListener('click', closeAddTaskModal);
 document.getElementById('add-task-cancel').addEventListener('click', closeAddTaskModal);
+document.getElementById('add-task-delete').addEventListener('click', deleteEditingTask);
 document.getElementById('add-task-modal').addEventListener('click', (e) => {
   if (e.target.id === 'add-task-modal') closeAddTaskModal();
 });

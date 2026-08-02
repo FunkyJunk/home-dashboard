@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, debugRecurrencePhrasings } from "./todoist.js";
+import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
 
 const app = express();
 app.use(express.json());
@@ -69,14 +69,6 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
   }
 });
 
-app.get("/api/tasks/debug-recurrence", async (req, res) => {
-  try {
-    res.json(await debugRecurrencePhrasings());
-  } catch (e) {
-    res.status(502).json({ error: e.message || "debug failed" });
-  }
-});
-
 app.get("/api/tasks/lists", async (req, res) => {
   try {
     res.json(await getReminderLists());
@@ -123,6 +115,15 @@ app.patch("/api/tasks/:taskListId/:taskId", async (req, res) => {
     res.json(task);
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to update task" });
+  }
+});
+
+app.delete("/api/tasks/:taskListId/:taskId", async (req, res) => {
+  try {
+    await deleteReminder(req.params.taskId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to delete task" });
   }
 });
 

@@ -30,26 +30,43 @@ async function postToTodoist(path, body) {
   if (!res.ok) {
     throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  // close/complete-style endpoints return 204 No Content - res.json() throws
+  // on an empty body, so only parse when there's actually something there.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
-// Parse Todoist's due object into our shape: {due, allDay, recurring}
-// Todoist v1 due: { date: "2026-08-02" or "2026-08-02T18:00:00", is_recurring: true, ... }
+async function deleteFromTodoist(path) {
+  const res = await fetch(`${TODOIST_API_URL}${path}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
+  }
+}
+
+// Parse Todoist's due object into our shape: {due, allDay, recurring, recurrenceLabel}
+// Todoist v1 due: { date: "2026-08-02" or "2026-08-02T18:00:00", is_recurring: true, string: "every wednesday at 6:00 pm", ... }
 function parseDueInfo(todoDue) {
-  if (!todoDue) return { due: null, allDay: false, recurring: null };
+  if (!todoDue) return { due: null, allDay: false, recurring: null, recurrenceLabel: null };
 
   const dateStr = todoDue.date;
-  if (!dateStr) return { due: null, allDay: false, recurring: null };
+  if (!dateStr) return { due: null, allDay: false, recurring: null, recurrenceLabel: null };
 
   const recurring = todoDue.is_recurring || null;
+  // The exact phrase Todoist parsed the recurrence from (e.g. "every 1st
+  // monday") - kept so the frontend can offer "keep existing" on edit
+  // without having to reverse-engineer a new due_string from scratch.
+  const recurrenceLabel = recurring ? todoDue.string || null : null;
 
   // Check if it's a timed task (contains T) or all-day (just date)
   if (dateStr.includes("T")) {
     // Timed task - store the date string as-is (it's already ISO-like)
-    return { due: dateStr, allDay: false, recurring };
+    return { due: dateStr, allDay: false, recurring, recurrenceLabel };
   } else {
     // All-day task - store the date string
-    return { due: dateStr, allDay: true, recurring };
+    return { due: dateStr, allDay: true, recurring, recurrenceLabel };
   }
 }
 
@@ -74,6 +91,7 @@ export async function getReminders() {
         due: dueInfo.due,
         allDay: dueInfo.allDay,
         recurring: !!dueInfo.recurring,
+        recurrenceLabel: dueInfo.recurrenceLabel,
         notes: t.description || null,
       };
     });
@@ -91,6 +109,10 @@ export async function getReminderLists() {
   const projectsResponse = await fetchFromTodoist("/projects");
   const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse.results || []);
   return projects.map((p) => ({ id: p.id, title: p.name }));
+}
+
+export async function deleteReminder(reminderId) {
+  await deleteFromTodoist(`/tasks/${reminderId}`);
 }
 
 export async function completeReminder(listId, reminderId) {
@@ -176,41 +198,3 @@ export async function updateReminder(reminderId, { title, due, allDay, notes, du
   };
 }
 
-// TEMPORARY - creates one real test task per candidate due_string phrasing,
-// reports back exactly what Todoist's NLP parsed (is_recurring, due.string,
-// due.date), then immediately completes each test task. Used to verify
-// recurrence phrasing against the live API instead of guessing again.
-// Remove once the recurrence UI is finalized.
-export async function debugRecurrencePhrasings() {
-  const candidates = [
-    "every day at 6:00 pm",
-    "every wednesday at 6:00 pm",
-    "every other week",
-    "every month on the 1st at 9:00 am",
-    "every first monday",
-    "every 1st monday",
-    "every year on aug 2",
-  ];
-
-  const results = [];
-  for (const dueString of candidates) {
-    try {
-      const task = await postToTodoist("/tasks", {
-        content: `[TEST - safe to delete] ${dueString}`,
-        due_string: dueString,
-        due_lang: "en",
-      });
-      results.push({
-        input: dueString,
-        parsedString: task.due?.string || null,
-        parsedDate: task.due?.date || null,
-        isRecurring: task.due?.is_recurring || false,
-        taskId: task.id,
-      });
-      await postToTodoist(`/tasks/${task.id}/close`, {});
-    } catch (e) {
-      results.push({ input: dueString, error: e.message });
-    }
-  }
-  return results;
-}
