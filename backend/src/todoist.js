@@ -137,3 +137,14 @@ export async function createReminder({
     notes: task.description || null,
   };
 }
+
+export async function debugSync() {
+  const syncData = await syncFromTodoist();
+  return {
+    projectCount: (syncData.projects || []).length,
+    taskCount: (syncData.tasks || []).length,
+    firstProject: (syncData.projects || [])[0],
+    firstTask: (syncData.tasks || [])[0],
+    allKeys: Object.keys(syncData),
+  };
+}
