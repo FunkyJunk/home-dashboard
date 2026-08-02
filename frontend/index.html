@@ -244,24 +244,33 @@
   .task-repeat svg{width:.85em; height:.85em;}
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
 
-  .add-task-modal-inner{max-width:min(90vw, 500px);}
-  .add-task-title-input{
-    font-size:1.1rem; font-weight:600; margin-bottom:1rem;
-    background:var(--bg-inset); border:1px solid var(--panel-line);
-    border-radius:8px; padding:.75rem; color:var(--text);
+  .add-task-modal-inner{
+    max-width:min(90vw, 480px); box-sizing:border-box;
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:14px; padding:1.5rem; box-shadow:0 20px 60px rgba(0,0,0,.5);
   }
-  .add-task-notes-input{
-    width:100%; min-height:3.5em; margin-bottom:1.5rem;
-    background:var(--bg-inset); border:1px solid var(--panel-line);
-    border-radius:8px; padding:.75rem; color:var(--text); font-family:inherit;
-    font-size:.9rem; resize:vertical;
+  .add-task-modal-inner .modal-head{
+    padding-bottom:.75rem; margin-bottom:1.25rem; border-bottom:1px solid var(--panel-line);
+    font-size:1rem;
   }
+  /* Dedicated control class - do NOT reuse .receipt-input here. That class
+     is defined later in the stylesheet with width:5.5em for tiny inline
+     receipt fields, and a same-specificity rule appearing later in source
+     order wins cascade ties, silently crushing every field in this modal
+     down to ~44px regardless of any width set here. */
+  .add-task-ctrl{
+    box-sizing:border-box; width:100%; background:var(--bg-inset);
+    border:1px solid var(--panel-line); border-radius:8px;
+    padding:.65rem .8rem; color:var(--text); font-family:inherit; font-size:.9rem;
+  }
+  .add-task-ctrl:focus{outline:none; border-color:var(--teal);}
+  .add-task-title-input{font-size:1.05rem; font-weight:600; margin-bottom:.75rem;}
+  .add-task-notes-input{min-height:4.5em; resize:vertical; margin-bottom:1.25rem;}
   .add-task-grid{
-    display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.5rem;
+    display:grid; grid-template-columns:1fr 1fr; gap:1rem 1.25rem; margin-bottom:1.5rem;
   }
   .add-task-field{display:flex; flex-direction:column; gap:.4rem;}
-  .add-task-field label{font-size:.8rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-weight:600;}
-  .add-task-input{width:100%; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px; padding:.6rem .75rem; color:var(--text); font-size:.9rem;}
+  .add-task-field label{font-size:.75rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-weight:600; letter-spacing:.02em; text-transform:uppercase;}
 
   .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
@@ -767,24 +776,24 @@
           <span>Add task</span>
           <button class="modal-close" id="add-task-modal-close">Close</button>
         </div>
-        <input type="text" class="receipt-input add-task-title-input" id="add-task-title" placeholder="Task title">
-        <textarea class="receipt-input add-task-notes-input" id="add-task-notes" placeholder="Description or notes (optional)"></textarea>
+        <input type="text" class="add-task-ctrl add-task-title-input" id="add-task-title" placeholder="Task title">
+        <textarea class="add-task-ctrl add-task-notes-input" id="add-task-notes" placeholder="Description or notes (optional)"></textarea>
         <div class="add-task-grid">
           <div class="add-task-field">
             <label>Date</label>
-            <input type="date" class="receipt-input add-task-input" id="add-task-date">
+            <input type="date" class="add-task-ctrl" id="add-task-date">
           </div>
           <div class="add-task-field">
             <label>Time</label>
-            <input type="time" class="receipt-input add-task-input" id="add-task-time" placeholder="--:--">
+            <input type="time" class="add-task-ctrl" id="add-task-time" placeholder="--:--">
           </div>
           <div class="add-task-field">
             <label>List</label>
-            <select class="receipt-input add-task-input" id="add-task-list"></select>
+            <select class="add-task-ctrl" id="add-task-list"></select>
           </div>
           <div class="add-task-field">
             <label>Repeats</label>
-            <select class="receipt-input add-task-input" id="add-task-recurrence">
+            <select class="add-task-ctrl" id="add-task-recurrence">
               <option value="">Never</option>
               <option value="FREQ=DAILY">Daily</option>
               <option value="FREQ=WEEKLY">Weekly</option>
