@@ -1364,8 +1364,22 @@ async function completeTask(taskListId, taskId, checkbox, row){
     const res = await fetch(`/api/tasks/${encodeURIComponent(taskListId)}/${encodeURIComponent(taskId)}/complete`, { method: 'POST' });
     if (!res.ok) throw new Error('request failed');
     dismissedPopupIds.delete(taskId);
+    currentTasks = currentTasks.filter(t => t.id !== taskId);
     row.style.opacity = '.4';
-    setTimeout(() => row.remove(), 200);
+    setTimeout(() => {
+      row.remove();
+      // A task can be showing in both the main widget and the due popup
+      // at once - clear its row out of whichever list this checkbox
+      // *wasn't* in too, so completing it from the popup doesn't leave a
+      // stale row sitting in the card until the next refresh cycle.
+      document.querySelectorAll(`.task-row[data-task-id="${CSS.escape(taskId)}"]`).forEach(r => r.remove());
+      // If that was the last task left in the popup, close it now instead
+      // of leaving an empty dialog open until the next refresh.
+      const popup = document.getElementById('due-popup-modal');
+      if (popup.classList.contains('open') && !document.querySelector('#due-popup-list .task-row')){
+        closeDuePopup();
+      }
+    }, 200);
   } catch (e){
     checkbox.checked = false;
     checkbox.disabled = false;
