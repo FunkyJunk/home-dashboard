@@ -1,8 +1,8 @@
-// Todoist REST API integration for the Tasks widget.
+// Todoist Sync API integration for the Tasks widget.
 // Uses Bearer token auth (Personal Token or OAuth) to read/write tasks.
 // Task structure returned: {id, taskListId, listTitle, title, due, allDay, recurring, notes}
 
-const TODOIST_API_URL = "https://api.todoist.com/rest/v2";
+const TODOIST_API_URL = "https://api.todoist.com/api/v1";
 
 function getAuthHeaders() {
   if (!process.env.TODOIST_TOKEN) {
