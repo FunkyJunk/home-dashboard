@@ -4,6 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
+import { getReminders, getReminderLists, completeReminder, createReminder } from "./reminders.js";
 
 const app = express();
 app.use(express.json());
@@ -24,7 +25,6 @@ const oauth2Client = new google.auth.OAuth2(
 );
 oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-const tasksApi = google.tasks({ version: "v1", auth: oauth2Client });
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 app.use("/api/theme", createThemeRouter());
@@ -37,7 +37,7 @@ app.get("/api/dashboard", async (_req, res) => {
     getCalendar(),
     getHomeAssistantStates(),
     getNestThermostats(),
-    getGoogleTasks(),
+    getReminders(),
   ]);
 
   const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
@@ -59,16 +59,12 @@ app.get("/api/dashboard", async (_req, res) => {
   });
 });
 
-// Marks a Google Task complete. Requires the `tasks` OAuth scope, which
-// wasn't part of the original refresh token (only calendar.readonly +
-// gmail.readonly) - see README for re-authorizing with get-refresh-token.js.
+// Marks an Apple Reminder complete via CalDAV. taskListId is a full CalDAV
+// calendar URL, sent %-encoded by the frontend - Express decodes route
+// params automatically, so no manual decodeURIComponent is needed here.
 app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
   try {
-    await tasksApi.tasks.patch({
-      tasklist: req.params.taskListId,
-      task: req.params.taskId,
-      requestBody: { status: "completed" },
-    });
+    await completeReminder(req.params.taskListId, req.params.taskId);
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to complete task" });
@@ -77,68 +73,30 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
 
 app.get("/api/tasks/lists", async (req, res) => {
   try {
-    const { data } = await tasksApi.tasklists.list({ maxResults: 20 });
-    res.json((data.items || []).map((l) => ({ id: l.id, title: l.title })));
+    res.json(await getReminderLists());
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to load task lists" });
   }
 });
 
-// TEMPORARY diagnostic - dumps the complete, unfiltered task objects Google
-// actually returns (every field, not just the subset getGoogleTasks() picks
-// out) so we can check for a time-of-day field we might be discarding.
-// Remove once the time-support question is settled.
-app.get("/api/tasks/raw", async (req, res) => {
-  try {
-    const { data: listsData } = await tasksApi.tasklists.list({ maxResults: 20 });
-    const lists = listsData.items || [];
-    const perList = await Promise.all(
-      lists.map((list) =>
-        tasksApi.tasks.list({
-          tasklist: list.id,
-          showCompleted: false,
-          showHidden: true,
-          maxResults: 50,
-        })
-      )
-    );
-    res.json(
-      perList.map(({ data }, i) => ({
-        list: lists[i],
-        tasks: data.items || [],
-      }))
-    );
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to load raw tasks" });
-  }
-});
-
-// Manual task creation. Confirmed against the live API that `due` is
-// hard date-only server-side - sending a non-midnight UTC instant here
-// gets silently truncated back to midnight on Google's end, so the
-// frontend only ever sends a plain date (no time-of-day is achievable
-// through this API at all, on read or write).
+// Manual reminder creation via CalDAV. Unlike Google Tasks, iCloud
+// Reminders genuinely supports a due time and daily recurrence - see
+// reminders.js for how allDay/dailyRepeat map onto the ICS VTODO fields.
 app.post("/api/tasks", async (req, res) => {
-  const { taskListId, title, due, notes } = req.body || {};
+  const { taskListId, title, due, allDay, notes, dailyRepeat } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: "title is required" });
   }
   try {
-    const { data } = await tasksApi.tasks.insert({
-      tasklist: taskListId || "@default",
-      requestBody: {
-        title: String(title).trim(),
-        due: due || undefined,
-        notes: notes || undefined,
-      },
+    const task = await createReminder({
+      listId: taskListId || undefined,
+      title: String(title).trim(),
+      due: due || null,
+      allDay: !!allDay,
+      notes: notes || undefined,
+      dailyRepeat: !!dailyRepeat,
     });
-    res.json({
-      id: data.id,
-      taskListId: taskListId || "@default",
-      title: data.title,
-      due: data.due || null,
-      notes: data.notes || null,
-    });
+    res.json(task);
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to create task" });
   }
@@ -382,44 +340,6 @@ async function getCalendar() {
 // glance-at-the-dashboard widget, not a full task manager. Pulls every
 // list (most accounts just have the one default "My Tasks", but nothing
 // stops someone from having more) and merges them, soonest due date first.
-async function getGoogleTasks() {
-  if (!process.env.GOOGLE_REFRESH_TOKEN) {
-    throw new Error("tasks integration not yet configured");
-  }
-  const { data: listsData } = await tasksApi.tasklists.list({ maxResults: 20 });
-  const lists = listsData.items || [];
-
-  const perList = await Promise.all(
-    lists.map((list) =>
-      tasksApi.tasks.list({
-        tasklist: list.id,
-        showCompleted: false,
-        showHidden: false,
-        maxResults: 50,
-      })
-    )
-  );
-
-  const allTasks = [];
-  perList.forEach(({ data }, i) => {
-    for (const t of data.items || []) {
-      allTasks.push({
-        id: t.id,
-        taskListId: lists[i].id,
-        title: t.title || "(untitled)",
-        due: t.due || null,
-        notes: t.notes || null,
-      });
-    }
-  });
-
-  allTasks.sort((a, b) => {
-    if (a.due && b.due) return new Date(a.due) - new Date(b.due);
-    return a.due ? -1 : b.due ? 1 : 0;
-  });
-  return allTasks;
-}
-
 let nestAccessToken = null;
 let nestTokenExpiresAt = 0;
 

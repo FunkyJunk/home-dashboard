@@ -54,14 +54,14 @@ git add . && git commit -m "Initial scaffold" && git push
 ```
 From here on, run `claude` inside this folder and it has full repo context.
 
-## 2. Google Calendar + Gmail + Tasks access
+## 2. Google Calendar + Gmail access
 
 Since this is a personal Gmail account (not Google Workspace), use an OAuth 2.0
 "Desktop app" client — service accounts can't read personal Gmail/Calendar
 without a Workspace admin.
 
 1. https://console.cloud.google.com → new project → enable **Google Calendar
-   API**, **Gmail API**, and **Google Tasks API**.
+   API** and **Gmail API**.
 2. Credentials → Create Credentials → OAuth client ID → Application type:
    **Desktop app**. Download the JSON.
 3. Run the one-time consent flow *locally on your desktop* (loopback
@@ -70,13 +70,32 @@ without a Workspace admin.
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
 
-   If you already have a refresh token from before the Tasks widget existed,
-   it won't carry the `tasks` scope — re-run `get-refresh-token.js` (forces
-   re-consent) and replace `GOOGLE_REFRESH_TOKEN` with the new one, then
-   restart the backend container. No new image build needed, just
-   `docker compose up -d` again once the NAS `.env` is updated.
+## 3. Apple Reminders access (Tasks widget)
 
-## 3. Ring camera access
+The Tasks widget reads/writes iCloud Reminders directly over CalDAV
+(`backend/src/reminders.js`) rather than Google Tasks — Google's Tasks API
+has no way to expose a due *time* or recurrence at all, even for tasks the
+Tasks app itself shows with both (confirmed directly against the live API
+before switching). CalDAV's `VTODO` items support both natively.
+
+1. https://appleid.apple.com → sign in → **Sign-In and Security → App-Specific
+   Passwords** → generate one for this dashboard.
+2. Add to `infra/.env` on the NAS:
+   ```
+   APPLE_ID=you@icloud.com
+   APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   ```
+3. `docker compose up -d` again to pick up the new `.env` values — no new
+   image build needed for a plain env change, only for code changes.
+
+   Honest heads-up: this talks to `caldav.icloud.com` using the standard
+   CalDAV protocol (via the `tsdav` client), which is how the Reminders app
+   itself syncs — but it's not an officially documented/versioned public API
+   the way Google's APIs are, so Apple could change server behavior without
+   notice. It's been stable in practice for the many third-party CalDAV
+   clients (Thunderbird, DAVx⁵, etc.) that rely on it.
+
+## 4. Ring camera access
 
 Ring has no OAuth app registration flow like Google - auth is your account
 email/password plus 2FA, exchanged once for a long-lived refresh token.
@@ -97,7 +116,7 @@ email/password plus 2FA, exchanged once for a long-lived refresh token.
    cameras to limit the drain, but a camera add-on that hammers this more
    than the existing 60s poll cycle will burn through battery faster.
 
-## 4. Nest thermostat access (direct, bypassing Homey)
+## 5. Nest thermostat access (direct, bypassing Homey)
 
 The thermostats are also reachable through Home Assistant via the Homey
 bridge, but that integration has never surfaced correct names or reliable
@@ -128,7 +147,7 @@ successor, the **Device Access** program:
    mode (those tokens expire after 7 days) - move it to "Production" in the
    Cloud Console's OAuth consent screen settings to avoid that.
 
-## 5. Synology NAS setup
+## 6. Synology NAS setup
 
 1. **Control Panel → Terminal & SNMP** → enable SSH.
 2. **Package Center** → install **Container Manager** (DSM 7.x's Docker
@@ -167,13 +186,13 @@ successor, the **Device Access** program:
    access, so the MyQ integration in HA breaks periodically when they change
    something. Not a you-problem — just expect the occasional patch.
 
-## 6. Point the wall tablet
+## 7. Point the wall tablet
 
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
 there's no reverse proxy, no cert, no port forwarding to worry about.
 
-## 7. Business receipts (needs HTTPS)
+## 8. Business receipts (needs HTTPS)
 
 The Business Receipts card saves files straight to a folder on your PC via
 the browser's File System Access API (`showDirectoryPicker`), which only

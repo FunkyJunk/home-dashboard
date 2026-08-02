@@ -11,7 +11,11 @@ import open from "open";
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/tasks", // read/write - the dashboard lets you check tasks off
+  // No tasks scope - the Tasks widget moved to Apple Reminders (CalDAV) in
+  // reminders.js, since Google's Tasks API can't expose a due time or
+  // recurrence at all. Leaving this scope out of future re-auths is just
+  // cleanup; it doesn't require touching the refresh token already on the
+  // NAS, which keeps working for calendar/gmail regardless.
 ];
 
 const PORT = 8091;

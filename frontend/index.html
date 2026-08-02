@@ -231,14 +231,17 @@
   .task-checkbox:disabled{opacity:.5; cursor:not-allowed;}
   .task-body{flex:1; min-width:0;}
   .task-title{font-size:.9rem; color:var(--text); word-break:break-word;}
+  .task-due-row{display:flex; align-items:center; gap:.4em; margin-top:.3rem;}
   .task-due{
     display:inline-flex; align-items:center; gap:.3em;
     font-family:'IBM Plex Mono', monospace; font-size:.72rem; color:var(--text-dim);
-    margin-top:.3rem; background:var(--bg-inset); border:1px solid var(--panel-line);
+    background:var(--bg-inset); border:1px solid var(--panel-line);
     border-radius:12px; padding:.2em .6em .2em .5em;
   }
   .task-due svg{width:.9em; height:.9em; flex-shrink:0;}
   .task-due.overdue{color:var(--coral); border-color:var(--coral-dim); background:transparent;}
+  .task-repeat{display:inline-flex; color:var(--text-dim); flex-shrink:0;}
+  .task-repeat svg{width:.85em; height:.85em;}
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
 
   .add-task-modal-inner{max-width:min(90vw, 420px);}
@@ -248,6 +251,10 @@
   .add-task-row .add-task-field{flex:1;}
   .add-task-input{width:100%;}
   .add-task-notes{min-height:4em; resize:vertical; font-family:inherit;}
+  .add-task-checkbox-row{
+    display:flex; align-items:center; gap:.5em; margin-bottom:.75rem;
+    font-size:.85rem; color:var(--text); cursor:pointer;
+  }
 
   .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
@@ -757,18 +764,26 @@
           <label>Title</label>
           <input type="text" class="receipt-input add-task-input" id="add-task-title" placeholder="Task title">
         </div>
-        <div class="add-task-field">
-          <label>Date</label>
-          <input type="date" class="receipt-input add-task-input" id="add-task-date">
+        <div class="add-task-row">
+          <div class="add-task-field">
+            <label>Date</label>
+            <input type="date" class="receipt-input add-task-input" id="add-task-date">
+          </div>
+          <div class="add-task-field">
+            <label>Time (optional)</label>
+            <input type="time" class="receipt-input add-task-input" id="add-task-time">
+          </div>
         </div>
         <div class="add-task-field">
           <label>List</label>
           <select class="receipt-input add-task-input" id="add-task-list"></select>
         </div>
+        <label class="add-task-checkbox-row">
+          <input type="checkbox" id="add-task-repeat"> Repeats daily
+        </label>
         <div class="add-task-field">
           <label>Notes</label>
           <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes"></textarea>
-          <span class="ignore-modal-hint">Google Tasks has no real time field - include a word like "morning", "noon", "afternoon", "evening", or "night" in the title to get it sorted/shown with an approximate time.</span>
         </div>
         <div class="receipts-status" id="add-task-status"></div>
         <div class="ignore-modal-actions">
@@ -1023,35 +1038,17 @@ let allTaskLists = [];
 // tasks and round-tripping a test write through this dashboard's own
 // create-task endpoint): `due` is hard date-only server-side. Any time you
 // see in the Tasks app UI is not stored in a field this API exposes, and a
-// time we send on create gets silently truncated back to midnight UTC. So
-// the only time signal available at all is an informal one buried in the
-// title - "Medication Noon" / "...Evening" etc - which this maps to an
-// approximate hour for sorting/display purposes only.
-const DAYPART_KEYWORDS = [
-  { re: /\bmorning\b/i, hour: 8, minute: 0 },
-  { re: /\bnoon\b/i, hour: 12, minute: 0 },
-  { re: /\bafternoon\b/i, hour: 14, minute: 0 },
-  { re: /\bevening\b/i, hour: 18, minute: 0 },
-  { re: /\bnight\b/i, hour: 21, minute: 0 },
-];
-function guessTimeFromTitle(title, dateStr){
-  const kw = DAYPART_KEYWORDS.find(k => k.re.test(title || ''));
-  if (!kw) return null;
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, m - 1, d, kw.hour, kw.minute);
-}
-
+// time we send on create gets silently truncated back to midnight UTC -
+// confirmed by dumping the complete raw API response and by round-tripping
+// a write through our own endpoint. The Tasks widget now reads Apple
+// Reminders over CalDAV instead (backend/src/reminders.js), which carries a
+// real due time and recurrence, so the backend sends allDay/recurring
+// directly - no more guessing from the title.
 function taskDueInfo(t){
-  const isAllDay = /T00:00:00(\.\d+)?Z$/.test(t.due);
-  if (!isAllDay){
-    const d = new Date(t.due);
-    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-    return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d, guessed: false };
-  }
-  const dateStr = t.due.slice(0, 10);
-  const guessed = guessTimeFromTitle(t.title, dateStr);
-  if (guessed) return { isAllDay: false, dateStr, time: guessed, guessed: true };
-  return { isAllDay: true, dateStr, time: null, guessed: false };
+  if (t.allDay) return { isAllDay: true, dateStr: t.due };
+  const d = new Date(t.due);
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d };
 }
 function todayDateOnly(){
   const d = new Date();
@@ -1076,6 +1073,7 @@ function overdueLabel(dueStr){
 }
 
 const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>';
+const REPEAT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
 
 // Builds the pill badge + tells the caller whether this task counts as
 // "overdue" (a prior day) or "due now" (today, with a time that has passed) -
@@ -1118,12 +1116,15 @@ function sortTasks(tasks){
 
 function taskRowHtml(t){
   const badge = taskDueBadge(t);
+  const dueRowHtml = badge.html || t.recurring
+    ? `<div class="task-due-row">${badge.html}${t.recurring ? `<span class="task-repeat" title="Repeats">${REPEAT_ICON}</span>` : ''}</div>`
+    : '';
   return `
     <div class="task-row${badge.overdue || badge.dueNow ? ' overdue' : ''}" data-task-list-id="${escapeHtml(t.taskListId)}" data-task-id="${escapeHtml(t.id)}">
       <input type="checkbox" class="task-checkbox">
       <div class="task-body">
         <div class="task-title">${escapeHtml(t.title)}</div>
-        ${badge.html}
+        ${dueRowHtml}
         ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
       </div>
     </div>
@@ -3048,6 +3049,8 @@ async function loadTaskLists(){
 function openAddTaskModal(){
   document.getElementById('add-task-title').value = '';
   document.getElementById('add-task-date').value = todayDateOnly();
+  document.getElementById('add-task-time').value = '';
+  document.getElementById('add-task-repeat').checked = false;
   document.getElementById('add-task-notes').value = '';
   document.getElementById('add-task-status').textContent = '';
   document.getElementById('add-task-status').className = 'receipts-status';
@@ -3065,6 +3068,8 @@ function closeAddTaskModal(){
 async function submitAddTask(){
   const title = document.getElementById('add-task-title').value.trim();
   const dateStr = document.getElementById('add-task-date').value;
+  const timeStr = document.getElementById('add-task-time').value;
+  const dailyRepeat = document.getElementById('add-task-repeat').checked;
   const notes = document.getElementById('add-task-notes').value.trim();
   const taskListId = document.getElementById('add-task-list').value;
   const statusEl = document.getElementById('add-task-status');
@@ -3075,7 +3080,18 @@ async function submitAddTask(){
     return;
   }
 
-  const due = dateStr ? `${dateStr}T00:00:00.000Z` : undefined;
+  let due, allDay;
+  if (dateStr){
+    if (timeStr){
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const [hh, mm] = timeStr.split(':').map(Number);
+      due = new Date(y, m - 1, d, hh, mm).toISOString();
+      allDay = false;
+    } else {
+      due = dateStr;
+      allDay = true;
+    }
+  }
 
   const btn = document.getElementById('add-task-submit');
   btn.disabled = true;
@@ -3085,7 +3101,7 @@ async function submitAddTask(){
     const res = await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, notes: notes || undefined }),
+      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, dailyRepeat }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'request failed');
