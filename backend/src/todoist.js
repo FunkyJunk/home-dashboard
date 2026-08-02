@@ -135,15 +135,14 @@ export async function createReminder({
 }
 
 export async function debugSync() {
-  const [tasks, projects] = await Promise.all([
-    fetchFromTodoist("/tasks"),
-    fetchFromTodoist("/projects"),
-  ]);
+  const tasksRaw = await fetchFromTodoist("/tasks");
+  const projectsRaw = await fetchFromTodoist("/projects");
+
   return {
-    projectCount: projects.length,
-    taskCount: tasks.length,
-    firstProject: projects[0],
-    firstTask: tasks[0],
-    incompleteTasks: tasks.filter((t) => !t.is_completed).length,
+    tasksRawType: typeof tasksRaw,
+    tasksRawKeys: Array.isArray(tasksRaw) ? "array" : Object.keys(tasksRaw || {}),
+    tasksRaw: tasksRaw,
+    projectsRawType: typeof projectsRaw,
+    projectsRawLength: Array.isArray(projectsRaw) ? projectsRaw.length : Object.keys(projectsRaw || {}).length,
   };
 }
