@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder } from "./reminders.js";
+import { getReminders, getReminderLists, completeReminder, createReminder, debugDump } from "./reminders.js";
 
 const app = express();
 app.use(express.json());
@@ -68,6 +68,14 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to complete task" });
+  }
+});
+
+app.get("/api/tasks/debug", async (req, res) => {
+  try {
+    res.json(await debugDump());
+  } catch (e) {
+    res.status(502).json({ error: e.message || "debug dump failed" });
   }
 });
 

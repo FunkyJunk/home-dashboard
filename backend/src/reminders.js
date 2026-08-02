@@ -40,6 +40,33 @@ async function getReminderCalendars() {
   return calendars.filter((c) => (c.components || []).includes("VTODO"));
 }
 
+// TEMPORARY diagnostic - dumps every calendar iCloud returns (so we can see
+// the real shape of `components`/`displayName`) plus raw object counts and
+// the first object's raw ICS text per VTODO-supporting calendar. Remove
+// once the empty-results issue is understood.
+export async function debugDump() {
+  const client = await getClient();
+  const allCalendars = await client.fetchCalendars();
+  const summary = allCalendars.map((c) => ({
+    url: c.url,
+    displayName: c.displayName,
+    components: c.components,
+    resourcetype: c.resourcetype,
+  }));
+  const vtodoCalendars = allCalendars.filter((c) => (c.components || []).includes("VTODO"));
+  const perCalendar = await Promise.all(
+    vtodoCalendars.map(async (cal) => {
+      const objects = await client.fetchCalendarObjects({ calendar: cal });
+      return {
+        url: cal.url,
+        objectCount: objects.length,
+        firstObjectRaw: objects[0]?.data || null,
+      };
+    })
+  );
+  return { allCalendars: summary, vtodoCalendars: perCalendar };
+}
+
 // RFC 5545 basic UTC date-time format, e.g. 20260802T183000Z.
 function icsDateStamp(date) {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
