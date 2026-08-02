@@ -1,5 +1,5 @@
-// Todoist Sync API integration for the Tasks widget.
-// Uses Bearer token auth (Personal Token or OAuth) to read/write tasks.
+// Todoist Sync API v1 integration for the Tasks widget.
+// Uses Bearer token auth (Personal Token) to read/write tasks.
 // Task structure returned: {id, taskListId, listTitle, title, due, allDay, recurring, notes}
 
 const TODOIST_API_URL = "https://api.todoist.com/api/v1";
@@ -11,30 +11,17 @@ function getAuthHeaders() {
   return { Authorization: `Bearer ${process.env.TODOIST_TOKEN}` };
 }
 
-async function fetchFromTodoist(path) {
-  const res = await fetch(`${TODOIST_API_URL}${path}`, {
-    headers: getAuthHeaders(),
-  });
-  if (!res.ok) {
-    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
-}
-
-async function postToTodoist(path, body) {
-  const res = await fetch(`${TODOIST_API_URL}${path}`, {
+async function syncFromTodoist() {
+  // Sync API returns all data in one call: tasks, projects, sections, etc.
+  const res = await fetch(`${TODOIST_API_URL}/sync`, {
     method: "POST",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ sync_token: "*", resource_types: ["tasks", "projects"] }),
   });
   if (!res.ok) {
     throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
   }
   return res.json();
-}
-
-async function getProjects() {
-  return fetchFromTodoist("/projects");
 }
 
 // Parse Todoist's due object into our shape: {due, allDay, recurring}
@@ -56,10 +43,10 @@ function parseDueInfo(todoDue) {
 }
 
 export async function getReminders() {
-  const [tasks, projects] = await Promise.all([
-    fetchFromTodoist("/tasks"),
-    getProjects(),
-  ]);
+  const syncData = await syncFromTodoist();
+
+  const projects = syncData.projects || [];
+  const tasks = syncData.tasks || [];
 
   const projectMap = new Map(projects.map((p) => [p.id, p.name]));
 
@@ -89,8 +76,21 @@ export async function getReminders() {
 }
 
 export async function getReminderLists() {
-  const projects = await getProjects();
+  const syncData = await syncFromTodoist();
+  const projects = syncData.projects || [];
   return projects.map((p) => ({ id: p.id, title: p.name }));
+}
+
+async function postToTodoist(path, body) {
+  const res = await fetch(`${TODOIST_API_URL}${path}`, {
+    method: "POST",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export async function completeReminder(listId, reminderId) {
@@ -123,7 +123,7 @@ export async function createReminder({
     }
   }
 
-  const task = await postToTodoist("/tasks", body);
+  const task = await postToTodoist("/tasks/add", body);
 
   const dueInfo = parseDueInfo(task.due);
   return {
