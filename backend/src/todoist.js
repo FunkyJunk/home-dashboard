@@ -142,14 +142,11 @@ export async function debugSync() {
   const tasksResponse = await fetchFromTodoist("/tasks");
   const projectsResponse = await fetchFromTodoist("/projects");
 
-  const tasks = tasksResponse.results || [];
-  const projects = projectsResponse.results || projectsResponse;
-
   return {
-    taskCount: tasks.length,
-    incompleteCount: tasks.filter((t) => !t.checked).length,
-    projectCount: projects.length,
-    firstTask: tasks[0],
-    firstProject: projects[0],
+    tasksType: typeof tasksResponse,
+    tasksKeys: Array.isArray(tasksResponse) ? "array" : Object.keys(tasksResponse || {}),
+    projectsType: typeof projectsResponse,
+    projectsKeys: Array.isArray(projectsResponse) ? "array" : Object.keys(projectsResponse || {}),
+    projectsResponse: projectsResponse,
   };
 }
