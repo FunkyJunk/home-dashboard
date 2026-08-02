@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder, debugSync } from "./todoist.js";
+import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, debugRecurrencePhrasings } from "./todoist.js";
 
 const app = express();
 app.use(express.json());
@@ -69,11 +69,11 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
   }
 });
 
-app.get("/api/tasks/debug", async (req, res) => {
+app.get("/api/tasks/debug-recurrence", async (req, res) => {
   try {
-    res.json(await debugSync());
+    res.json(await debugRecurrencePhrasings());
   } catch (e) {
-    res.status(502).json({ error: e.message || "debug sync failed" });
+    res.status(502).json({ error: e.message || "debug failed" });
   }
 });
 
@@ -86,9 +86,11 @@ app.get("/api/tasks/lists", async (req, res) => {
 });
 
 // Manual task creation via Todoist REST API. Supports full due times,
-// all-day dates, and recurrence (daily, weekly, monthly, yearly, etc.)
+// all-day dates, and recurrence (daily, weekly, monthly, yearly, etc. via
+// a natural-language dueString - Todoist has no structured recurrence
+// field, see todoist.js for why).
 app.post("/api/tasks", async (req, res) => {
-  const { taskListId, title, due, allDay, notes, recurrence } = req.body || {};
+  const { taskListId, title, due, allDay, notes, dueString } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: "title is required" });
   }
@@ -99,11 +101,28 @@ app.post("/api/tasks", async (req, res) => {
       due: due || null,
       allDay: !!allDay,
       notes: notes || undefined,
-      recurrence: recurrence || null,
+      dueString: dueString || null,
     });
     res.json(task);
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to create task" });
+  }
+});
+
+// Updates an existing task's title/due/notes/recurrence.
+app.patch("/api/tasks/:taskListId/:taskId", async (req, res) => {
+  const { title, due, allDay, notes, dueString } = req.body || {};
+  try {
+    const task = await updateReminder(req.params.taskId, {
+      title: title !== undefined ? String(title).trim() : undefined,
+      due: due !== undefined ? due : undefined,
+      allDay: !!allDay,
+      notes: notes !== undefined ? notes : undefined,
+      dueString: dueString || null,
+    });
+    res.json(task);
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to update task" });
   }
 });
 

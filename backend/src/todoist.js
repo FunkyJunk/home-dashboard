@@ -97,13 +97,19 @@ export async function completeReminder(listId, reminderId) {
   await postToTodoist(`/tasks/${reminderId}/close`, {});
 }
 
+// Todoist has no structured recurrence field (no RRULE-equivalent) - the
+// only way to set a repeating due date is a natural-language due_string
+// that its own NLP parser interprets (confirmed against the live API,
+// 2026-08-02: a nested due_object.recurring key like "FREQ=DAILY" is not a
+// real field at all, so it was silently dropped and every created task
+// came back with no due date whatsoever - the actual bug being fixed here).
 export async function createReminder({
   listId,
   title,
   due,
   allDay,
   notes,
-  recurrence,
+  dueString,
 }) {
   const body = {
     content: title,
@@ -111,15 +117,14 @@ export async function createReminder({
     description: notes || undefined,
   };
 
-  if (due) {
-    body.due_object = {};
+  if (dueString) {
+    body.due_string = dueString;
+    body.due_lang = "en";
+  } else if (due) {
     if (allDay) {
-      body.due_object.date = due; // plain date string
+      body.due_date = due; // plain YYYY-MM-DD
     } else {
-      body.due_object.datetime = due; // ISO datetime
-    }
-    if (recurrence) {
-      body.due_object.recurring = recurrence; // e.g., "FREQ=DAILY", "FREQ=WEEKLY", etc.
+      body.due_datetime = due; // full ISO 8601
     }
   }
 
@@ -138,17 +143,74 @@ export async function createReminder({
   };
 }
 
-export async function debugSync() {
-  const tasksResponse = await fetchFromTodoist("/tasks");
-  const projectsResponse = await fetchFromTodoist("/projects");
+export async function updateReminder(reminderId, { title, due, allDay, notes, dueString }) {
+  const body = {};
+  if (title !== undefined) body.content = title;
+  if (notes !== undefined) body.description = notes;
 
-  const tasks = tasksResponse.results || [];
-  const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse.results || []);
+  if (dueString) {
+    body.due_string = dueString;
+    body.due_lang = "en";
+  } else if (due) {
+    if (allDay) {
+      body.due_date = due;
+    } else {
+      body.due_datetime = due;
+    }
+  } else if (due === null) {
+    body.due_string = "no date";
+  }
 
+  const task = await postToTodoist(`/tasks/${reminderId}`, body);
+
+  const dueInfo = parseDueInfo(task.due);
   return {
-    taskCount: tasks.length,
-    projectCount: projects.length,
-    firstTask: tasks[0],
-    firstProject: projects[0],
+    id: task.id,
+    taskListId: task.project_id,
+    listTitle: "Updated",
+    title: task.content,
+    due: dueInfo.due,
+    allDay: dueInfo.allDay,
+    recurring: !!dueInfo.recurring,
+    notes: task.description || null,
   };
+}
+
+// TEMPORARY - creates one real test task per candidate due_string phrasing,
+// reports back exactly what Todoist's NLP parsed (is_recurring, due.string,
+// due.date), then immediately completes each test task. Used to verify
+// recurrence phrasing against the live API instead of guessing again.
+// Remove once the recurrence UI is finalized.
+export async function debugRecurrencePhrasings() {
+  const candidates = [
+    "every day at 6:00 pm",
+    "every wednesday at 6:00 pm",
+    "every other week",
+    "every month on the 1st at 9:00 am",
+    "every first monday",
+    "every 1st monday",
+    "every year on aug 2",
+  ];
+
+  const results = [];
+  for (const dueString of candidates) {
+    try {
+      const task = await postToTodoist("/tasks", {
+        content: `[TEST - safe to delete] ${dueString}`,
+        due_string: dueString,
+        due_lang: "en",
+      });
+      results.push({
+        input: dueString,
+        parsedString: task.due?.string || null,
+        parsedDate: task.due?.date || null,
+        isRecurring: task.due?.is_recurring || false,
+        taskId: task.id,
+      });
+      await postToTodoist(`/tasks/${task.id}/close`, {});
+    } catch (e) {
+      results.push({ input: dueString, error: e.message });
+    }
+  }
+  return results;
 }
