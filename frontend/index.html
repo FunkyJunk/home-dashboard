@@ -204,9 +204,11 @@
   .task-list{display:flex; flex-direction:column;}
   .task-row{
     display:flex; align-items:flex-start; gap:.65rem;
-    padding:.6rem 0; border-bottom:1px solid var(--panel-line);
+    padding:.6rem .6rem; margin:0 -.6rem; border-bottom:1px solid var(--panel-line);
+    border-radius:4px;
   }
   .task-row:last-child{border-bottom:none;}
+  .task-row.overdue{background:var(--coral-dim); border-bottom-color:transparent;}
   .task-checkbox{
     appearance:none; width:1.1em; height:1.1em; margin-top:.15em; flex-shrink:0;
     border:1px solid var(--panel-line); border-radius:4px; background:var(--bg-inset);
@@ -958,22 +960,51 @@ function todayDateOnly(){
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// A task is overdue starting right after its due day ends at local
+// midnight - not the instant its due date "becomes today", since it's
+// still due (not late) for the whole of its due day.
+function overdueLabel(dueStr){
+  const [y, m, d] = dueStr.split('-').map(Number);
+  const dayAfterDue = new Date(y, m - 1, d + 1); // local midnight, day after due
+  const diffMs = Date.now() - dayAfterDue.getTime();
+  if (diffMs <= 0) return null;
+  const totalHours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || !days) parts.push(`${hours}h`);
+  return `${parts.join(' ')} overdue`;
+}
+
 function renderTasks(tasks){
   const el = document.getElementById('tasks');
-  currentTasks = tasks || [];
-  if (!tasks){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
-  if (!tasks.length){ el.innerHTML = '<div class="empty">Nothing on your list.</div>'; return; }
+  if (!tasks){ currentTasks = []; el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
 
-  el.innerHTML = tasks.map((t, i) => {
+  const today = todayDateOnly();
+  // Only today's and overdue tasks clutter the widget - anything due later
+  // is left for its own day. Tasks with no due date have no way to be
+  // "later" so they stay visible rather than disappearing entirely.
+  const visible = tasks.filter(t => !t.due || taskDueDateOnly(t.due) <= today);
+  currentTasks = visible;
+
+  if (!visible.length){ el.innerHTML = '<div class="empty">Nothing due today.</div>'; return; }
+
+  el.innerHTML = visible.map((t, i) => {
     let dueHtml = '';
+    let overdue = false;
     if (t.due){
       const dueStr = taskDueDateOnly(t.due);
-      const overdue = dueStr < todayDateOnly();
-      const label = new Date(dueStr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      dueHtml = `<div class="task-due${overdue ? ' overdue' : ''}">${label}${overdue ? ' (overdue)' : ''}</div>`;
+      if (dueStr < today){
+        const label = overdueLabel(dueStr);
+        overdue = !!label;
+        dueHtml = `<div class="task-due${overdue ? ' overdue' : ''}">${label || 'Today'}</div>`;
+      } else {
+        dueHtml = `<div class="task-due">Today</div>`;
+      }
     }
     return `
-      <div class="task-row">
+      <div class="task-row${overdue ? ' overdue' : ''}">
         <input type="checkbox" class="task-checkbox" data-i="${i}">
         <div class="task-body">
           <div class="task-title">${escapeHtml(t.title)}</div>
