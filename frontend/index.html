@@ -201,6 +201,18 @@
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
   /* Tasks */
+  .task-card-head{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:1rem; padding-bottom:.6rem; border-bottom:1px solid var(--panel-line);
+  }
+  .task-card-head h2{margin-bottom:0; padding-bottom:0; border-bottom:none;}
+  .task-add-btn{
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    width:1.6em; height:1.6em; line-height:1; font-size:1rem;
+    background:var(--bg-inset); border:1px solid var(--panel-line); color:var(--text-dim);
+    border-radius:4px; cursor:pointer;
+  }
+  .task-add-btn:hover{color:var(--teal); border-color:var(--teal);}
   .task-list{display:flex; flex-direction:column;}
   .task-row{
     display:flex; align-items:flex-start; gap:.65rem;
@@ -219,9 +231,25 @@
   .task-checkbox:disabled{opacity:.5; cursor:not-allowed;}
   .task-body{flex:1; min-width:0;}
   .task-title{font-size:.9rem; color:var(--text); word-break:break-word;}
-  .task-due{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); margin-top:.15rem;}
-  .task-due.overdue{color:var(--coral);}
+  .task-due{
+    display:inline-flex; align-items:center; gap:.3em;
+    font-family:'IBM Plex Mono', monospace; font-size:.72rem; color:var(--text-dim);
+    margin-top:.3rem; background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:12px; padding:.2em .6em .2em .5em;
+  }
+  .task-due svg{width:.9em; height:.9em; flex-shrink:0;}
+  .task-due.overdue{color:var(--coral); border-color:var(--coral-dim); background:transparent;}
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
+
+  .add-task-modal-inner{max-width:min(90vw, 420px);}
+  .add-task-field{margin-bottom:.75rem; display:flex; flex-direction:column; gap:.3rem;}
+  .add-task-field label{font-size:.75rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
+  .add-task-row{display:flex; gap:.75rem;}
+  .add-task-row .add-task-field{flex:1;}
+  .add-task-input{width:100%;}
+  .add-task-notes{min-height:4em; resize:vertical; font-family:inherit;}
+
+  .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
   .hourly-strip{width:100%;}
   .hourly-chart{display:block; width:100%;}
@@ -572,7 +600,10 @@
       </div>
 
       <div class="card" data-tile-id="tasks">
-        <h2 class="card-handle">Tasks</h2>
+        <div class="task-card-head">
+          <h2 class="card-handle">Tasks</h2>
+          <button type="button" class="task-add-btn" id="task-add-btn" title="Add task">+</button>
+        </div>
         <div class="task-list" id="tasks"><div class="empty">Loading&hellip;</div></div>
       </div>
 
@@ -713,6 +744,52 @@
             <button type="button" class="receipt-btn business" id="theme-save-btn">Save theme</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="add-task-modal">
+      <div class="modal-inner add-task-modal-inner">
+        <div class="modal-head">
+          <span>Add task</span>
+          <button class="modal-close" id="add-task-modal-close">Close</button>
+        </div>
+        <div class="add-task-field">
+          <label>Title</label>
+          <input type="text" class="receipt-input add-task-input" id="add-task-title" placeholder="Task title">
+        </div>
+        <div class="add-task-row">
+          <div class="add-task-field">
+            <label>Date</label>
+            <input type="date" class="receipt-input add-task-input" id="add-task-date">
+          </div>
+          <div class="add-task-field">
+            <label>Time (optional)</label>
+            <input type="time" class="receipt-input add-task-input" id="add-task-time">
+          </div>
+        </div>
+        <div class="add-task-field">
+          <label>List</label>
+          <select class="receipt-input add-task-input" id="add-task-list"></select>
+        </div>
+        <div class="add-task-field">
+          <label>Notes</label>
+          <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes"></textarea>
+        </div>
+        <div class="receipts-status" id="add-task-status"></div>
+        <div class="ignore-modal-actions">
+          <button type="button" class="receipt-btn business" id="add-task-submit">Add task</button>
+          <button type="button" class="receipt-btn" id="add-task-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="due-popup-modal">
+      <div class="modal-inner due-popup-modal-inner">
+        <div class="modal-head">
+          <span>Task reminder</span>
+          <button class="modal-close" id="due-popup-modal-close">Close</button>
+        </div>
+        <div class="task-list" id="due-popup-list"></div>
       </div>
     </div>
 
@@ -945,15 +1022,21 @@ function renderWeek(daily){
   }).join('');
 }
 
-let currentTasks = [];
+let allTaskLists = [];
+const notifiedTaskIds = new Set();
 
-// Google Tasks' `due` field is date-only semantically but formatted as a
-// full RFC3339 timestamp pinned to midnight UTC - converting it to local
-// time before comparing/displaying can shift it a day either way
-// depending on the viewer's timezone, so this reads the date portion of
-// the string directly instead.
-function taskDueDateOnly(dueIso){
-  return dueIso.slice(0, 10);
+// Google Tasks' `due` field is date-only for most tasks (midnight UTC) but
+// carries a real time-of-day once one is set - via the Add Task time field,
+// or the Tasks app's own time picker - so a non-midnight UTC instant is how
+// we tell "has a time" apart from "date only", without ever converting a
+// true all-day date to local time (which could shift it a day either way
+// depending on the viewer's timezone).
+function taskDueInfo(dueIso){
+  const isAllDay = /T00:00:00(\.\d+)?Z$/.test(dueIso);
+  if (isAllDay) return { isAllDay: true, dateStr: dueIso.slice(0, 10), time: null };
+  const d = new Date(dueIso);
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d };
 }
 function todayDateOnly(){
   const d = new Date();
@@ -977,57 +1060,123 @@ function overdueLabel(dueStr){
   return `${parts.join(' ')} overdue`;
 }
 
+const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>';
+
+// Builds the pill badge + tells the caller whether this task counts as
+// "overdue" (a prior day) or "due now" (today, with a time that has passed) -
+// both states are what trigger the reminder popup and the red highlight.
+function taskDueBadge(t){
+  if (!t.due) return { html: '', overdue: false, dueNow: false };
+  const today = todayDateOnly();
+  const info = taskDueInfo(t.due);
+  if (info.dateStr < today){
+    const label = overdueLabel(info.dateStr);
+    const overdue = !!label;
+    return { html: `<span class="task-due${overdue ? ' overdue' : ''}">${CLOCK_ICON}${label || 'Today'}</span>`, overdue, dueNow: overdue };
+  }
+  if (info.isAllDay){
+    return { html: `<span class="task-due">${CLOCK_ICON}Today</span>`, overdue: false, dueNow: false };
+  }
+  const timeLabel = info.time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dueNow = info.time.getTime() <= Date.now();
+  return { html: `<span class="task-due${dueNow ? ' overdue' : ''}">${CLOCK_ICON}Today, ${timeLabel}</span>`, overdue: false, dueNow };
+}
+
+// Overdue tasks always sort first (oldest-overdue on top); within today,
+// all-day tasks come before timed ones, timed ones ascending by time.
+function sortTasks(tasks){
+  const today = todayDateOnly();
+  const info = (t) => t.due ? { hasDue: true, ...taskDueInfo(t.due) } : { hasDue: false };
+  return [...tasks].sort((a, b) => {
+    const ia = info(a), ib = info(b);
+    const overdueA = ia.hasDue && ia.dateStr < today;
+    const overdueB = ib.hasDue && ib.dateStr < today;
+    if (overdueA !== overdueB) return overdueA ? -1 : 1;
+    if (overdueA && overdueB) return ia.dateStr.localeCompare(ib.dateStr);
+    if (ia.hasDue !== ib.hasDue) return ia.hasDue ? -1 : 1;
+    if (!ia.hasDue) return 0;
+    if (ia.isAllDay !== ib.isAllDay) return ia.isAllDay ? -1 : 1;
+    if (!ia.isAllDay) return ia.time - ib.time;
+    return 0;
+  });
+}
+
+function taskRowHtml(t){
+  const badge = taskDueBadge(t);
+  return `
+    <div class="task-row${badge.overdue || badge.dueNow ? ' overdue' : ''}" data-task-list-id="${escapeHtml(t.taskListId)}" data-task-id="${escapeHtml(t.id)}">
+      <input type="checkbox" class="task-checkbox">
+      <div class="task-body">
+        <div class="task-title">${escapeHtml(t.title)}</div>
+        ${badge.html}
+        ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function wireTaskCheckboxes(container){
+  container.querySelectorAll('.task-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const row = cb.closest('.task-row');
+      completeTask(row.dataset.taskListId, row.dataset.taskId, cb, row);
+    });
+  });
+}
+
 function renderTasks(tasks){
   const el = document.getElementById('tasks');
-  if (!tasks){ currentTasks = []; el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
+  if (!tasks){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
 
   const today = todayDateOnly();
   // Only today's and overdue tasks clutter the widget - anything due later
   // is left for its own day. Tasks with no due date have no way to be
   // "later" so they stay visible rather than disappearing entirely.
-  const visible = tasks.filter(t => !t.due || taskDueDateOnly(t.due) <= today);
-  currentTasks = visible;
+  const visible = sortTasks(tasks.filter(t => !t.due || taskDueInfo(t.due).dateStr <= today));
+
+  checkDueTasks(visible);
 
   if (!visible.length){ el.innerHTML = '<div class="empty">Nothing due today.</div>'; return; }
 
-  el.innerHTML = visible.map((t, i) => {
-    let dueHtml = '';
-    let overdue = false;
-    if (t.due){
-      const dueStr = taskDueDateOnly(t.due);
-      if (dueStr < today){
-        const label = overdueLabel(dueStr);
-        overdue = !!label;
-        dueHtml = `<div class="task-due${overdue ? ' overdue' : ''}">${label || 'Today'}</div>`;
-      } else {
-        dueHtml = `<div class="task-due">Today</div>`;
-      }
-    }
-    return `
-      <div class="task-row${overdue ? ' overdue' : ''}">
-        <input type="checkbox" class="task-checkbox" data-i="${i}">
-        <div class="task-body">
-          <div class="task-title">${escapeHtml(t.title)}</div>
-          ${dueHtml}
-          ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  el.querySelectorAll('.task-checkbox').forEach(cb => {
-    cb.addEventListener('change', () => completeTask(Number(cb.dataset.i), cb));
-  });
+  el.innerHTML = visible.map(taskRowHtml).join('');
+  wireTaskCheckboxes(el);
 }
 
-async function completeTask(idx, checkbox){
-  const task = currentTasks[idx];
-  if (!task) return;
+// Popup fires once per task the moment it becomes overdue or (for timed
+// tasks) its time passes - tracked in notifiedTaskIds so it doesn't nag on
+// every 60s refresh. When it fires it shows the *complete* current set of
+// due/overdue tasks together, not just the newly-triggered one.
+function checkDueTasks(visibleTasks){
+  const dueNow = visibleTasks.filter(t => {
+    const badge = taskDueBadge(t);
+    return badge.overdue || badge.dueNow;
+  });
+  const isFresh = dueNow.some(t => !notifiedTaskIds.has(t.id));
+  const popup = document.getElementById('due-popup-modal');
+  if (isFresh){
+    dueNow.forEach(t => notifiedTaskIds.add(t.id));
+    renderDuePopupList(dueNow);
+    popup.classList.add('open');
+  } else if (popup.classList.contains('open')){
+    renderDuePopupList(dueNow); // keep an already-open popup in sync (e.g. one just got completed)
+  }
+}
+function renderDuePopupList(tasks){
+  const el = document.getElementById('due-popup-list');
+  if (!tasks.length){ closeDuePopup(); return; }
+  el.innerHTML = tasks.map(taskRowHtml).join('');
+  wireTaskCheckboxes(el);
+}
+function closeDuePopup(){
+  document.getElementById('due-popup-modal').classList.remove('open');
+}
+
+async function completeTask(taskListId, taskId, checkbox, row){
   checkbox.disabled = true;
   try {
-    const res = await fetch(`/api/tasks/${encodeURIComponent(task.taskListId)}/${encodeURIComponent(task.id)}/complete`, { method: 'POST' });
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskListId)}/${encodeURIComponent(taskId)}/complete`, { method: 'POST' });
     if (!res.ok) throw new Error('request failed');
-    const row = checkbox.closest('.task-row');
+    notifiedTaskIds.delete(taskId);
     row.style.opacity = '.4';
     setTimeout(() => row.remove(), 200);
   } catch (e){
@@ -2851,7 +3000,95 @@ document.getElementById('theme-url-input').addEventListener('keydown', (e) => {
 });
 document.getElementById('theme-save-btn').addEventListener('click', saveUrlTheme);
 
+async function loadTaskLists(){
+  try {
+    const res = await fetch('/api/tasks/lists');
+    if (!res.ok) throw new Error('failed');
+    allTaskLists = await res.json();
+  } catch (e){
+    allTaskLists = [];
+  }
+}
+
+function openAddTaskModal(){
+  document.getElementById('add-task-title').value = '';
+  document.getElementById('add-task-date').value = todayDateOnly();
+  document.getElementById('add-task-time').value = '';
+  document.getElementById('add-task-notes').value = '';
+  document.getElementById('add-task-status').textContent = '';
+  document.getElementById('add-task-status').className = 'receipts-status';
+  const listSel = document.getElementById('add-task-list');
+  listSel.innerHTML = allTaskLists.length
+    ? allTaskLists.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.title)}</option>`).join('')
+    : '<option value="">Default list</option>';
+  document.getElementById('add-task-modal').classList.add('open');
+  document.getElementById('add-task-title').focus();
+}
+function closeAddTaskModal(){
+  document.getElementById('add-task-modal').classList.remove('open');
+}
+
+async function submitAddTask(){
+  const title = document.getElementById('add-task-title').value.trim();
+  const dateStr = document.getElementById('add-task-date').value;
+  const timeStr = document.getElementById('add-task-time').value;
+  const notes = document.getElementById('add-task-notes').value.trim();
+  const taskListId = document.getElementById('add-task-list').value;
+  const statusEl = document.getElementById('add-task-status');
+
+  if (!title){
+    statusEl.textContent = 'Title is required.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+
+  let due;
+  if (dateStr){
+    if (timeStr){
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const [hh, mm] = timeStr.split(':').map(Number);
+      due = new Date(y, m - 1, d, hh, mm).toISOString();
+    } else {
+      due = `${dateStr}T00:00:00.000Z`;
+    }
+  }
+
+  const btn = document.getElementById('add-task-submit');
+  btn.disabled = true;
+  statusEl.textContent = 'Adding…';
+  statusEl.className = 'receipts-status';
+  try {
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, notes: notes || undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'request failed');
+    closeAddTaskModal();
+    refresh();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('task-add-btn').addEventListener('click', openAddTaskModal);
+document.getElementById('add-task-modal-close').addEventListener('click', closeAddTaskModal);
+document.getElementById('add-task-cancel').addEventListener('click', closeAddTaskModal);
+document.getElementById('add-task-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'add-task-modal') closeAddTaskModal();
+});
+document.getElementById('add-task-submit').addEventListener('click', submitAddTask);
+document.getElementById('due-popup-modal-close').addEventListener('click', closeDuePopup);
+document.getElementById('due-popup-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'due-popup-modal') closeDuePopup();
+});
+
 initTheme();
+loadTaskLists();
 
 renderClock();
 setInterval(renderClock, 1000 * 15);

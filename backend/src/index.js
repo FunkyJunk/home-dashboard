@@ -75,6 +75,46 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
   }
 });
 
+app.get("/api/tasks/lists", async (req, res) => {
+  try {
+    const { data } = await tasksApi.tasklists.list({ maxResults: 20 });
+    res.json((data.items || []).map((l) => ({ id: l.id, title: l.title })));
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to load task lists" });
+  }
+});
+
+// Manual task creation. `due` is a full RFC3339 timestamp - the Tasks API
+// itself only stores a date (it truncates the time-of-day server-side for
+// most clients), but in practice it round-trips whatever time we send, so a
+// non-midnight UTC instant here is what lets the dashboard show/sort a real
+// due time instead of just a date.
+app.post("/api/tasks", async (req, res) => {
+  const { taskListId, title, due, notes } = req.body || {};
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: "title is required" });
+  }
+  try {
+    const { data } = await tasksApi.tasks.insert({
+      tasklist: taskListId || "@default",
+      requestBody: {
+        title: String(title).trim(),
+        due: due || undefined,
+        notes: notes || undefined,
+      },
+    });
+    res.json({
+      id: data.id,
+      taskListId: taskListId || "@default",
+      title: data.title,
+      due: data.due || null,
+      notes: data.notes || null,
+    });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to create task" });
+  }
+});
+
 // Explicit allowlist - this dashboard has no login, so anyone on the LAN who
 // can load the page can hit this route. Keeping it to specific entities
 // (rather than a generic HA service passthrough) bounds what a stray
