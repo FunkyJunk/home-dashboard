@@ -40,6 +40,23 @@ async function getReminderCalendars() {
   return calendars.filter((c) => (c.components || []).includes("VTODO"));
 }
 
+// tsdav's fetchCalendarObjects hardcodes a VEVENT comp-filter when no
+// `filters` is passed (it's built calendar-first) - without this, querying
+// a VTODO-only Reminders collection silently returns zero objects even
+// though the auth/discovery all succeeded.
+const VTODO_FILTER = [
+  {
+    "comp-filter": {
+      _attributes: { name: "VCALENDAR" },
+      "comp-filter": { _attributes: { name: "VTODO" } },
+    },
+  },
+];
+
+async function fetchTodoObjects(client, calendar) {
+  return client.fetchCalendarObjects({ calendar, filters: VTODO_FILTER });
+}
+
 // TEMPORARY diagnostic - dumps every calendar iCloud returns (so we can see
 // the real shape of `components`/`displayName`) plus raw object counts and
 // the first object's raw ICS text per VTODO-supporting calendar. Remove
@@ -56,7 +73,7 @@ export async function debugDump() {
   const vtodoCalendars = allCalendars.filter((c) => (c.components || []).includes("VTODO"));
   const perCalendar = await Promise.all(
     vtodoCalendars.map(async (cal) => {
-      const objects = await client.fetchCalendarObjects({ calendar: cal });
+      const objects = await fetchTodoObjects(client, cal);
       return {
         url: cal.url,
         objectCount: objects.length,
@@ -129,7 +146,7 @@ export async function getReminders() {
   const client = await getClient();
   const calendars = await getReminderCalendars();
   const perCalendar = await Promise.all(
-    calendars.map((cal) => client.fetchCalendarObjects({ calendar: cal }))
+    calendars.map((cal) => fetchTodoObjects(client, cal))
   );
   const all = [];
   calendars.forEach((cal, i) => all.push(...parseTodos(cal, perCalendar[i])));
@@ -151,7 +168,7 @@ export async function completeReminder(listId, reminderId) {
   const calendar = calendars.find((c) => c.url === listId);
   if (!calendar) throw new Error("reminder list not found");
 
-  const objects = await client.fetchCalendarObjects({ calendar });
+  const objects = await fetchTodoObjects(client, calendar);
   for (const obj of objects) {
     if (!obj.data) continue;
     let parsed;
