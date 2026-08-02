@@ -34,6 +34,65 @@
   }
   .board{max-width:1400px; margin:0 auto;}
 
+  /* Hamburger menu - fixed top-right, sits above everything including the
+     header's clock/date, per request. */
+  .menu-toggle-btn{
+    position:fixed; top:1.25rem; right:1.25rem; z-index:200;
+    width:2.4rem; height:2.4rem; display:flex; align-items:center; justify-content:center;
+    background:var(--panel); border:1px solid var(--panel-line); border-radius:6px;
+    color:var(--text-dim); cursor:pointer;
+  }
+  .menu-toggle-btn:hover{color:var(--text); border-color:var(--teal);}
+  .menu-toggle-btn svg{width:1.2rem; height:1.2rem;}
+  .menu-toggle-btn.open{color:var(--teal); border-color:var(--teal);}
+
+  .menu-panel{
+    position:fixed; top:3.85rem; right:1.25rem; z-index:199;
+    width:min(90vw, 300px);
+    background:var(--panel); border:1px solid var(--panel-line); border-radius:8px;
+    padding:1.25rem; box-shadow:0 20px 60px rgba(0,0,0,.5);
+    display:none; flex-direction:column; gap:1.25rem;
+    max-height:80vh; overflow-y:auto;
+  }
+  .menu-panel.open{display:flex;}
+  .menu-panel-section h3{
+    font-family:'IBM Plex Mono', monospace; font-size:.72rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.08em; margin-bottom:.6rem;
+  }
+  .menu-panel .theme-select{width:100%;}
+  .menu-card-list{display:flex; flex-direction:column; gap:.5rem;}
+  .menu-card-row{
+    display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+    font-size:.88rem; color:var(--text);
+  }
+  .menu-card-row-label{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .menu-toggle-switch{
+    position:relative; flex-shrink:0; width:2.4em; height:1.4em;
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:999px;
+    cursor:pointer; appearance:none; -webkit-appearance:none; outline:none;
+  }
+  .menu-toggle-switch::after{
+    content:''; position:absolute; top:.15em; left:.15em; width:1em; height:1em;
+    background:var(--text-dim); border-radius:50%; transition:transform .15s, background .15s;
+  }
+  .menu-toggle-switch:checked{background:var(--teal-dim); border-color:var(--teal);}
+  .menu-toggle-switch:checked::after{background:var(--teal); transform:translateX(1em);}
+
+  /* Per-card minimize control + collapsed state */
+  .card{position:relative;}
+  .card-minimize-btn{
+    position:absolute; top:1.4rem; right:1.5rem; z-index:1;
+    width:1.4em; height:1.4em; display:flex; align-items:center; justify-content:center;
+    background:none; border:none; color:var(--text-dim); cursor:pointer; padding:0;
+  }
+  .card-minimize-btn:hover{color:var(--teal);}
+  .card-minimize-btn svg{width:1em; height:1em; transition:transform .15s;}
+  .card.card-minimized .card-minimize-btn svg{transform:rotate(-90deg);}
+  .card.card-minimized .card-body{display:none;}
+  .card.card-minimized h2,
+  .card.card-minimized .task-card-head{margin-bottom:0; padding-bottom:0; border-bottom:none;}
+  .card.user-hidden{display:none !important;}
+
   /* Header / split-flap strip */
   .header{
     background:var(--panel);
@@ -594,6 +653,19 @@
 </style>
 </head>
 <body>
+  <button type="button" class="menu-toggle-btn" id="menu-toggle-btn" title="Menu" aria-label="Menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+  </button>
+  <div class="menu-panel" id="menu-panel">
+    <div class="menu-panel-section">
+      <h3>Theme</h3>
+      <select class="theme-select" id="theme-select"></select>
+    </div>
+    <div class="menu-panel-section">
+      <h3>Cards</h3>
+      <div class="menu-card-list" id="menu-card-list"></div>
+    </div>
+  </div>
   <div class="board">
     <div class="header">
       <div class="header-top">
@@ -602,7 +674,6 @@
           <div class="date-block" id="date" style="margin-top:.6rem;"></div>
         </div>
         <div class="weather-block">
-          <select class="theme-select" id="theme-select"></select>
           <div class="weather-now">
             <span class="temp" id="temp-now">--°</span>
             <span class="cond" id="cond-now">loading</span>
@@ -648,7 +719,7 @@
       </div>
     </div>
 
-    <div class="card receipts-card" id="receipts-section">
+    <div class="card receipts-card" id="receipts-section" data-tile-id="receipts">
       <h2>Business Receipts</h2>
       <div class="receipts-toolbar">
         <button type="button" id="receipts-pick-folder" class="receipts-toolbar-btn">Choose tax folder&hellip;</button>
@@ -1877,6 +1948,119 @@ const boardGrid = document.getElementById('board-grid');
 reorderDomToSaved(boardGrid, '.card', TILE_ORDER_KEY);
 makeSortable(boardGrid, { handleSelector: '.card-handle', itemSelector: '.card', storageKey: TILE_ORDER_KEY });
 makeSortable(document.getElementById('controls-grid'), { handleSelector: '.control-head-left', itemSelector: '.control-tile', storageKey: CONTROL_ORDER_KEY });
+
+// ---------------------------------------------------------------------
+// Hamburger menu: per-card show/hide + minimize, and the theme picker
+// (relocated here from the header - see the menu-panel markup in <body>).
+const CARD_REGISTRY = [
+  { id: 'today', label: 'Today & Upcoming' },
+  { id: 'home-status', label: 'Home Status' },
+  { id: 'week', label: 'This Week' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'controls', label: 'Controls' },
+  { id: 'ring', label: 'Ring Cameras' },
+  { id: 'receipts', label: 'Business Receipts' },
+];
+const CARD_VISIBILITY_KEY = 'dashboard-card-visibility';
+const CARD_MINIMIZED_KEY = 'dashboard-card-minimized';
+const MINIMIZE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+
+function loadJsonMap(key){
+  try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch { return {}; }
+}
+function isCardVisible(tileId){ return loadJsonMap(CARD_VISIBILITY_KEY)[tileId] !== false; }
+function setCardVisible(tileId, visible){
+  const map = loadJsonMap(CARD_VISIBILITY_KEY);
+  map[tileId] = visible;
+  localStorage.setItem(CARD_VISIBILITY_KEY, JSON.stringify(map));
+  applyCardVisibility(tileId);
+}
+function isCardMinimized(tileId){ return loadJsonMap(CARD_MINIMIZED_KEY)[tileId] === true; }
+function setCardMinimized(tileId, minimized){
+  const map = loadJsonMap(CARD_MINIMIZED_KEY);
+  map[tileId] = minimized;
+  localStorage.setItem(CARD_MINIMIZED_KEY, JSON.stringify(map));
+  applyCardMinimized(tileId);
+}
+
+function applyCardVisibility(tileId){
+  const card = document.querySelector(`.card[data-tile-id="${tileId}"]`);
+  if (card) card.classList.toggle('user-hidden', !isCardVisible(tileId));
+}
+function applyCardMinimized(tileId){
+  const card = document.querySelector(`.card[data-tile-id="${tileId}"]`);
+  if (card) card.classList.toggle('card-minimized', isCardMinimized(tileId));
+}
+
+// Wraps each registered card's content (everything after its header) in a
+// single .card-body element, once, so minimizing just needs one class
+// toggle rather than tracking every individual child - the header (h2 or
+// .task-card-head) itself is left alone as a sibling, still visible.
+// Runs once at load; refresh() cycles only touch inner ids like #events,
+// which stay valid getElementById targets regardless of this wrapper.
+function wrapCardBodies(){
+  CARD_REGISTRY.forEach(({ id }) => {
+    const card = document.querySelector(`.card[data-tile-id="${id}"]`);
+    if (!card || card.querySelector(':scope > .card-body')) return;
+    const header = card.querySelector(':scope > h2, :scope > .task-card-head');
+    if (!header) return;
+    const body = document.createElement('div');
+    body.className = 'card-body';
+    let node = header.nextSibling;
+    while (node){
+      const next = node.nextSibling;
+      body.appendChild(node);
+      node = next;
+    }
+    card.appendChild(body);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'card-minimize-btn';
+    btn.title = 'Minimize';
+    btn.innerHTML = MINIMIZE_ICON;
+    btn.addEventListener('click', () => setCardMinimized(id, !isCardMinimized(id)));
+    card.appendChild(btn);
+  });
+}
+
+function renderMenuCardList(){
+  const el = document.getElementById('menu-card-list');
+  el.innerHTML = CARD_REGISTRY.map(({ id, label }) => `
+    <label class="menu-card-row">
+      <span class="menu-card-row-label">${escapeHtml(label)}</span>
+      <input type="checkbox" class="menu-toggle-switch" data-tile-id="${id}" ${isCardVisible(id) ? 'checked' : ''}>
+    </label>
+  `).join('');
+  el.querySelectorAll('.menu-toggle-switch').forEach(cb => {
+    cb.addEventListener('change', () => setCardVisible(cb.dataset.tileId, cb.checked));
+  });
+}
+
+function initCardControls(){
+  wrapCardBodies();
+  CARD_REGISTRY.forEach(({ id }) => {
+    applyCardVisibility(id);
+    applyCardMinimized(id);
+  });
+  renderMenuCardList();
+}
+initCardControls();
+
+const menuToggleBtn = document.getElementById('menu-toggle-btn');
+const menuPanel = document.getElementById('menu-panel');
+menuToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = !menuPanel.classList.contains('open');
+  menuPanel.classList.toggle('open', open);
+  menuToggleBtn.classList.toggle('open', open);
+});
+document.addEventListener('click', (e) => {
+  if (!menuPanel.classList.contains('open')) return;
+  if (menuPanel.contains(e.target) || menuToggleBtn.contains(e.target)) return;
+  menuPanel.classList.remove('open');
+  menuToggleBtn.classList.remove('open');
+});
 
 // ---------------------------------------------------------------------
 // Business Receipts
