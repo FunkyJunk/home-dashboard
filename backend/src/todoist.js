@@ -103,7 +103,7 @@ export async function createReminder({
   due,
   allDay,
   notes,
-  dailyRepeat,
+  recurrence,
 }) {
   const body = {
     content: title,
@@ -118,8 +118,8 @@ export async function createReminder({
     } else {
       body.due_object.datetime = due; // ISO datetime
     }
-    if (dailyRepeat) {
-      body.due_object.recurring = "FREQ=DAILY";
+    if (recurrence) {
+      body.due_object.recurring = recurrence; // e.g., "FREQ=DAILY", "FREQ=WEEKLY", etc.
     }
   }
 

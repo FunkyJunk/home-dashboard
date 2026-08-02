@@ -86,9 +86,9 @@ app.get("/api/tasks/lists", async (req, res) => {
 });
 
 // Manual task creation via Todoist REST API. Supports full due times,
-// all-day dates, and daily recurrence.
+// all-day dates, and recurrence (daily, weekly, monthly, yearly, etc.)
 app.post("/api/tasks", async (req, res) => {
-  const { taskListId, title, due, allDay, notes, dailyRepeat } = req.body || {};
+  const { taskListId, title, due, allDay, notes, recurrence } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: "title is required" });
   }
@@ -99,7 +99,7 @@ app.post("/api/tasks", async (req, res) => {
       due: due || null,
       allDay: !!allDay,
       notes: notes || undefined,
-      dailyRepeat: !!dailyRepeat,
+      recurrence: recurrence || null,
     });
     res.json(task);
   } catch (e) {

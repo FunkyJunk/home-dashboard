@@ -771,19 +771,29 @@
           </div>
           <div class="add-task-field">
             <label>Time (optional)</label>
-            <input type="time" class="receipt-input add-task-input" id="add-task-time">
+            <input type="time" class="receipt-input add-task-input" id="add-task-time" placeholder="--:--">
+          </div>
+        </div>
+        <div class="add-task-row">
+          <div class="add-task-field">
+            <label>List</label>
+            <select class="receipt-input add-task-input" id="add-task-list"></select>
+          </div>
+          <div class="add-task-field">
+            <label>Repeats</label>
+            <select class="receipt-input add-task-input" id="add-task-recurrence">
+              <option value="">Never</option>
+              <option value="FREQ=DAILY">Daily</option>
+              <option value="FREQ=WEEKLY">Weekly</option>
+              <option value="FREQ=BIWEEKLY">Biweekly</option>
+              <option value="FREQ=MONTHLY">Monthly</option>
+              <option value="FREQ=YEARLY">Yearly</option>
+            </select>
           </div>
         </div>
         <div class="add-task-field">
-          <label>List</label>
-          <select class="receipt-input add-task-input" id="add-task-list"></select>
-        </div>
-        <label class="add-task-checkbox-row">
-          <input type="checkbox" id="add-task-repeat"> Repeats daily
-        </label>
-        <div class="add-task-field">
           <label>Notes</label>
-          <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes"></textarea>
+          <textarea class="receipt-input add-task-input add-task-notes" id="add-task-notes" placeholder="Notes (optional)"></textarea>
         </div>
         <div class="receipts-status" id="add-task-status"></div>
         <div class="ignore-modal-actions">
@@ -3050,7 +3060,7 @@ function openAddTaskModal(){
   document.getElementById('add-task-title').value = '';
   document.getElementById('add-task-date').value = todayDateOnly();
   document.getElementById('add-task-time').value = '';
-  document.getElementById('add-task-repeat').checked = false;
+  document.getElementById('add-task-recurrence').value = '';
   document.getElementById('add-task-notes').value = '';
   document.getElementById('add-task-status').textContent = '';
   document.getElementById('add-task-status').className = 'receipts-status';
@@ -3069,7 +3079,7 @@ async function submitAddTask(){
   const title = document.getElementById('add-task-title').value.trim();
   const dateStr = document.getElementById('add-task-date').value;
   const timeStr = document.getElementById('add-task-time').value;
-  const dailyRepeat = document.getElementById('add-task-repeat').checked;
+  const recurrence = document.getElementById('add-task-recurrence').value;
   const notes = document.getElementById('add-task-notes').value.trim();
   const taskListId = document.getElementById('add-task-list').value;
   const statusEl = document.getElementById('add-task-status');
@@ -3101,7 +3111,7 @@ async function submitAddTask(){
     const res = await fetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, dailyRepeat }),
+      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, recurrence: recurrence || null }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'request failed');
