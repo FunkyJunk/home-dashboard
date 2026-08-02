@@ -58,7 +58,7 @@ export async function getReminders() {
   const projectsResponse = await fetchFromTodoist("/projects");
 
   const tasks = tasksResponse.results || [];
-  const projects = projectsResponse.results || projectsResponse;
+  const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse.results || []);
 
   const projectMap = new Map(projects.map((p) => [p.id, p.name]));
 
@@ -89,7 +89,7 @@ export async function getReminders() {
 
 export async function getReminderLists() {
   const projectsResponse = await fetchFromTodoist("/projects");
-  const projects = projectsResponse.results || projectsResponse;
+  const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse.results || []);
   return projects.map((p) => ({ id: p.id, title: p.name }));
 }
 
@@ -142,11 +142,13 @@ export async function debugSync() {
   const tasksResponse = await fetchFromTodoist("/tasks");
   const projectsResponse = await fetchFromTodoist("/projects");
 
+  const tasks = tasksResponse.results || [];
+  const projects = Array.isArray(projectsResponse) ? projectsResponse : (projectsResponse.results || []);
+
   return {
-    tasksType: typeof tasksResponse,
-    tasksKeys: Array.isArray(tasksResponse) ? "array" : Object.keys(tasksResponse || {}),
-    projectsType: typeof projectsResponse,
-    projectsKeys: Array.isArray(projectsResponse) ? "array" : Object.keys(projectsResponse || {}),
-    projectsResponse: projectsResponse,
+    taskCount: tasks.length,
+    projectCount: projects.length,
+    firstTask: tasks[0],
+    firstProject: projects[0],
   };
 }
