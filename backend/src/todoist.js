@@ -34,33 +34,36 @@ async function postToTodoist(path, body) {
 }
 
 // Parse Todoist's due object into our shape: {due, allDay, recurring}
-// Todoist due: { date: "2026-08-02", datetime: "2026-08-02T18:30:00", timezone, recurring: "FREQ=DAILY;..." }
+// Todoist v1 due: { date: "2026-08-02" or "2026-08-02T18:00:00", is_recurring: true, ... }
 function parseDueInfo(todoDue) {
   if (!todoDue) return { due: null, allDay: false, recurring: null };
 
-  const recurring = todoDue.recurring || null;
+  const dateStr = todoDue.date;
+  if (!dateStr) return { due: null, allDay: false, recurring: null };
 
-  if (todoDue.datetime) {
-    // Timed task - store the ISO string
-    return { due: todoDue.datetime, allDay: false, recurring };
-  }
-  if (todoDue.date) {
+  const recurring = todoDue.is_recurring || null;
+
+  // Check if it's a timed task (contains T) or all-day (just date)
+  if (dateStr.includes("T")) {
+    // Timed task - store the date string as-is (it's already ISO-like)
+    return { due: dateStr, allDay: false, recurring };
+  } else {
     // All-day task - store the date string
-    return { due: todoDue.date, allDay: true, recurring };
+    return { due: dateStr, allDay: true, recurring };
   }
-  return { due: null, allDay: false, recurring };
 }
 
 export async function getReminders() {
-  const [tasks, projects] = await Promise.all([
-    fetchFromTodoist("/tasks"),
-    fetchFromTodoist("/projects"),
-  ]);
+  const tasksResponse = await fetchFromTodoist("/tasks");
+  const projectsResponse = await fetchFromTodoist("/projects");
+
+  const tasks = tasksResponse.results || [];
+  const projects = projectsResponse.results || projectsResponse;
 
   const projectMap = new Map(projects.map((p) => [p.id, p.name]));
 
   const out = tasks
-    .filter((t) => !t.is_completed)
+    .filter((t) => !t.checked)
     .map((t) => {
       const dueInfo = parseDueInfo(t.due);
       return {
@@ -75,7 +78,7 @@ export async function getReminders() {
       };
     });
 
-  // Sort by due date (same logic as before: overdue first, then by date)
+  // Sort by due date (overdue first, then by date)
   out.sort((a, b) => {
     if (a.due && b.due) return a.due.localeCompare(b.due);
     return a.due ? -1 : b.due ? 1 : 0;
@@ -85,7 +88,8 @@ export async function getReminders() {
 }
 
 export async function getReminderLists() {
-  const projects = await fetchFromTodoist("/projects");
+  const projectsResponse = await fetchFromTodoist("/projects");
+  const projects = projectsResponse.results || projectsResponse;
   return projects.map((p) => ({ id: p.id, title: p.name }));
 }
 
@@ -135,14 +139,17 @@ export async function createReminder({
 }
 
 export async function debugSync() {
-  const tasksRaw = await fetchFromTodoist("/tasks");
-  const projectsRaw = await fetchFromTodoist("/projects");
+  const tasksResponse = await fetchFromTodoist("/tasks");
+  const projectsResponse = await fetchFromTodoist("/projects");
+
+  const tasks = tasksResponse.results || [];
+  const projects = projectsResponse.results || projectsResponse;
 
   return {
-    tasksRawType: typeof tasksRaw,
-    tasksRawKeys: Array.isArray(tasksRaw) ? "array" : Object.keys(tasksRaw || {}),
-    tasksRaw: tasksRaw,
-    projectsRawType: typeof projectsRaw,
-    projectsRawLength: Array.isArray(projectsRaw) ? projectsRaw.length : Object.keys(projectsRaw || {}).length,
+    taskCount: tasks.length,
+    incompleteCount: tasks.filter((t) => !t.checked).length,
+    projectCount: projects.length,
+    firstTask: tasks[0],
+    firstProject: projects[0],
   };
 }
