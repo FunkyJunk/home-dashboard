@@ -89,7 +89,7 @@
     display:grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap:1.5rem;
-    align-items:start;
+    align-items:stretch;
   }
   .board-grid .card.wide{ grid-column: 1 / -1; }
   .board-grid .card.dragging{ opacity:.4; }
@@ -199,6 +199,27 @@
   }
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
+
+  /* Tasks */
+  .task-list{display:flex; flex-direction:column;}
+  .task-row{
+    display:flex; align-items:flex-start; gap:.65rem;
+    padding:.6rem 0; border-bottom:1px solid var(--panel-line);
+  }
+  .task-row:last-child{border-bottom:none;}
+  .task-checkbox{
+    appearance:none; width:1.1em; height:1.1em; margin-top:.15em; flex-shrink:0;
+    border:1px solid var(--panel-line); border-radius:4px; background:var(--bg-inset);
+    cursor:pointer; position:relative;
+  }
+  .task-checkbox:hover{border-color:var(--teal);}
+  .task-checkbox:checked{background:var(--teal); border-color:var(--teal);}
+  .task-checkbox:disabled{opacity:.5; cursor:not-allowed;}
+  .task-body{flex:1; min-width:0;}
+  .task-title{font-size:.9rem; color:var(--text); word-break:break-word;}
+  .task-due{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); margin-top:.15rem;}
+  .task-due.overdue{color:var(--coral);}
+  .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
 
   .hourly-strip{width:100%;}
   .hourly-chart{display:block; width:100%;}
@@ -548,6 +569,11 @@
         <div class="week-strip" id="week"></div>
       </div>
 
+      <div class="card" data-tile-id="tasks">
+        <h2 class="card-handle">Tasks</h2>
+        <div class="task-list" id="tasks"><div class="empty">Loading&hellip;</div></div>
+      </div>
+
       <div class="card wide" data-tile-id="controls" id="controls-section" style="display:none;">
         <h2 class="card-handle">Controls</h2>
         <div class="controls-grid" id="controls-grid"></div>
@@ -828,15 +854,25 @@ function renderHomeStatus(entities){
   const covers = byPrefix('cover.');
   const lights = byPrefix('light.').filter(e => e.state === 'on');
   const media = byPrefix('media_player.').filter(e => e.state === 'playing');
-  const motionEvents = entities.filter(e =>
-    e.entity_id.startsWith('event.') &&
+  // Two different domains model motion in HA: Ring's integration exposes
+  // an `event.*` entity whose state IS the timestamp of the last motion
+  // (that's the only case this used to check), but ordinary Zigbee/Z-Wave
+  // motion sensors show up as `binary_sensor.*` with state "on"/"off" - a
+  // timestamp-only check silently excluded every one of those, since
+  // `new Date("on")` is NaN.
+  const motionEntities = entities.filter(e =>
     e.attributes?.device_class === 'motion' &&
-    !isNaN(new Date(e.state))
+    (e.entity_id.startsWith('binary_sensor.') || e.entity_id.startsWith('event.'))
   );
 
-  const recentMotion = motionEvents.filter(e => {
-    const mins = (Date.now() - new Date(e.state)) / 60000;
-    return mins < 15;
+  const recentMotion = motionEntities.filter(e => {
+    if (e.entity_id.startsWith('event.')){
+      const mins = (Date.now() - new Date(e.state)) / 60000;
+      return !isNaN(mins) && mins < 15;
+    }
+    if (e.state === 'on') return true; // actively detecting motion right now
+    const mins = (Date.now() - new Date(e.last_changed)) / 60000;
+    return !isNaN(mins) && mins < 15; // turned off, but within the window
   });
 
   let rows = [];
@@ -905,6 +941,69 @@ function renderWeek(daily){
       </div>
     `;
   }).join('');
+}
+
+let currentTasks = [];
+
+// Google Tasks' `due` field is date-only semantically but formatted as a
+// full RFC3339 timestamp pinned to midnight UTC - converting it to local
+// time before comparing/displaying can shift it a day either way
+// depending on the viewer's timezone, so this reads the date portion of
+// the string directly instead.
+function taskDueDateOnly(dueIso){
+  return dueIso.slice(0, 10);
+}
+function todayDateOnly(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function renderTasks(tasks){
+  const el = document.getElementById('tasks');
+  currentTasks = tasks || [];
+  if (!tasks){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
+  if (!tasks.length){ el.innerHTML = '<div class="empty">Nothing on your list.</div>'; return; }
+
+  el.innerHTML = tasks.map((t, i) => {
+    let dueHtml = '';
+    if (t.due){
+      const dueStr = taskDueDateOnly(t.due);
+      const overdue = dueStr < todayDateOnly();
+      const label = new Date(dueStr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      dueHtml = `<div class="task-due${overdue ? ' overdue' : ''}">${label}${overdue ? ' (overdue)' : ''}</div>`;
+    }
+    return `
+      <div class="task-row">
+        <input type="checkbox" class="task-checkbox" data-i="${i}">
+        <div class="task-body">
+          <div class="task-title">${escapeHtml(t.title)}</div>
+          ${dueHtml}
+          ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  el.querySelectorAll('.task-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => completeTask(Number(cb.dataset.i), cb));
+  });
+}
+
+async function completeTask(idx, checkbox){
+  const task = currentTasks[idx];
+  if (!task) return;
+  checkbox.disabled = true;
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(task.taskListId)}/${encodeURIComponent(task.id)}/complete`, { method: 'POST' });
+    if (!res.ok) throw new Error('request failed');
+    const row = checkbox.closest('.task-row');
+    row.style.opacity = '.4';
+    setTimeout(() => row.remove(), 200);
+  } catch (e){
+    checkbox.checked = false;
+    checkbox.disabled = false;
+    alert('Failed to complete that task: ' + (e.message || 'unknown error'));
+  }
 }
 
 // Cached so a window resize can redraw at the new width without waiting
@@ -1445,6 +1544,7 @@ async function refresh(){
     renderHourly(data.weather?.hourly);
     renderEvents(data.calendar);
     renderHomeStatus(data.homeAssistant);
+    renderTasks(data.tasks);
     renderControls(data.controls);
     renderRing(data.ring);
 

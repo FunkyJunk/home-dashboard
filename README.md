@@ -54,14 +54,14 @@ git add . && git commit -m "Initial scaffold" && git push
 ```
 From here on, run `claude` inside this folder and it has full repo context.
 
-## 2. Google Calendar + Gmail access
+## 2. Google Calendar + Gmail + Tasks access
 
 Since this is a personal Gmail account (not Google Workspace), use an OAuth 2.0
 "Desktop app" client — service accounts can't read personal Gmail/Calendar
 without a Workspace admin.
 
 1. https://console.cloud.google.com → new project → enable **Google Calendar
-   API** and **Gmail API**.
+   API**, **Gmail API**, and **Google Tasks API**.
 2. Credentials → Create Credentials → OAuth client ID → Application type:
    **Desktop app**. Download the JSON.
 3. Run the one-time consent flow *locally on your desktop* (loopback
@@ -69,6 +69,12 @@ without a Workspace admin.
    token. A small script for this goes in `backend/src/auth/get-refresh-token.js`
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
+
+   If you already have a refresh token from before the Tasks widget existed,
+   it won't carry the `tasks` scope — re-run `get-refresh-token.js` (forces
+   re-consent) and replace `GOOGLE_REFRESH_TOKEN` with the new one, then
+   restart the backend container. No new image build needed, just
+   `docker compose up -d` again once the NAS `.env` is updated.
 
 ## 3. Ring camera access
 

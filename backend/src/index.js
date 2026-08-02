@@ -24,6 +24,7 @@ const oauth2Client = new google.auth.OAuth2(
 );
 oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+const tasksApi = google.tasks({ version: "v1", auth: oauth2Client });
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 app.use("/api/theme", createThemeRouter());
@@ -31,11 +32,12 @@ app.use("/api/theme", createThemeRouter());
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.get("/api/dashboard", async (_req, res) => {
-  const [weather, cal, homeAssistant, nest] = await Promise.allSettled([
+  const [weather, cal, homeAssistant, nest, tasks] = await Promise.allSettled([
     getWeather(),
     getCalendar(),
     getHomeAssistantStates(),
     getNestThermostats(),
+    getGoogleTasks(),
   ]);
 
   const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
@@ -46,14 +48,31 @@ app.get("/api/dashboard", async (_req, res) => {
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
+    tasks: tasks.status === "fulfilled" ? tasks.value : [],
     controls: [
       ...(haStates ? getControllableDevices(haStates) : []),
       ...nestThermostats,
     ],
-    errors: [weather, cal, homeAssistant, nest]
+    errors: [weather, cal, homeAssistant, nest, tasks]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
+});
+
+// Marks a Google Task complete. Requires the `tasks` OAuth scope, which
+// wasn't part of the original refresh token (only calendar.readonly +
+// gmail.readonly) - see README for re-authorizing with get-refresh-token.js.
+app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
+  try {
+    await tasksApi.tasks.patch({
+      tasklist: req.params.taskListId,
+      task: req.params.taskId,
+      requestBody: { status: "completed" },
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to complete task" });
+  }
 });
 
 // Explicit allowlist - this dashboard has no login, so anyone on the LAN who
@@ -288,6 +307,48 @@ async function getCalendar() {
     summary: e.summary,
     start: e.start?.dateTime || e.start?.date,
   }));
+}
+
+// Only ever shows incomplete tasks (showCompleted: false) - this is a
+// glance-at-the-dashboard widget, not a full task manager. Pulls every
+// list (most accounts just have the one default "My Tasks", but nothing
+// stops someone from having more) and merges them, soonest due date first.
+async function getGoogleTasks() {
+  if (!process.env.GOOGLE_REFRESH_TOKEN) {
+    throw new Error("tasks integration not yet configured");
+  }
+  const { data: listsData } = await tasksApi.tasklists.list({ maxResults: 20 });
+  const lists = listsData.items || [];
+
+  const perList = await Promise.all(
+    lists.map((list) =>
+      tasksApi.tasks.list({
+        tasklist: list.id,
+        showCompleted: false,
+        showHidden: false,
+        maxResults: 50,
+      })
+    )
+  );
+
+  const allTasks = [];
+  perList.forEach(({ data }, i) => {
+    for (const t of data.items || []) {
+      allTasks.push({
+        id: t.id,
+        taskListId: lists[i].id,
+        title: t.title || "(untitled)",
+        due: t.due || null,
+        notes: t.notes || null,
+      });
+    }
+  });
+
+  allTasks.sort((a, b) => {
+    if (a.due && b.due) return new Date(a.due) - new Date(b.due);
+    return a.due ? -1 : b.due ? 1 : 0;
+  });
+  return allTasks;
 }
 
 let nestAccessToken = null;
