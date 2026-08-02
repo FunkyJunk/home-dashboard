@@ -5,6 +5,8 @@ import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
 import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
+import { getAllRokuStatuses } from "./roku.js";
+import { fetchPlexImage } from "./plex.js";
 
 const app = express();
 app.use(express.json());
@@ -32,12 +34,13 @@ app.use("/api/theme", createThemeRouter());
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.get("/api/dashboard", async (_req, res) => {
-  const [weather, cal, homeAssistant, nest, tasks] = await Promise.allSettled([
+  const [weather, cal, homeAssistant, nest, tasks, roku] = await Promise.allSettled([
     getWeather(),
     getCalendar(),
     getHomeAssistantStates(),
     getNestThermostats(),
     getReminders(),
+    getAllRokuStatuses(),
   ]);
 
   const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
@@ -49,11 +52,12 @@ app.get("/api/dashboard", async (_req, res) => {
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
     tasks: tasks.status === "fulfilled" ? tasks.value : [],
+    roku: roku.status === "fulfilled" ? roku.value : [],
     controls: [
       ...(haStates ? getControllableDevices(haStates) : []),
       ...nestThermostats,
     ],
-    errors: [weather, cal, homeAssistant, nest, tasks]
+    errors: [weather, cal, homeAssistant, nest, tasks, roku]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
@@ -66,6 +70,19 @@ app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to complete task" });
+  }
+});
+
+// Proxies a Plex poster/art image so the Plex token never reaches the
+// browser - this dashboard has no login of its own.
+app.get("/api/plex/image", async (req, res) => {
+  try {
+    const upstream = await fetchPlexImage(req.query.path);
+    res.set("Content-Type", upstream.headers.get("content-type") || "image/jpeg");
+    res.set("Cache-Control", "private, max-age=300");
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to fetch image" });
   }
 });
 

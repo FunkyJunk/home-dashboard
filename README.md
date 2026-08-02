@@ -144,7 +144,39 @@ successor, the **Device Access** program:
    mode (those tokens expire after 7 days) - move it to "Production" in the
    Cloud Console's OAuth consent screen settings to avoid that.
 
-## 6. Synology NAS setup
+## 6. Roku Devices card (direct ECP + Plex)
+
+Talks directly to each Roku over its local, unauthenticated control API
+(ECP, port 8060) rather than through Home Assistant - no token needed for
+this part. Roku's own API only ever exposes the active app's *name* though;
+it doesn't share poster art, title, or playback position for any app
+except Plex (confirmed against a real device: every other app - Netflix,
+Prime Video, etc. - reports nothing more than its name). For the richer
+"now playing" metadata, this cross-references your Plex Media Server's own
+session list by matching each Roku's IP address against Plex's reported
+player address.
+
+1. `backend/src/roku.js` hardcodes the LAN IPs of your Roku devices (found
+   via a one-time subnet scan) - give each a DHCP reservation so its IP
+   doesn't drift, and add/remove entries there directly if your devices
+   change.
+2. If you run Plex Media Server, add to `infra/.env` on the NAS:
+   ```
+   PLEX_URL=http://<nas-lan-ip>:32400
+   PLEX_TOKEN=your-plex-token
+   ```
+   Get the token by signing into app.plex.tv, opening any item → **...** →
+   **Get Info** → **View XML**, and copying `X-Plex-Token` from the
+   resulting URL. `PLEX_URL` needs the NAS's actual LAN IP, not
+   `localhost` - the backend runs in its own Docker network namespace, so
+   `localhost` there means the container itself, not the NAS host Plex
+   runs on.
+3. `docker compose up -d` again to pick up the new `.env` values.
+
+   Without `PLEX_TOKEN` set, the card still works - it just shows the
+   active app name for every device, the same as any non-Plex app.
+
+## 7. Synology NAS setup
 
 1. **Control Panel → Terminal & SNMP** → enable SSH.
 2. **Package Center** → install **Container Manager** (DSM 7.x's Docker
@@ -183,13 +215,13 @@ successor, the **Device Access** program:
    access, so the MyQ integration in HA breaks periodically when they change
    something. Not a you-problem — just expect the occasional patch.
 
-## 7. Point the wall tablet
+## 8. Point the wall tablet
 
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
 there's no reverse proxy, no cert, no port forwarding to worry about.
 
-## 8. Business receipts (needs HTTPS)
+## 9. Business receipts (needs HTTPS)
 
 The Business Receipts card saves files straight to a folder on your PC via
 the browser's File System Access API (`showDirectoryPicker`), which only

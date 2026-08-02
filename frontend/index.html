@@ -365,6 +365,52 @@
   .ring-cam-foot{display:flex; align-items:center; justify-content:space-between; gap:.5rem;}
   .ring-cam-name{font-size:.95rem; color:var(--text);}
 
+  .roku-strip{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap:1.25rem;
+    align-items:start;
+  }
+  .roku-tile{
+    display:flex; flex-direction:column; gap:.5rem; cursor:pointer;
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
+    padding:.75rem; text-align:left; font:inherit; color:inherit;
+  }
+  .roku-tile:hover{border-color:var(--teal);}
+  .roku-tile.offline{opacity:.45;}
+  .roku-tile-poster{
+    width:100%; aspect-ratio:2/3; object-fit:cover;
+    border-radius:4px; background:var(--panel); border:1px solid var(--panel-line);
+  }
+  .roku-tile-name{font-size:.85rem; color:var(--text); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .roku-tile-model{font-size:.7rem; color:var(--text-dim);}
+  .roku-tile-title{
+    font-size:.78rem; color:var(--text); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; margin-top:-.2rem;
+  }
+  .roku-progress{
+    width:100%; height:4px; background:var(--panel); border-radius:2px; overflow:hidden;
+  }
+  .roku-progress-fill{height:100%; background:var(--teal); border-radius:2px;}
+  .roku-tile-caption{font-size:.68rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
+
+  .roku-device-modal-inner{max-width:min(90vw, 480px);}
+  .roku-detail-grid{display:flex; gap:1.25rem;}
+  .roku-detail-poster{
+    width:140px; flex-shrink:0; aspect-ratio:2/3; object-fit:cover;
+    border-radius:6px; background:var(--bg-inset); border:1px solid var(--panel-line);
+  }
+  .roku-detail-info{display:flex; flex-direction:column; gap:.5rem; min-width:0;}
+  .roku-detail-title{font-size:1.1rem; font-weight:600; color:var(--text);}
+  .roku-detail-subtitle{font-size:.85rem; color:var(--text-dim);}
+  .roku-detail-summary{font-size:.82rem; color:var(--text-dim); line-height:1.5; margin-top:.4rem;}
+  .roku-detail-times{
+    display:flex; flex-direction:column; gap:.3rem; margin-top:.6rem;
+    font-family:'IBM Plex Mono', monospace; font-size:.78rem; color:var(--text-dim);
+  }
+  .roku-detail-times strong{color:var(--text);}
+  .roku-detail-idle{color:var(--text-dim); font-size:.9rem; padding:1rem 0;}
+
   .modal-overlay{
     display:none;
     position:fixed; inset:0; z-index:100;
@@ -717,6 +763,11 @@
         <h2 class="card-handle">Ring cameras</h2>
         <div class="ring-strip" id="ring-cams"></div>
       </div>
+
+      <div class="card wide" data-tile-id="roku-devices" id="roku-devices-section" style="display:none;">
+        <h2 class="card-handle">Roku Devices</h2>
+        <div class="roku-strip" id="roku-devices"></div>
+      </div>
     </div>
 
     <div class="card receipts-card" id="receipts-section" data-tile-id="receipts">
@@ -982,6 +1033,16 @@
         <button type="button" class="media-btn" data-key="InstantReplay">Replay</button>
         <button type="button" class="media-btn" data-key="Info">Info</button>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="roku-device-modal">
+    <div class="modal-inner roku-device-modal-inner">
+      <div class="modal-head">
+        <span id="roku-device-modal-name"></span>
+        <button class="modal-close" id="roku-device-modal-close">Close</button>
+      </div>
+      <div id="roku-device-modal-body"></div>
     </div>
   </div>
 
@@ -1814,6 +1875,124 @@ function renderRing(cameras){
   });
 }
 
+function formatDuration(ms){
+  if (ms == null) return '';
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// Roku's own ECP never exposes more than the active app's name for
+// anything but Plex (confirmed against every real device) - Plex's own
+// session data (title, show/season/episode, poster, watched/left time)
+// only ever shows up in d.plex, populated server-side by cross-referencing
+// a live Plex session against this device's IP address.
+function plexTitleLabel(p){
+  if (p.type === 'episode' && p.showTitle){
+    const season = p.seasonNumber != null ? `S${p.seasonNumber}` : '';
+    const episode = p.episodeNumber != null ? `E${p.episodeNumber}` : '';
+    const tag = (season || episode) ? ` ${season}${episode}` : '';
+    return `${p.showTitle}${tag}`;
+  }
+  return p.title;
+}
+
+function rokuTileHtml(d){
+  if (d.plex){
+    const pct = d.plex.durationMs ? Math.min(100, Math.round((d.plex.viewOffsetMs / d.plex.durationMs) * 100)) : 0;
+    const poster = d.plex.thumbPath
+      ? `<img class="roku-tile-poster" src="/api/plex/image?path=${encodeURIComponent(d.plex.thumbPath)}" alt="" loading="lazy">`
+      : `<div class="roku-tile-poster"></div>`;
+    return `
+      <button type="button" class="roku-tile" data-id="${escapeHtml(d.id)}">
+        ${poster}
+        <div class="roku-tile-name">${escapeHtml(d.name)}</div>
+        <div class="roku-tile-title">${escapeHtml(plexTitleLabel(d.plex))}</div>
+        <div class="roku-progress"><div class="roku-progress-fill" style="width:${pct}%"></div></div>
+        <div class="roku-tile-caption">${formatDuration(d.plex.viewOffsetMs)} watched &middot; ${formatDuration(d.plex.remainingMs)} left</div>
+      </button>
+    `;
+  }
+  let statusHtml;
+  if (!d.online) statusHtml = `<span class="pill">Offline</span>`;
+  else if (d.idle) statusHtml = `<span class="pill calm">Idle</span>`;
+  else statusHtml = `<span class="pill">${escapeHtml(d.appName)}</span>`;
+
+  return `
+    <button type="button" class="roku-tile${d.online ? '' : ' offline'}" data-id="${escapeHtml(d.id)}">
+      <div class="roku-tile-name">${escapeHtml(d.name)}</div>
+      ${d.model ? `<div class="roku-tile-model">${escapeHtml(d.model)}</div>` : ''}
+      ${statusHtml}
+    </button>
+  `;
+}
+
+let currentRokuDevices = [];
+
+function renderRokuDevices(devices){
+  const section = document.getElementById('roku-devices-section');
+  const el = document.getElementById('roku-devices');
+  currentRokuDevices = devices || [];
+  if (!devices || devices.length === 0){
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  el.innerHTML = devices.map(rokuTileHtml).join('');
+  el.querySelectorAll('.roku-tile').forEach(btn => {
+    btn.addEventListener('click', () => openRokuDeviceModal(btn.dataset.id));
+  });
+}
+
+function openRokuDeviceModal(id){
+  const d = currentRokuDevices.find(x => x.id === id);
+  if (!d) return;
+  document.getElementById('roku-device-modal-name').textContent = d.name;
+  const body = document.getElementById('roku-device-modal-body');
+
+  if (d.plex){
+    const p = d.plex;
+    const pct = p.durationMs ? Math.min(100, Math.round((p.viewOffsetMs / p.durationMs) * 100)) : 0;
+    const poster = p.thumbPath
+      ? `<img class="roku-detail-poster" src="/api/plex/image?path=${encodeURIComponent(p.thumbPath)}" alt="">`
+      : '';
+    const subtitle = [p.year, p.contentRating].filter(Boolean).join(' · ');
+    const endTime = new Date(p.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    body.innerHTML = `
+      <div class="roku-detail-grid">
+        ${poster}
+        <div class="roku-detail-info">
+          <div class="roku-detail-title">${escapeHtml(plexTitleLabel(p))}</div>
+          ${subtitle ? `<div class="roku-detail-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+          <div class="roku-progress"><div class="roku-progress-fill" style="width:${pct}%"></div></div>
+          <div class="roku-detail-times">
+            <span><strong>${formatDuration(p.viewOffsetMs)}</strong> watched</span>
+            <span><strong>${formatDuration(p.remainingMs)}</strong> left</span>
+            <span>Ends around <strong>${escapeHtml(endTime)}</strong></span>
+          </div>
+          ${p.summary ? `<div class="roku-detail-summary">${escapeHtml(p.summary)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  } else if (!d.online){
+    body.innerHTML = `<div class="roku-detail-idle">This device isn't responding right now.</div>`;
+  } else if (d.idle){
+    body.innerHTML = `<div class="roku-detail-idle">Idle${d.screensaver ? ` &middot; ${escapeHtml(d.screensaver)} screensaver` : ''}</div>`;
+  } else {
+    body.innerHTML = `<div class="roku-detail-idle">Playing <strong>${escapeHtml(d.appName)}</strong></div>`;
+  }
+
+  document.getElementById('roku-device-modal').classList.add('open');
+}
+function closeRokuDeviceModal(){
+  document.getElementById('roku-device-modal').classList.remove('open');
+}
+document.getElementById('roku-device-modal-close').addEventListener('click', closeRokuDeviceModal);
+document.getElementById('roku-device-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'roku-device-modal') closeRokuDeviceModal();
+});
+
 let currentPc = null;
 let currentSignalWs = null;
 
@@ -1928,6 +2107,7 @@ async function refresh(){
     renderTasks(data.tasks);
     renderControls(data.controls);
     renderRing(data.ring);
+    renderRokuDevices(data.roku);
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){
@@ -1973,6 +2153,7 @@ const CARD_REGISTRY = [
   { id: 'tasks', label: 'Tasks' },
   { id: 'controls', label: 'Controls' },
   { id: 'ring', label: 'Ring Cameras' },
+  { id: 'roku-devices', label: 'Roku Devices' },
   { id: 'receipts', label: 'Business Receipts' },
 ];
 const CARD_VISIBILITY_KEY = 'dashboard-card-visibility';
