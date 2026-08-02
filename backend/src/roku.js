@@ -37,9 +37,22 @@ async function ecpFetch(ip, path) {
   }
 }
 
+// Roku's XML escapes the standard entities in text content (confirmed live:
+// the "Plex - Free Movies & TV" app name comes back as "...&amp; TV") -
+// decode them here so the frontend's own HTML-escaping doesn't double up
+// and show a literal "&amp;" on screen.
+function decodeXmlEntities(s) {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
 function xmlTag(xml, tag) {
   const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`));
-  return m ? m[1] : null;
+  return m ? decodeXmlEntities(m[1]) : null;
 }
 
 async function getDeviceStatus(device) {
@@ -51,7 +64,7 @@ async function getDeviceStatus(device) {
     const name = xmlTag(infoXml, "friendly-device-name") || xmlTag(infoXml, "user-device-name") || device.id;
     const model = xmlTag(infoXml, "model-name") || "Roku";
     const appMatch = appXml.match(/<app[^>]*>([^<]*)<\/app>/);
-    const appName = appMatch ? appMatch[1].trim() : null;
+    const appName = appMatch ? decodeXmlEntities(appMatch[1].trim()) : null;
     const isHome = !appName || appName === "Roku" || appName === "Roku Dynamic Menu";
     const screensaver = xmlTag(appXml, "screensaver");
 
