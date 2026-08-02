@@ -192,11 +192,15 @@
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
-  .hourly-strip{display:flex; gap:1.25rem; overflow-x:auto; padding-bottom:.25rem;}
-  .hour-block{display:flex; flex-direction:column; align-items:center; gap:.3rem; min-width:3em;}
-  .hour-label{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em;}
-  .hour-temp{font-family:'IBM Plex Mono', monospace; font-size:1.05rem; font-weight:600; color:var(--amber);}
-  .hour-humidity{font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);}
+  .hourly-strip{width:100%;}
+  .hourly-chart{display:block; width:100%;}
+  .hourly-chart .temp-line{fill:none; stroke:var(--amber); stroke-width:2;}
+  .hourly-chart .temp-dot{fill:var(--amber);}
+  .hourly-chart .temp-label{font-family:'IBM Plex Mono', monospace; font-size:13px; font-weight:600; fill:var(--amber); text-anchor:middle;}
+  .hourly-chart .rain-baseline{stroke:var(--panel-line); stroke-width:1;}
+  .hourly-chart .rain-bar{fill:var(--teal); opacity:.45;}
+  .hourly-chart .rain-label{font-family:'IBM Plex Mono', monospace; font-size:10px; fill:var(--teal); text-anchor:middle;}
+  .hourly-chart .hour-label{font-family:'IBM Plex Mono', monospace; font-size:11px; fill:var(--text-dim); text-anchor:middle; text-transform:uppercase; letter-spacing:.04em;}
 
   .ring-card{margin-top:1.5rem;}
   .ring-strip{
@@ -848,32 +852,83 @@ function renderWeek(daily){
   }).join('');
 }
 
+// Cached so a window resize can redraw at the new width without waiting
+// for the next 60s refresh - the SVG's viewBox is built from the
+// container's actual measured pixel width rather than a fixed coordinate
+// space + preserveAspectRatio, which would otherwise stretch the text
+// labels horizontally whenever the rendered width doesn't match a
+// hardcoded viewBox width.
+let lastHourlyWeather = null;
+
 function renderHourly(hourly){
   const el = document.getElementById('hourly-strip');
-  if (!hourly || !hourly.time || !hourly.time.length){
+  if (hourly) lastHourlyWeather = hourly;
+  const data = hourly || lastHourlyWeather;
+  if (!data || !data.time || !data.time.length){
     el.innerHTML = '';
     return;
   }
 
   const now = new Date();
-  let startIdx = hourly.time.findIndex(t => new Date(t) >= now);
+  let startIdx = data.time.findIndex(t => new Date(t) >= now);
   if (startIdx === -1) startIdx = 0;
-  const slice = hourly.time.slice(startIdx, startIdx + 12);
+  const count = 12;
+  const slice = data.time.slice(startIdx, startIdx + count);
+  const n = slice.length;
+  const temps = slice.map((_, i) => data.temperature_2m[startIdx + i]);
+  const rains = slice.map((_, i) => data.precipitation_probability ? data.precipitation_probability[startIdx + i] : null);
 
-  el.innerHTML = slice.map((t, i) => {
-    const idx = startIdx + i;
-    const label = i === 0 ? 'Now' : new Date(t).toLocaleTimeString('en-US', {hour:'numeric'});
-    const temp = Math.round(hourly.temperature_2m[idx]);
-    const humidity = hourly.relative_humidity_2m ? hourly.relative_humidity_2m[idx] : null;
+  const W = Math.max(el.clientWidth, 300);
+  const H = 170;
+  const padX = 28;
+  const chartTop = 26, chartBottom = 92;   // temperature line plotting band
+  const rainBase = 132, rainMaxH = 34;      // rain bars grow upward from rainBase
+  const hourLabelY = H - 6;
+
+  const stepX = n > 1 ? (W - padX * 2) / (n - 1) : 0;
+  const xAt = i => padX + stepX * i;
+
+  const minT = Math.min(...temps), maxT = Math.max(...temps);
+  const range = Math.max(maxT - minT, 4); // avoid a degenerate flat scale
+  const yAt = t => chartBottom - ((t - minT) / range) * (chartBottom - chartTop);
+
+  const linePoints = temps.map((t, i) => `${xAt(i)},${yAt(t)}`).join(' ');
+
+  const tempMarks = temps.map((t, i) => `
+    <circle class="temp-dot" cx="${xAt(i)}" cy="${yAt(t)}" r="3.5"></circle>
+    <text class="temp-label" x="${xAt(i)}" y="${yAt(t) - 12}">${Math.round(t)}&deg;</text>
+  `).join('');
+
+  const rainMarks = rains.map((r, i) => {
+    if (r == null) return '';
+    const h = (Math.max(0, Math.min(100, r)) / 100) * rainMaxH;
     return `
-      <div class="hour-block">
-        <span class="hour-label">${label}</span>
-        <span class="hour-temp">${temp}&deg;</span>
-        ${humidity != null ? `<span class="hour-humidity">${Math.round(humidity)}%</span>` : ''}
-      </div>
+      <rect class="rain-bar" x="${xAt(i) - 9}" y="${rainBase - h}" width="18" height="${Math.max(h, 1)}"></rect>
+      <text class="rain-label" x="${xAt(i)}" y="${rainBase - h - 4}">${Math.round(r)}%</text>
     `;
   }).join('');
+
+  const hourLabels = slice.map((t, i) => {
+    const label = i === 0 ? 'Now' : new Date(t).toLocaleTimeString('en-US', { hour: 'numeric' });
+    return `<text class="hour-label" x="${xAt(i)}" y="${hourLabelY}">${label}</text>`;
+  }).join('');
+
+  el.innerHTML = `
+    <svg class="hourly-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+      <line class="rain-baseline" x1="${padX}" y1="${rainBase}" x2="${W - padX}" y2="${rainBase}"></line>
+      <polyline class="temp-line" points="${linePoints}"></polyline>
+      ${tempMarks}
+      ${rainMarks}
+      ${hourLabels}
+    </svg>
+  `;
 }
+
+let hourlyResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(hourlyResizeTimer);
+  hourlyResizeTimer = setTimeout(() => renderHourly(null), 150);
+});
 
 const TILE_ORDER_KEY = 'dashboard-tile-order';
 const CONTROL_ORDER_KEY = 'dashboard-control-order';

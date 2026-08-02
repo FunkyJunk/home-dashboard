@@ -262,7 +262,7 @@ async function getWeather() {
   const lon = process.env.LON;
   // No forecast_days override - Open-Meteo's default (7) applies to both
   // daily and hourly, and the frontend only slices what it needs from each.
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,relative_humidity_2m&hourly=temperature_2m,weather_code,relative_humidity_2m&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,relative_humidity_2m&hourly=temperature_2m,weather_code,relative_humidity_2m,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`weather fetch failed: ${r.status}`);
   return r.json();
