@@ -70,30 +70,27 @@ without a Workspace admin.
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
 
-## 3. Apple Reminders access (Tasks widget)
+## 3. Todoist access (Tasks widget)
 
-The Tasks widget reads/writes iCloud Reminders directly over CalDAV
-(`backend/src/reminders.js`) rather than Google Tasks — Google's Tasks API
-has no way to expose a due *time* or recurrence at all, even for tasks the
-Tasks app itself shows with both (confirmed directly against the live API
-before switching). CalDAV's `VTODO` items support both natively.
+The Tasks widget reads/writes Todoist tasks (`backend/src/todoist.js`).
+Unlike Google Tasks (no time field) and Apple Reminders (migrated to
+proprietary sync), Todoist has a proper REST API with full date-time support
+and RRULE recurrence — allowing the dashboard to use its real time picker
+and daily-repeat checkbox.
 
-1. https://appleid.apple.com → sign in → **Sign-In and Security → App-Specific
-   Passwords** → generate one for this dashboard.
-2. Add to `infra/.env` on the NAS:
+1. https://todoist.com → create a free account if you don't have one (or sign
+   in).
+2. Go to **Settings → Integrations → Developer** and create a new API token
+   (or use an existing one).
+3. Add to `infra/.env` on the NAS:
    ```
-   APPLE_ID=you@icloud.com
-   APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   TODOIST_TOKEN=your-api-token-here
    ```
-3. `docker compose up -d` again to pick up the new `.env` values — no new
+4. `docker compose up -d` again to pick up the new `.env` values — no new
    image build needed for a plain env change, only for code changes.
 
-   Honest heads-up: this talks to `caldav.icloud.com` using the standard
-   CalDAV protocol (via the `tsdav` client), which is how the Reminders app
-   itself syncs — but it's not an officially documented/versioned public API
-   the way Google's APIs are, so Apple could change server behavior without
-   notice. It's been stable in practice for the many third-party CalDAV
-   clients (Thunderbird, DAVx⁵, etc.) that rely on it.
+   The dashboard will sync with whichever Todoist projects you use — the free
+   tier covers everything needed here.
 
 ## 4. Ring camera access
 

@@ -4,7 +4,7 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder, debugDump } from "./reminders.js";
+import { getReminders, getReminderLists, completeReminder, createReminder } from "./todoist.js";
 
 const app = express();
 app.use(express.json());
@@ -59,23 +59,13 @@ app.get("/api/dashboard", async (_req, res) => {
   });
 });
 
-// Marks an Apple Reminder complete via CalDAV. taskListId is a full CalDAV
-// calendar URL, sent %-encoded by the frontend - Express decodes route
-// params automatically, so no manual decodeURIComponent is needed here.
+// Marks a Todoist task complete via the REST API.
 app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
   try {
     await completeReminder(req.params.taskListId, req.params.taskId);
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to complete task" });
-  }
-});
-
-app.get("/api/tasks/debug", async (req, res) => {
-  try {
-    res.json(await debugDump());
-  } catch (e) {
-    res.status(502).json({ error: e.message || "debug dump failed" });
   }
 });
 
@@ -87,9 +77,8 @@ app.get("/api/tasks/lists", async (req, res) => {
   }
 });
 
-// Manual reminder creation via CalDAV. Unlike Google Tasks, iCloud
-// Reminders genuinely supports a due time and daily recurrence - see
-// reminders.js for how allDay/dailyRepeat map onto the ICS VTODO fields.
+// Manual task creation via Todoist REST API. Supports full due times,
+// all-day dates, and daily recurrence.
 app.post("/api/tasks", async (req, res) => {
   const { taskListId, title, due, allDay, notes, dailyRepeat } = req.body || {};
   if (!title || !String(title).trim()) {
