@@ -19,8 +19,9 @@ Non-obvious rules, each learned from a real failure:
   bottom-heavy. A passing barcode decode does NOT prove orientation; Code128
   decodes upside down. Two independent checks, both required.
 - **Printer geometry is measured, never guessed.** Use
-  `backend/tools/labels/label_calibration_target.py`. Current measured values:
-  margin 2.0 mm, offset +0.45 mm x / +0.20 mm y. Re-measure if printer, driver,
+  `backend/tools/labels/label_calibration_target.py`. Measured: 2.0 mm margin
+  (applied). Mechanical offsets +0.45 mm x / +0.20 mm y measured but NOT wired
+  into the pipeline; the gain is under 0.5 mm. Re-measure if printer, driver,
   or stock changes.
 - **Browser print needs `@page { size: 4in 6in; margin: 0 }`** plus the canvas
   sized in inches, or the browser rescales and the output is silently wrong.

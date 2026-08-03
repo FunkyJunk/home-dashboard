@@ -1,5 +1,23 @@
 # Port the decisions, not the code
 
+## STATUS after audit of frontend/index.html (2026-08-03)
+
+| # | Decision | Audit verdict | Action |
+|---|---|---|---|
+| 1 | Re-threshold after resample | Implemented (line 2660-2670, luminance-weighted) | **None.** Better than the reference. |
+| 2 | Upside-down detection | Missing (detectRotationDeg:2385 returns early) | **DO** |
+| 3 | Cut line vs solid border | Missing | **SKIP.** Both margins are 2.0 mm on this printer; the branch would be dead code. |
+| 4 | Reject page chrome | Partial. Method differs and works; aspect gate absent | **DO the aspect gate only.** Leave the detection method alone. |
+| 5 | Scale on one axis | Partial. Width hardcoded as binding axis; tall content silently crops | **DO. Highest priority.** |
+| 6 | Printer profile | Partial. Margin applied, offsets never wired in | **DECIDE:** wire it or correct CLAUDE.md. Gain is under 0.5 mm. |
+| 7 | Browser print at true size | Implemented and exceeded (always emits a jsPDF at exact page size) | **None.** |
+| 8 | Verification gate | Missing | **DEFER.** Separate project. Advisory by default; block only on mismatch. |
+
+Score: 2 implemented, 3 partial, 3 missing. Two of the three "missing" are
+deliberately not being done.
+
+---
+
 ## The call: keep the JS pipeline. Do not migrate.
 
 `frontend/index.html` holds a deployed, user-tested Canvas implementation.
@@ -69,6 +87,12 @@ upside down. Two independent safeguards, both required.
 
 ### 3. Frame classification: cut line vs solid border
 
+> **SKIPPED.** This was designed when flush-to-edge printing looked achievable.
+> The measured 1.75 mm unprintable border makes `marginCutline` and
+> `marginSolid` both 2.0 mm, so the classifier would compute a value and then
+> branch to the same number. Revisit only if a printer that can reach the edge
+> arrives. Original rationale retained below.
+
 Take the peak ink density of the outer three rows at the top and bottom of the
 detected frame. Solid rules read near 1.00; dashed cut lines read well below
 because of the gaps. Threshold at **0.85**.
@@ -89,6 +113,11 @@ Then gate it: **reject the box unless width/height lands between 0.50 and 0.85.*
 Without that gate a busy page hands you a garbage rectangle and nothing tells you.
 
 ### 5. Scale on one axis, never stretch
+
+> **AUDIT:** line 2650 hardcodes width as the binding axis. Aspect is preserved,
+> so nothing stretches, but content taller than the page aspect is silently
+> cropped by the canvas bounds with no warning. Fix:
+> `const scale = Math.min((W - 2*marginPx)/bbox.width, (H - 2*marginPx)/bbox.height);`
 
 Fit inside the margin box preserving aspect. Any code trying to satisfy margins
 on all four sides independently will stretch, and a stretched barcode fails
