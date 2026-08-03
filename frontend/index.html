@@ -3358,17 +3358,33 @@ async function startAmazonReturnWorkflow(staged){
 // handles text wrapping/fonts itself, same approach as printLabelImage
 // below just generalized to a repeating grid - paginated with plain CSS
 // page-break-after rather than any manual page-size math.
+// A page's 10in of content splits evenly across however many rows it
+// actually has (flex:1 per row) - a page with fewer than 4 items leaves
+// real unused vertical space, so the QR image's size cap is computed per
+// page from its own row count rather than a single fixed value: on a full
+// 4-item page each row is 2.5in tall and the cap must stay under that to
+// avoid overflowing onto an extra page, but a 1-2 item page has room to
+// print the QR much larger and should use it.
+const PAGE_CONTENT_HEIGHT_IN = 10; // 11in letter minus the @page's 0.5in top/bottom margins
+const ROW_HEIGHT_BUFFER_IN = 0.15; // slack for the border-bottom + rendering rounding
+const MAX_QR_IMG_HEIGHT_IN = 3.2;  // ceiling so a lone item on a page doesn't print an oversized QR
+const MAX_QR_IMG_WIDTH_IN = 3.4;
+
 function printAmazonReturnSheet(){
   const items = returnItems.filter(it => it.cropDataUrl);
   if (!items.length) return;
   const pages = [];
   for (let i = 0; i < items.length; i += RETURN_ITEMS_PER_PAGE) pages.push(items.slice(i, i + RETURN_ITEMS_PER_PAGE));
 
-  const pagesHtml = pages.map(pageItems => `
+  const pagesHtml = pages.map(pageItems => {
+    const rowHeightIn = PAGE_CONTENT_HEIGHT_IN / pageItems.length;
+    const imgMaxHeightIn = Math.min(MAX_QR_IMG_HEIGHT_IN, rowHeightIn - ROW_HEIGHT_BUFFER_IN);
+    const imgMaxWidthIn = Math.min(MAX_QR_IMG_WIDTH_IN, rowHeightIn * 1.1);
+    return `
     <div class="return-page">
       ${pageItems.map(it => `
         <div class="return-print-row">
-          <img src="${it.cropDataUrl}">
+          <img src="${it.cropDataUrl}" style="max-height:${imgMaxHeightIn.toFixed(2)}in; max-width:${imgMaxWidthIn.toFixed(2)}in;">
           <div class="return-print-desc">
             <div class="return-print-desc-text">${escapeHtml(it.itemDescription || '')}</div>
             <div class="return-print-qty">Qty: ${escapeHtml(it.quantity || '1')}</div>
@@ -3376,7 +3392,8 @@ function printAmazonReturnSheet(){
         </div>
       `).join('')}
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`<!doctype html><html><head><title>Amazon Return Sheet</title><style>
@@ -3386,7 +3403,7 @@ function printAmazonReturnSheet(){
     .return-page:not(:last-child){ page-break-after: always; }
     .return-print-row { display:flex; align-items:center; gap:.4in; flex:1; border-bottom:1px solid #ccc; min-height:0; }
     .return-print-row:last-child{ border-bottom:none; }
-    .return-print-row img { max-width:2.6in; max-height:2.3in; object-fit:contain; }
+    .return-print-row img { object-fit:contain; }
     .return-print-desc-text { font-size:14pt; margin-bottom:.15in; }
     .return-print-qty { font-size:13pt; font-weight:bold; }
   </style></head><body>${pagesHtml}</body></html>`);
