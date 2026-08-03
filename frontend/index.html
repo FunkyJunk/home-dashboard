@@ -305,20 +305,25 @@
   .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
 
   .scratch-pad-dropzone{
-    border:1px dashed var(--panel-line); border-radius:6px; padding:.9rem;
-    text-align:center; font-size:.78rem; color:var(--text-dim);
-    margin-bottom:.75rem; outline:none; transition:border-color .15s, color .15s;
+    box-sizing:border-box; width:100%; background:var(--bg-inset);
+    border:1px solid var(--panel-line); border-radius:8px; padding:.65rem .8rem;
+    text-align:left; font-size:.85rem; color:var(--text);
+    margin-bottom:.75rem; outline:none; transition:border-color .15s;
     min-height:1.2em; cursor:text;
   }
   .scratch-pad-dropzone:focus,
-  .scratch-pad-dropzone.dragging{border-color:var(--teal); color:var(--teal);}
+  .scratch-pad-dropzone.dragging{border-color:var(--teal);}
   /* contenteditable rather than a plain div - a plain div never offers
      "Paste" in the browser's own right-click menu, only editable surfaces
      do. The placeholder text is CSS-only since contenteditable has no
-     native placeholder attribute; actual pasted content is intercepted
-     and never allowed to land in this element's DOM (see the paste
-     listener below), so it always stays empty/showing the hint. */
-  .scratch-pad-dropzone:empty::before{content:attr(data-placeholder);}
+     native placeholder attribute; actual pasted IMAGE content is
+     intercepted and never allowed to land in this element's DOM (see the
+     paste listener below) - typed text is untouched and lands normally,
+     same as any other text box, ready for a future note-taking use.
+     Styled to read as an ordinary text field (solid border, left-aligned)
+     rather than an upload target - drag/paste still work the same, the
+     dashed "drop target" look was just visual noise most of the time. */
+  .scratch-pad-dropzone:empty::before{content:attr(data-placeholder); color:var(--text-dim);}
   .scratch-pad-notes{display:flex; flex-direction:column; gap:.6rem;}
   .scratch-pad-note{
     background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
@@ -349,8 +354,14 @@
     background:rgba(0,0,0,.6); color:#fff; border:none; cursor:pointer; font-size:.75rem; padding:0;
   }
   .label-stage-thumb-remove:hover{background:var(--coral);}
-  .label-stage-actions{display:flex; gap:.5rem; align-items:center; margin-bottom:.75rem;}
-  .label-stage-actions select{flex:1;}
+  /* Dropdown gets its own row rather than sharing one with the buttons -
+     packed into a single flex row inside a narrow card, the two buttons'
+     own widths left too little room for the select's flex:1 share, and a
+     native <select> just clips its visible text with no minimum width of
+     its own to stop it (unlike a text input, it won't push back). */
+  .label-stage-actions{display:flex; flex-direction:column; gap:.5rem; margin-bottom:.75rem;}
+  .label-stage-buttons{display:flex; gap:.5rem;}
+  .label-stage-buttons .receipt-btn{flex:1;}
 
   .amazon-return-modal-inner{max-width:min(90vw, 720px);}
   .return-items{display:flex; flex-direction:column; gap:.75rem; max-height:60vh; overflow-y:auto; margin-bottom:1rem;}
@@ -839,8 +850,10 @@
             <option value="shipping-label">Print shipping label</option>
             <option value="amazon-return-sheet">Print Amazon Return Sheet</option>
           </select>
-          <button type="button" class="receipt-btn business" id="label-stage-go-btn">Go</button>
-          <button type="button" class="receipt-btn" id="label-stage-clear-btn">Clear</button>
+          <div class="label-stage-buttons">
+            <button type="button" class="receipt-btn business" id="label-stage-go-btn">Go</button>
+            <button type="button" class="receipt-btn" id="label-stage-clear-btn">Clear</button>
+          </div>
         </div>
         <div class="scratch-pad-notes" id="scratch-pad-notes"></div>
       </div>
@@ -3620,6 +3633,11 @@ function applyCardMinimized(tileId){
   if (card) card.classList.toggle('card-minimized', isCardMinimized(tileId));
 }
 
+// These are the compact board-grid tiles (as opposed to the "wide" cards
+// like Controls/Ring/Roku/Receipts) - already small enough that collapsing
+// them saves no real space, so they never get a minimize button at all.
+const NO_MINIMIZE_IDS = new Set(['today', 'home-status', 'week', 'tasks', 'scratch-pad']);
+
 // Wraps each registered card's content (everything after its header) in a
 // single .card-body element, once, so minimizing just needs one class
 // toggle rather than tracking every individual child - the header (h2 or
@@ -3628,6 +3646,7 @@ function applyCardMinimized(tileId){
 // which stay valid getElementById targets regardless of this wrapper.
 function wrapCardBodies(){
   CARD_REGISTRY.forEach(({ id }) => {
+    if (NO_MINIMIZE_IDS.has(id)) return;
     const card = document.querySelector(`.card[data-tile-id="${id}"]`);
     if (!card || card.querySelector(':scope > .card-body')) return;
     const header = card.querySelector(':scope > h2, :scope > .task-card-head');
