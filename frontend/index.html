@@ -2362,15 +2362,31 @@ function colInkDensity(gray, w, h, darkCutoff){
 function detectRotationDeg(img){
   const w = img.naturalWidth, h = img.naturalHeight;
   const { gray } = toGrayscale(img, w, h);
-  const rowDensity = rowInkDensity(gray, w, h, LABEL_DARK);
-  const colDensity = colInkDensity(gray, w, h, LABEL_DARK);
+
+  // Band-counting has to happen within the printed content itself, not the
+  // full pasted image - pasted images vary in size and margin every time,
+  // and any white border around the label (even a little) dilutes a
+  // genuine full-span divider line below the density threshold once it's
+  // measured against the whole image's larger extent rather than just the
+  // label's own width/height. A real label showed both counts coming back
+  // as zero because of exactly this - trimming first fixes it.
+  const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF) || { x: 0, y: 0, width: w, height: h };
+  const bboxGray = new Uint8ClampedArray(bbox.width * bbox.height);
+  for (let dy = 0; dy < bbox.height; dy++){
+    for (let dx = 0; dx < bbox.width; dx++){
+      bboxGray[dy * bbox.width + dx] = gray[(bbox.y + dy) * w + (bbox.x + dx)];
+    }
+  }
+
+  const rowDensity = rowInkDensity(bboxGray, bbox.width, bbox.height, LABEL_DARK);
+  const colDensity = colInkDensity(bboxGray, bbox.width, bbox.height, LABEL_DARK);
   const rowBands = rowDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
   const colBands = colDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
   if (rowBands >= colBands) return 0;
 
-  const half = Math.floor(w / 2);
+  const half = Math.floor(bbox.width / 2);
   let leftSum = 0, rightSum = 0;
-  for (let x = 0; x < w; x++){
+  for (let x = 0; x < bbox.width; x++){
     if (x < half) leftSum += colDensity[x]; else rightSum += colDensity[x];
   }
   // Barcode on the left means the label's bottom is on the left, so
