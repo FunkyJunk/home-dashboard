@@ -929,8 +929,17 @@ document.getElementById('theme-extract-save-btn').addEventListener('click', save
 // browser's own right-click menu offers "Paste" (a plain div never gets
 // that option), same reasoning as the dashboard's Scratch Pad dropzone.
 // Never lets pasted text/HTML actually land in its DOM.
+//
+// The paste LISTENER itself is on document, not this element - a
+// right-click "Paste" doesn't reliably move keyboard focus to a specific
+// contenteditable first the way typing into it would, so a listener
+// scoped to just this div can miss the event entirely depending on
+// browser/OS. Listening globally (gated on the extract view actually
+// being open) is what the Scratch Pad dropzone already does for exactly
+// this reason - same fix, applied here.
 const themeExtractPasteZone = document.getElementById('theme-extract-paste-zone');
-themeExtractPasteZone.addEventListener('paste', async (e) => {
+document.addEventListener('paste', async (e) => {
+  if (document.getElementById('theme-extract-view').style.display === 'none') return;
   const items = e.clipboardData?.items || [];
   for (const item of items){
     if (item.type.startsWith('image/')){
@@ -939,7 +948,7 @@ themeExtractPasteZone.addEventListener('paste', async (e) => {
       return;
     }
   }
-  e.preventDefault();
+  if (themeExtractPasteZone.contains(e.target)) e.preventDefault();
 });
 themeExtractPasteZone.addEventListener('dragover', (e) => { e.preventDefault(); themeExtractPasteZone.classList.add('dragging'); });
 themeExtractPasteZone.addEventListener('dragleave', () => themeExtractPasteZone.classList.remove('dragging'));
