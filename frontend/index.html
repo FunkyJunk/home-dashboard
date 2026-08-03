@@ -2509,19 +2509,108 @@ function splitContentBlocksRows(gray, w, bbox){
 // contiguous row block and re-tightening the horizontal bounds within just
 // that range. Shared by rotation detection and the normalize pipeline so
 // both agree on where the label actually is, not just one of them.
+// Detects a printed cut-line rectangle (solid OR dashed) enclosing the
+// ENTIRE rough content region - some labels (e.g. Amazon return labels)
+// print a single frame around everything including the barcode, and
+// anything outside it (a page caption, print instructions, whatever else
+// happens to be on the page) needs to be discarded outright rather than
+// reasoned about, since what that stray content looks like varies every
+// time. Scans inward from each edge of the rough bbox for the first row/
+// column with at least LINE_DENSITY ink coverage - a dashed line still has
+// roughly half its length inked, well above ordinary text, without
+// requiring a fully solid line.
+//
+// A barcode's own bars can trigger this same density test (a single dark
+// bar is a solid line spanning its own full height too), so any edge
+// found this way is re-checked for whether it's an ISOLATED line: probing
+// a bit further inward should drop to near-white. A genuine border has
+// clear space just inside it before content starts; a barcode does not -
+// the very next columns are more bars.
+function detectFrameRect(gray, w, h, roughBbox){
+  const LINE_DENSITY = 0.4;
+  const ISOLATED_DENSITY = 0.1;
+  const { x, y, width, height } = roughBbox;
+  const maxScan = Math.floor(Math.min(width, height) * 0.25);
+  // Probe over a BAND, not a single point - a barcode's own bars are
+  // periodic, so a single probe point can land in a gap between bars and
+  // look "isolated" purely by chance. Averaging density across several bar
+  // periods reliably reads as "still dense" instead.
+  const probeStart = Math.max(6, Math.round(Math.min(width, height) * 0.015));
+  const probeEnd = probeStart * 3;
+
+  function rowBandDensity(y0, y1, x0, x1){
+    let dark = 0, total = 0;
+    for (let ry = y0; ry <= y1; ry++){
+      const rowStart = ry * w;
+      for (let cx = x0; cx <= x1; cx++){ total++; if (gray[rowStart + cx] < LABEL_DARK) dark++; }
+    }
+    return dark / total;
+  }
+  function colBandDensity(x0, x1, y0, y1){
+    let dark = 0, total = 0;
+    for (let cx = x0; cx <= x1; cx++){
+      for (let ry = y0; ry <= y1; ry++){ total++; if (gray[ry * w + cx] < LABEL_DARK) dark++; }
+    }
+    return dark / total;
+  }
+
+  let top = null, bottom = null, left = null, right = null;
+  for (let i = 0; i < Math.min(maxScan, height); i++){
+    const ry = y + i;
+    if (rowBandDensity(ry, ry, x, x + width - 1) < LINE_DENSITY) continue;
+    const p0 = Math.min(ry + probeStart, y + height - 1), p1 = Math.min(ry + probeEnd, y + height - 1);
+    if (rowBandDensity(p0, p1, x, x + width - 1) < ISOLATED_DENSITY){ top = i; break; }
+  }
+  for (let i = 0; i < Math.min(maxScan, height); i++){
+    const ry = y + height - 1 - i;
+    if (rowBandDensity(ry, ry, x, x + width - 1) < LINE_DENSITY) continue;
+    const p1 = Math.max(ry - probeStart, y), p0 = Math.max(ry - probeEnd, y);
+    if (rowBandDensity(p0, p1, x, x + width - 1) < ISOLATED_DENSITY){ bottom = height - 1 - i; break; }
+  }
+  for (let i = 0; i < Math.min(maxScan, width); i++){
+    const cx = x + i;
+    if (colBandDensity(cx, cx, y, y + height - 1) < LINE_DENSITY) continue;
+    const p0 = Math.min(cx + probeStart, x + width - 1), p1 = Math.min(cx + probeEnd, x + width - 1);
+    if (colBandDensity(p0, p1, y, y + height - 1) < ISOLATED_DENSITY){ left = i; break; }
+  }
+  for (let i = 0; i < Math.min(maxScan, width); i++){
+    const cx = x + width - 1 - i;
+    if (colBandDensity(cx, cx, y, y + height - 1) < LINE_DENSITY) continue;
+    const p1 = Math.max(cx - probeStart, x), p0 = Math.max(cx - probeEnd, x);
+    if (colBandDensity(p0, p1, y, y + height - 1) < ISOLATED_DENSITY){ right = width - 1 - i; break; }
+  }
+
+  if (top == null || bottom == null || left == null || right == null || bottom <= top || right <= left) return null;
+
+  // Only trust this as a full enclosing frame if it covers nearly the
+  // whole rough bbox - a border found well inside a smaller region isn't
+  // "everything is inside this frame", it's some other, unrelated line.
+  const COVERAGE = 0.85;
+  const frame = { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
+  if (frame.width < width * COVERAGE || frame.height < height * COVERAGE) return null;
+  return frame;
+}
+
 function isolateLabelBbox(gray, w, h){
   const roughBbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
   if (!roughBbox) return null;
+
+  const frame = detectFrameRect(gray, w, h, roughBbox);
+  if (frame) return frame;
+
+  // No single frame wraps everything (e.g. a USPS label's printed border
+  // wraps only the address block, with the barcode sitting outside it as
+  // its own column) - fall back to isolating the dominant content section
+  // from smaller disconnected fragments above/below it. A real label
+  // commonly has several well-spaced internal sections (address blocks, a
+  // banner, the barcode) with genuine blank rows between them - that's
+  // normal and must NOT get pruned down to just one section. Only exclude
+  // smaller fragments when a single block clearly dominates the content;
+  // otherwise trust the full rough bbox rather than risk cutting real
+  // label content away.
   const rowBlocks = splitContentBlocksRows(gray, w, roughBbox);
   if (rowBlocks.length <= 1) return roughBbox;
 
-  // A real label commonly has several well-spaced internal sections
-  // (address blocks, a banner, the barcode) with genuine blank rows
-  // between them - that's normal and must NOT get pruned down to just one
-  // section. Only exclude smaller fragments (e.g. a page caption sitting
-  // below an Amazon return label's dashed cut line, entirely outside it)
-  // when a single block clearly dominates the content; otherwise trust the
-  // full rough bbox rather than risk cutting real label content away.
   const largest = rowBlocks.reduce((a, b) => (b.height > a.height ? b : a));
   const DOMINANCE_FRACTION = 0.5;
   if (largest.height < roughBbox.height * DOMINANCE_FRACTION) return roughBbox;
