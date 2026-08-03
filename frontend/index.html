@@ -341,20 +341,6 @@
   .label-crop-status{font-size:.9rem; color:var(--text-dim); padding:2rem 0; text-align:center;}
   .label-crop-preview-wrap{display:flex; flex-direction:column; align-items:center; gap:.75rem; margin-bottom:1.25rem;}
   .label-crop-preview-wrap canvas{max-width:100%; max-height:50vh; border-radius:4px; border:1px solid var(--panel-line);}
-  .label-crop-canvas-wrap{position:relative; display:inline-block; margin-bottom:1.25rem; max-width:100%;}
-  .label-crop-canvas-wrap canvas{display:block; max-width:100%; border-radius:4px;}
-  .label-crop-box{
-    position:absolute; border:2px solid var(--teal); background:rgba(79,184,174,.12);
-    box-shadow:0 0 0 9999px rgba(0,0,0,.45); cursor:move; touch-action:none;
-  }
-  .label-crop-handle{
-    position:absolute; width:14px; height:14px; background:var(--teal);
-    border:2px solid var(--panel); border-radius:50%; touch-action:none;
-  }
-  .label-crop-handle[data-handle="nw"]{top:-8px; left:-8px; cursor:nwse-resize;}
-  .label-crop-handle[data-handle="ne"]{top:-8px; right:-8px; cursor:nesw-resize;}
-  .label-crop-handle[data-handle="sw"]{bottom:-8px; left:-8px; cursor:nesw-resize;}
-  .label-crop-handle[data-handle="se"]{bottom:-8px; right:-8px; cursor:nwse-resize;}
   .label-crop-fields{display:flex; flex-direction:column; gap:1rem; margin-bottom:1rem;}
 
   .add-task-modal-inner{
@@ -1118,18 +1104,7 @@
       <div class="label-crop-status" id="label-crop-status">Analyzing image&hellip;</div>
       <div class="label-crop-preview-wrap" id="label-crop-preview-wrap" style="display:none;">
         <canvas id="label-crop-preview-canvas"></canvas>
-        <button type="button" class="receipt-btn" id="label-crop-show-adjust-btn">Adjust crop&hellip;</button>
       </div>
-      <div class="label-crop-canvas-wrap" id="label-crop-canvas-wrap" style="display:none;">
-        <canvas id="label-crop-canvas"></canvas>
-        <div class="label-crop-box" id="label-crop-box">
-          <div class="label-crop-handle" data-handle="nw"></div>
-          <div class="label-crop-handle" data-handle="ne"></div>
-          <div class="label-crop-handle" data-handle="sw"></div>
-          <div class="label-crop-handle" data-handle="se"></div>
-        </div>
-      </div>
-      <button type="button" class="receipt-btn" id="label-crop-save-preview-btn" style="display:none; margin-bottom:1.25rem;">Save preview</button>
       <div class="label-crop-fields" id="label-crop-fields" style="display:none;">
         <div class="add-task-row">
           <div class="add-task-field">
@@ -2280,15 +2255,17 @@ function sanitizeFilenamePart(s){
   return String(s || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '-').slice(0, 60) || 'Unknown';
 }
 
-// originalImg is the pristine loaded/rendered image, never mutated; labelImg
-// is the currently-rotated version actually shown and cropped - always
-// rederived fresh from originalImg by the *total* desired angle rather than
-// rotating incrementally, so repeated rotation never compounds quality loss.
+// originalImg is the pristine loaded/rendered image, never mutated.
+// imageRotation is the CURRENT effective clockwise rotation (0/90/180/270) -
+// either auto-detected or forced by the Rotate button. normalizedResult
+// holds the deterministically-composed final canvas (see
+// normalizeLabelToCanvas below); both the preview and the eventual PDF/print
+// output are drawn straight from it - there's no separate crop rectangle to
+// keep in sync.
 let originalImg = null;
-let labelImg = null;
-let imageRotation = 0; // 0/90/180/270, clockwise
-let cropBoxState = null;
-let cropDisplayScale = 1;
+let imageRotation = 0;
+let labelRotationOverride = null; // null = trust auto-detection, else forced by Rotate
+let normalizedResult = null; // { canvas, scale, upscaled }
 
 function getSelectedPreset(){
   const presets = loadLabelPresets();
@@ -2312,24 +2289,6 @@ function rotateImageToCanvas(img, degrees){
   return canvas;
 }
 
-// Carries a percentage-based crop box (measured against the ORIGINAL,
-// unrotated image) through the same clockwise rotation, so the AI's
-// suggested label location still lines up after the image itself is
-// straightened out.
-function rotateCropBoxPct(box, degrees){
-  const { xPct: x, yPct: y, widthPct: w, heightPct: h } = box;
-  switch (((degrees % 360) + 360) % 360){
-    case 90: return { xPct: 100 - (y + h), yPct: x, widthPct: h, heightPct: w };
-    case 180: return { xPct: 100 - (x + w), yPct: 100 - (y + h), widthPct: w, heightPct: h };
-    case 270: return { xPct: y, yPct: 100 - (x + w), widthPct: h, heightPct: w };
-    default: return box;
-  }
-}
-
-async function applyRotation(){
-  labelImg = imageRotation === 0 ? originalImg : await loadImage(rotateImageToCanvas(originalImg, imageRotation).toDataURL('image/png'));
-}
-
 function populateLabelPresetSelect(){
   const presets = loadLabelPresets();
   const sel = document.getElementById('label-crop-preset');
@@ -2343,212 +2302,213 @@ function populateLabelPresetSelect(){
 // shipping label with its barcode cropped off is unscannable), while a
 // too-generous one costs nothing since it just gets fit down to the
 // target ratio next - so this always biases toward capturing more.
-function padBoxPixels(box, naturalW, naturalH, frac){
-  const padX = box.width * frac, padY = box.height * frac;
-  const x = Math.max(0, box.x - padX);
-  const y = Math.max(0, box.y - padY);
-  return {
-    x, y,
-    width: Math.min(naturalW - x, box.width + padX * 2),
-    height: Math.min(naturalH - y, box.height + padY * 2),
-  };
-}
+// Deterministic label normalization, ported from a Python reference script
+// (label_4x6.py) - replaces asking a vision model to guess a rotation angle
+// and crop rectangle, which repeatedly proved unreliable on real photos,
+// with pixel-level rules instead: a shipping label always has a solid
+// printed frame and a dense barcode block, and those are far more precise,
+// reproducible signals than an LLM's own coordinate estimate.
+const LABEL_DPI = 300;
+const LABEL_MARGIN_MM = 2.0;     // safe area for label-feed drift
+const LABEL_DARK = 128;          // ink cutoff (0-255) for structural detection
+const LABEL_RULE_DENSITY = 0.80; // row/col counts as a full-width rule above this ink fraction
+const LABEL_REBINARIZE = 160;    // post-resample cutoff, biased toward ink so thin bars survive
+const LABEL_WHITE_CUTOFF = 250;  // trim bbox: anything darker than this counts as printed content
 
-// Fits a target aspect ratio within (and centered on) a pixel box.
-function fitBoxToRatio(box, aspectRatio, naturalW, naturalH){
-  let boxW, boxH;
-  if (box.width / box.height > aspectRatio){ boxH = box.height; boxW = boxH * aspectRatio; }
-  else { boxW = box.width; boxH = boxW / aspectRatio; }
-  let boxX = box.x + (box.width - boxW) / 2;
-  let boxY = box.y + (box.height - boxH) / 2;
-  boxX = Math.max(0, Math.min(boxX, naturalW - boxW));
-  boxY = Math.max(0, Math.min(boxY, naturalH - boxH));
-  return { x: boxX, y: boxY, width: boxW, height: boxH };
-}
+function mmToPx(mm, dpi){ return Math.round(mm / 25.4 * dpi); }
 
-// Shipping labels reliably have a solid black printed border around the
-// whole thing - a much more precise, pixel-exact signal than an LLM's own
-// numeric coordinate estimate (which has proven imprecise twice on real
-// labels). Scans row-by-row and column-by-column within a search window
-// around the AI's rough box for the strongest near-solid dark line close
-// to each edge, and returns the rectangle those four lines form. Returns
-// null if no clear border is found (e.g. a label with no printed border
-// at all), so the caller can fall back to the padded AI estimate.
-function detectLabelBorder(img, roughBox){
-  const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
-  const marginX = roughBox.width * 0.25, marginY = roughBox.height * 0.25;
-  const searchX = Math.max(0, roughBox.x - marginX);
-  const searchY = Math.max(0, roughBox.y - marginY);
-  const searchW = Math.min(naturalW - searchX, roughBox.width + marginX * 2);
-  const searchH = Math.min(naturalH - searchY, roughBox.height + marginY * 2);
-  if (searchW < 10 || searchH < 10) return null;
-
-  // Downscale the search region for speed - border detection only needs
-  // enough resolution to find a line, not full print quality - then scale
-  // the found coordinates back up to real pixels at the end.
-  const scale = Math.min(1, 500 / Math.max(searchW, searchH));
-  const sw = Math.max(1, Math.round(searchW * scale));
-  const sh = Math.max(1, Math.round(searchH * scale));
+// Draws img onto an offscreen canvas at its natural size and returns both
+// the canvas and a flat grayscale luminance array (ITU-R 601) - the common
+// input every detection step below works from.
+function toGrayscale(img, w, h){
   const canvas = document.createElement('canvas');
-  canvas.width = sw; canvas.height = sh;
+  canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, searchX, searchY, searchW, searchH, 0, 0, sw, sh);
-  let data;
-  try {
-    data = ctx.getImageData(0, 0, sw, sh).data;
-  } catch {
-    return null; // e.g. a tainted canvas from a cross-origin image - just skip detection
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const gray = new Uint8ClampedArray(w * h);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++){
+    gray[p] = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
   }
+  return { canvas, gray };
+}
 
-  const DARK = 110; // luminance 0-255 below this counts as ink
-  const rowDark = new Array(sh).fill(0);
-  const colDark = new Array(sw).fill(0);
-  for (let y = 0; y < sh; y++){
-    for (let x = 0; x < sw; x++){
-      const i = (y * sw + x) * 4;
-      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      if (lum < DARK){ rowDark[y]++; colDark[x]++; }
+function rowInkDensity(gray, w, h, darkCutoff){
+  const density = new Float64Array(h);
+  for (let y = 0; y < h; y++){
+    let dark = 0;
+    const rowStart = y * w;
+    for (let x = 0; x < w; x++) if (gray[rowStart + x] < darkCutoff) dark++;
+    density[y] = dark / w;
+  }
+  return density;
+}
+function colInkDensity(gray, w, h, darkCutoff){
+  const density = new Float64Array(w);
+  for (let x = 0; x < w; x++){
+    let dark = 0;
+    for (let y = 0; y < h; y++) if (gray[y * w + x] < darkCutoff) dark++;
+    density[x] = dark / h;
+  }
+  return density;
+}
+
+// A correctly-oriented label has many heavily-inked ROWS (frame rules, the
+// banner bar, the tracking barcode) and few heavily-inked columns; if
+// columns win instead, the label is sideways. To pick a direction, the
+// tracking barcode block is always the densest region on the label and
+// always belongs at the bottom, so whichever half of the image has denser
+// ink overall is that "bottom" half.
+function detectRotationDeg(img){
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const { gray } = toGrayscale(img, w, h);
+  const rowDensity = rowInkDensity(gray, w, h, LABEL_DARK);
+  const colDensity = colInkDensity(gray, w, h, LABEL_DARK);
+  const rowBands = rowDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
+  const colBands = colDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
+  if (rowBands >= colBands) return 0;
+
+  const half = Math.floor(w / 2);
+  let leftSum = 0, rightSum = 0;
+  for (let x = 0; x < w; x++){
+    if (x < half) leftSum += colDensity[x]; else rightSum += colDensity[x];
+  }
+  // Barcode on the left means the label's bottom is on the left, so
+  // rotating 270 clockwise brings the top back to the top; barcode on the
+  // right needs only a 90 clockwise correction.
+  return leftSum > rightSum ? 270 : 90;
+}
+
+// Bounding box of every non-white pixel - trims away the blank margin a
+// screenshot or PDF export tends to have around the actual printed label.
+function contentBbox(gray, w, h, whiteCutoff){
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++){
+    const rowStart = y * w;
+    for (let x = 0; x < w; x++){
+      if (gray[rowStart + x] < whiteCutoff){
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
     }
   }
-  for (let y = 0; y < sh; y++) rowDark[y] /= sw;
-  for (let x = 0; x < sw; x++) colDark[x] /= sh;
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
 
-  const LINE = 0.5; // a real border line spans at least half the width/height
-  function findLine(fracs, from, to, step){
-    for (let i = from; i !== to; i += step){
-      if (fracs[i] >= LINE) return i;
-    }
-    return null;
+// Row indices (relative to the trimmed content's own top) where the ink
+// spans the full width - the label's printed frame rules. Anchoring the
+// final composition to these instead of the raw bounding box matters
+// because stray marks below the frame (a loose QR code under the tracking
+// barcode) sit outside it and would otherwise skew a plain bbox measurement.
+function findRuleRows(gray, w, bbox){
+  const rows = [];
+  for (let y = bbox.y; y < bbox.y + bbox.height; y++){
+    let dark = 0;
+    const rowStart = y * w;
+    for (let x = bbox.x; x < bbox.x + bbox.width; x++) if (gray[rowStart + x] < LABEL_DARK) dark++;
+    if (dark / bbox.width > LABEL_RULE_DENSITY) rows.push(y - bbox.y);
   }
-  const top = findLine(rowDark, 0, Math.floor(sh * 0.3), 1);
-  const bottom = findLine(rowDark, sh - 1, Math.floor(sh * 0.7), -1);
-  const left = findLine(colDark, 0, Math.floor(sw * 0.3), 1);
-  const right = findLine(colDark, sw - 1, Math.floor(sw * 0.7), -1);
-  if (top == null || bottom == null || left == null || right == null || bottom <= top || right <= left){
-    return null;
+  return rows;
+}
+
+// The full pipeline: rotate upright, trim to printed content, scale to the
+// preset's width (driven by the printed frame, not the raw bbox), snap back
+// to pure black/white so barcode edges survive resampling, then paste onto
+// a true white canvas at the preset's physical size with the frame's top
+// rule pinned to the margin.
+async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
+  const rotatedImg = rotationDeg === 0
+    ? sourceImg
+    : await loadImage(rotateImageToCanvas(sourceImg, rotationDeg).toDataURL('image/png'));
+
+  const w = rotatedImg.naturalWidth, h = rotatedImg.naturalHeight;
+  const { canvas: rotatedCanvas, gray } = toGrayscale(rotatedImg, w, h);
+
+  const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
+  if (!bbox) throw new Error('image appears blank');
+
+  const ruleRows = findRuleRows(gray, w, bbox);
+  if (!ruleRows.length) throw new Error('no full-width rules found - is this a label?');
+  const topRule = ruleRows[0];
+
+  const trimmedCanvas = document.createElement('canvas');
+  trimmedCanvas.width = bbox.width; trimmedCanvas.height = bbox.height;
+  trimmedCanvas.getContext('2d').drawImage(rotatedCanvas, bbox.x, bbox.y, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
+
+  const W = Math.round(preset.widthIn * LABEL_DPI), H = Math.round(preset.heightIn * LABEL_DPI);
+  const marginPx = mmToPx(LABEL_MARGIN_MM, LABEL_DPI);
+  const scale = (W - 2 * marginPx) / bbox.width;
+  const scaledW = Math.max(1, Math.round(bbox.width * scale));
+  const scaledH = Math.max(1, Math.round(bbox.height * scale));
+  const scaledCanvas = document.createElement('canvas');
+  scaledCanvas.width = scaledW; scaledCanvas.height = scaledH;
+  const scaledCtx = scaledCanvas.getContext('2d');
+  scaledCtx.imageSmoothingEnabled = true;
+  scaledCtx.imageSmoothingQuality = 'high';
+  scaledCtx.drawImage(trimmedCanvas, 0, 0, scaledW, scaledH);
+
+  // Re-threshold to pure black/white - the single most important step for
+  // barcode scannability, since resampling leaves soft gray edges on the
+  // bars that a thermal printer would otherwise dither into noise.
+  const scaledData = scaledCtx.getImageData(0, 0, scaledW, scaledH);
+  const d = scaledData.data;
+  for (let i = 0; i < d.length; i += 4){
+    const lum = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+    const v = lum < LABEL_REBINARIZE ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
   }
+  scaledCtx.putImageData(scaledData, 0, 0);
 
-  return {
-    x: searchX + left / scale,
-    y: searchY + top / scale,
-    width: (right - left) / scale,
-    height: (bottom - top) / scale,
-  };
+  const finalCanvas = document.createElement('canvas');
+  finalCanvas.width = W; finalCanvas.height = H;
+  const finalCtx = finalCanvas.getContext('2d');
+  finalCtx.fillStyle = '#fff';
+  finalCtx.fillRect(0, 0, W, H);
+  const y = marginPx - Math.round(topRule * scale);
+  finalCtx.drawImage(scaledCanvas, marginPx, y);
+
+  return { canvas: finalCanvas, scale, upscaled: scale > 1 };
 }
 
-function updateCropBoxOverlay(){
-  const box = document.getElementById('label-crop-box');
-  box.style.left = (cropBoxState.x * cropDisplayScale) + 'px';
-  box.style.top = (cropBoxState.y * cropDisplayScale) + 'px';
-  box.style.width = (cropBoxState.width * cropDisplayScale) + 'px';
-  box.style.height = (cropBoxState.height * cropDisplayScale) + 'px';
-}
-
-// Draws whatever labelImg currently is (post-rotation) onto the ADJUST
-// mode's full-image canvas, behind the draggable box - only used once the
-// user opts into manual adjustment.
-function redrawCropCanvas(){
-  const canvas = document.getElementById('label-crop-canvas');
-  const maxDisplayWidth = 560;
-  cropDisplayScale = Math.min(1, maxDisplayWidth / labelImg.naturalWidth);
-  canvas.width = labelImg.naturalWidth * cropDisplayScale;
-  canvas.height = labelImg.naturalHeight * cropDisplayScale;
-  canvas.getContext('2d').drawImage(labelImg, 0, 0, canvas.width, canvas.height);
-}
-
-// Draws the FINAL cropped result (per the current cropBoxState) - this is
-// the default view: no box to fiddle with, just the already-auto-cropped
-// label, matching what a fully-automatic tool should feel like.
-function redrawPreviewCanvas(){
+function drawNormalizedPreview(){
   const canvas = document.getElementById('label-crop-preview-canvas');
   const maxDisplayWidth = 400;
-  const scale = Math.min(1, maxDisplayWidth / cropBoxState.width);
-  canvas.width = cropBoxState.width * scale;
-  canvas.height = cropBoxState.height * scale;
-  canvas.getContext('2d').drawImage(
-    labelImg,
-    cropBoxState.x, cropBoxState.y, cropBoxState.width, cropBoxState.height,
-    0, 0, canvas.width, canvas.height
-  );
+  const scale = Math.min(1, maxDisplayWidth / normalizedResult.canvas.width);
+  canvas.width = normalizedResult.canvas.width * scale;
+  canvas.height = normalizedResult.canvas.height * scale;
+  canvas.getContext('2d').drawImage(normalizedResult.canvas, 0, 0, canvas.width, canvas.height);
 }
 
-let cropMode = 'preview'; // 'preview' (auto-cropped result, default) or 'adjust' (manual box)
-
-function showCropPreviewMode(){
-  cropMode = 'preview';
-  document.getElementById('label-crop-preview-wrap').style.display = 'flex';
-  document.getElementById('label-crop-canvas-wrap').style.display = 'none';
-  document.getElementById('label-crop-save-preview-btn').style.display = 'none';
-  redrawPreviewCanvas();
-}
-function showCropAdjustMode(){
-  cropMode = 'adjust';
-  document.getElementById('label-crop-preview-wrap').style.display = 'none';
-  document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
-  document.getElementById('label-crop-save-preview-btn').style.display = '';
-  redrawCropCanvas();
-  updateCropBoxOverlay();
-}
-
-// The main auto-crop pipeline: takes the AI's rough box (if any), refines
-// it with real pixel-based border detection, pads as a fallback safety
-// margin if detection doesn't find a clear border, then fits the result to
-// the selected preset's aspect ratio. Runs once right after analysis, and
-// again if the user changes preset/rotation while still in preview mode.
-function computeAutoCropBox(analysis){
+// Re-runs the whole normalize pipeline for the currently-selected preset and
+// rotation (auto-detected unless the user has overridden it via Rotate),
+// and redraws the preview from the result.
+async function runLabelPipeline(){
   const preset = getSelectedPreset();
-  const ratio = preset.widthIn / preset.heightIn;
-  const naturalW = labelImg.naturalWidth, naturalH = labelImg.naturalHeight;
-
-  const rotatedAiBox = analysis?.cropBox ? rotateCropBoxPct(analysis.cropBox, imageRotation) : null;
-  const roughBox = rotatedAiBox
-    ? {
-        x: (rotatedAiBox.xPct / 100) * naturalW,
-        y: (rotatedAiBox.yPct / 100) * naturalH,
-        width: (rotatedAiBox.widthPct / 100) * naturalW,
-        height: (rotatedAiBox.heightPct / 100) * naturalH,
-      }
-    : { x: naturalW * 0.15, y: naturalH * 0.08, width: naturalW * 0.7, height: naturalH * 0.35 };
-
-  // detectLabelBorder is scoped here to the smaller bordered "main info" box
-  // (postage/logo + addresses), not the full label - it's agnostic to what
-  // size box it's asked to refine, it just scans an expanded window around
-  // whatever rough box it's given.
-  const infoBox = detectLabelBorder(labelImg, roughBox) || padBoxPixels(roughBox, naturalW, naturalH, 0.08);
-
-  // Anchor the crop to the detected info box's own top/left/right edges
-  // (with a small centered margin) rather than trying to also detect the
-  // barcode/QR section below it separately - standard label proportions
-  // mean that extending down from this box's top, at the preset's fixed
-  // aspect ratio using this box's own width, naturally reaches past the
-  // barcode and tracking QR code underneath.
-  const margin = infoBox.width * 0.03;
-  let left = Math.max(0, infoBox.x - margin);
-  let right = Math.min(naturalW, infoBox.x + infoBox.width + margin);
-  let top = Math.max(0, infoBox.y - margin);
-  let width = right - left;
-  let height = width / ratio;
-
-  if (top + height > naturalH){
-    height = naturalH - top;
-    const clampedWidth = height * ratio;
-    left = left + (width - clampedWidth) / 2;
-    width = clampedWidth;
-  }
-
-  return { x: left, y: top, width, height };
+  imageRotation = labelRotationOverride !== null ? labelRotationOverride : detectRotationDeg(originalImg);
+  normalizedResult = await normalizeLabelToCanvas(originalImg, imageRotation, preset);
+  drawNormalizedPreview();
 }
 
-function renderLabelCropCanvas(analysis){
-  document.getElementById('label-crop-status').style.display = 'none';
-  document.getElementById('label-crop-fields').style.display = 'flex';
-  document.getElementById('label-crop-confirm-btn').style.display = '';
-
-  cropBoxState = computeAutoCropBox(analysis);
-  showCropPreviewMode();
-
-  document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
-  document.getElementById('label-crop-recipient').value = analysis?.recipientName || '';
+// Runs the deterministic pipeline and reflects success/failure in the UI -
+// shared by the initial analysis and by the Rotate/preset-change handlers,
+// since a manual override can also legitimately fail to find rules (e.g. an
+// image with no printed frame at all).
+async function runPipelineAndUpdateUI(){
+  try {
+    await runLabelPipeline();
+    document.getElementById('label-crop-status').style.display = 'none';
+    document.getElementById('label-crop-preview-wrap').style.display = 'flex';
+    document.getElementById('label-crop-confirm-btn').style.display = '';
+  } catch (e){
+    document.getElementById('label-crop-status').style.display = '';
+    document.getElementById('label-crop-status').textContent =
+      `Could not find the label's printed frame automatically (${e.message}). Try Rotate.`;
+    document.getElementById('label-crop-preview-wrap').style.display = 'none';
+    document.getElementById('label-crop-confirm-btn').style.display = 'none';
+  }
 }
 
 function openLabelCropModal(){
@@ -2556,7 +2516,6 @@ function openLabelCropModal(){
   document.getElementById('label-crop-status').style.display = '';
   document.getElementById('label-crop-status').textContent = 'Analyzing image…';
   document.getElementById('label-crop-preview-wrap').style.display = 'none';
-  document.getElementById('label-crop-canvas-wrap').style.display = 'none';
   document.getElementById('label-crop-fields').style.display = 'none';
   document.getElementById('label-crop-confirm-btn').style.display = 'none';
   document.getElementById('label-crop-save-status').textContent = '';
@@ -2566,9 +2525,9 @@ function openLabelCropModal(){
 function closeLabelCropModal(){
   document.getElementById('label-crop-modal').classList.remove('open');
   originalImg = null;
-  labelImg = null;
   imageRotation = 0;
-  cropBoxState = null;
+  labelRotationOverride = null;
+  normalizedResult = null;
   lastAnalysis = null;
 }
 
@@ -2596,27 +2555,31 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
     if (res.ok) analysis = await res.json();
   } catch {
     // Analysis is best-effort - the crop tool still works without it, just
-    // with a centered default box, no auto-rotation, and blank marketplace/
-    // recipient fields.
+    // with blank marketplace/recipient fields; rotation and cropping are
+    // fully deterministic and don't depend on it at all.
   }
   const tAnalyzed = performance.now();
   lastAnalysis = analysis;
 
-  imageRotation = [0, 90, 180, 270].includes(analysis?.rotationDegrees) ? analysis.rotationDegrees : 0;
-  await applyRotation();
-  const tRotated = performance.now();
-  renderLabelCropCanvas(analysis);
-  const tCropped = performance.now();
+  document.getElementById('label-crop-fields').style.display = 'flex';
+  document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
+  document.getElementById('label-crop-recipient').value = analysis?.recipientName || '';
+
+  labelRotationOverride = null;
+  await runPipelineAndUpdateUI();
+  const tDone = performance.now();
 
   console.log('[shipping-label debug]', JSON.stringify({
     analysis,
     imageRotation,
-    naturalW: labelImg.naturalWidth,
-    naturalH: labelImg.naturalHeight,
-    cropBoxState,
+    naturalW: originalImg.naturalWidth,
+    naturalH: originalImg.naturalHeight,
+    normalized: normalizedResult
+      ? { w: normalizedResult.canvas.width, h: normalizedResult.canvas.height, scale: normalizedResult.scale, upscaled: normalizedResult.upscaled }
+      : null,
   }));
 
-  console.log(`[shipping-label timing] image load: ${Math.round(tImgLoaded - t0)}ms | analyze (network+server): ${Math.round(tAnalyzed - tImgLoaded)}ms | rotate: ${Math.round(tRotated - tAnalyzed)}ms | detect+crop: ${Math.round(tCropped - tRotated)}ms | TOTAL: ${Math.round(tCropped - t0)}ms`);
+  console.log(`[shipping-label timing] image load: ${Math.round(tImgLoaded - t0)}ms | analyze (network+server): ${Math.round(tAnalyzed - tImgLoaded)}ms | detect+normalize: ${Math.round(tDone - tAnalyzed)}ms | TOTAL: ${Math.round(tDone - t0)}ms`);
 }
 
 // Global paste listener (not scoped to the dropzone) so pasting an image
@@ -2661,110 +2624,22 @@ scratchPadDropzone.addEventListener('drop', async (e) => {
 // Re-fits the current crop box to a new aspect ratio, anchored on its
 // existing center rather than restarting from scratch - shared by both
 // switching presets and rotating.
-function refitCropBoxToRatio(ratio){
-  const cx = cropBoxState.x + cropBoxState.width / 2;
-  const cy = cropBoxState.y + cropBoxState.height / 2;
-  let w = cropBoxState.width, h = w / ratio;
-  if (h > cropBoxState.height * 3){ h = cropBoxState.height; w = h * ratio; }
-  cropBoxState = {
-    x: Math.max(0, Math.min(cx - w / 2, labelImg.naturalWidth - w)),
-    y: Math.max(0, Math.min(cy - h / 2, labelImg.naturalHeight - h)),
-    width: w, height: h,
-  };
-  updateCropBoxOverlay();
-}
-
-document.getElementById('label-crop-preset').addEventListener('change', () => {
-  if (!labelImg) return;
-  if (cropMode === 'preview'){
-    // Re-run the full auto-crop pipeline (detection included) at the new
-    // aspect ratio, rather than just re-fitting the old box - a 4x4 crop
-    // and a 4x6 crop of the same label can legitimately need different
-    // framing, not just a rescale of the same rectangle.
-    cropBoxState = computeAutoCropBox(lastAnalysis);
-    redrawPreviewCanvas();
-  } else {
-    const preset = getSelectedPreset();
-    refitCropBoxToRatio(preset.widthIn / preset.heightIn);
-  }
+document.getElementById('label-crop-preset').addEventListener('change', async () => {
+  if (!originalImg) return;
+  // A 4x4 crop and a 4x6 crop of the same label legitimately need
+  // different scaling/margins, so just re-run the whole pipeline rather
+  // than trying to rescale the previous result.
+  await runPipelineAndUpdateUI();
 });
 
-// Rotates the actual image content 90 clockwise each click (cycling
-// 0->90->180->270->0), for whenever the AI's auto-detected orientation was
-// wrong or there was no analysis to go on at all. Since the underlying
-// image dimensions swap on a 90/270 turn, the old crop box's screen
-// position stops meaning anything, so this recomputes from scratch rather
-// than trying to carry it over.
+// Forces the rotation the deterministic detector should have picked,
+// cycling 0->90->180->270->0, for whenever the frame/ink heuristic gets it
+// wrong or there was no clear frame to measure at all.
 document.getElementById('label-crop-rotate-btn').addEventListener('click', async () => {
   if (!originalImg) return;
-  imageRotation = (imageRotation + 90) % 360;
-  await applyRotation();
-  if (cropMode === 'preview'){
-    cropBoxState = computeAutoCropBox(lastAnalysis);
-    redrawPreviewCanvas();
-  } else {
-    redrawCropCanvas();
-    const preset = getSelectedPreset();
-    cropBoxState = fitBoxToRatio(
-      { x: labelImg.naturalWidth * 0.1, y: labelImg.naturalHeight * 0.1, width: labelImg.naturalWidth * 0.8, height: labelImg.naturalHeight * 0.8 },
-      preset.widthIn / preset.heightIn, labelImg.naturalWidth, labelImg.naturalHeight
-    );
-    updateCropBoxOverlay();
-  }
+  labelRotationOverride = (imageRotation + 90) % 360;
+  await runPipelineAndUpdateUI();
 });
-
-document.getElementById('label-crop-show-adjust-btn').addEventListener('click', showCropAdjustMode);
-document.getElementById('label-crop-save-preview-btn').addEventListener('click', showCropPreviewMode);
-
-// Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
-// whatever preset is selected - pointer events, matching the same
-// mouse+touch approach the card drag-reorder feature uses elsewhere.
-(() => {
-  const box = document.getElementById('label-crop-box');
-  let dragMode = null, startPointer = null, startBox = null;
-
-  box.addEventListener('pointerdown', (e) => {
-    dragMode = e.target.classList.contains('label-crop-handle') ? e.target.dataset.handle : 'move';
-    startPointer = { x: e.clientX, y: e.clientY };
-    startBox = { ...cropBoxState };
-    box.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  });
-
-  box.addEventListener('pointermove', (e) => {
-    if (!dragMode || !labelImg) return;
-    const dx = (e.clientX - startPointer.x) / cropDisplayScale;
-    const dy = (e.clientY - startPointer.y) / cropDisplayScale;
-    const naturalW = labelImg.naturalWidth, naturalH = labelImg.naturalHeight;
-    const ratio = startBox.width / startBox.height;
-
-    if (dragMode === 'move'){
-      cropBoxState.x = Math.max(0, Math.min(startBox.x + dx, naturalW - startBox.width));
-      cropBoxState.y = Math.max(0, Math.min(startBox.y + dy, naturalH - startBox.height));
-    } else {
-      let newWidth = startBox.width;
-      if (dragMode === 'se' || dragMode === 'ne') newWidth = startBox.width + dx;
-      else newWidth = startBox.width - dx;
-      newWidth = Math.max(40, newWidth);
-      let newHeight = newWidth / ratio;
-
-      let newX = startBox.x, newY = startBox.y;
-      if (dragMode === 'nw'){ newX = startBox.x + (startBox.width - newWidth); newY = startBox.y + (startBox.height - newHeight); }
-      else if (dragMode === 'ne'){ newY = startBox.y + (startBox.height - newHeight); }
-      else if (dragMode === 'sw'){ newX = startBox.x + (startBox.width - newWidth); }
-
-      newWidth = Math.max(40, Math.min(newWidth, naturalW - newX, (naturalH - newY) * ratio));
-      newHeight = newWidth / ratio;
-
-      cropBoxState = { x: Math.max(0, newX), y: Math.max(0, newY), width: newWidth, height: newHeight };
-    }
-    updateCropBoxOverlay();
-  });
-
-  const endDrag = () => { dragMode = null; };
-  box.addEventListener('pointerup', endDrag);
-  box.addEventListener('pointercancel', endDrag);
-})();
 
 function printLabelImage(dataUrl, preset){
   const printWindow = window.open('', '_blank');
@@ -2793,15 +2668,7 @@ async function confirmLabelCrop(){
     const marketplace = document.getElementById('label-crop-marketplace').value.trim() || 'Other';
     const recipient = document.getElementById('label-crop-recipient').value.trim() || 'Unknown';
 
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = Math.round(cropBoxState.width);
-    cropCanvas.height = Math.round(cropBoxState.height);
-    cropCanvas.getContext('2d').drawImage(
-      labelImg,
-      cropBoxState.x, cropBoxState.y, cropBoxState.width, cropBoxState.height,
-      0, 0, cropCanvas.width, cropCanvas.height
-    );
-    const croppedDataUrl = cropCanvas.toDataURL('image/png');
+    const croppedDataUrl = normalizedResult.canvas.toDataURL('image/png');
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: 'in', format: [preset.widthIn, preset.heightIn] });
