@@ -9,6 +9,7 @@ import { getAllRokuStatuses } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
+import { analyzeReturnScreenshot } from "./amazonReturns.js";
 
 const app = express();
 // Default 100kb limit rejects any real pasted photo/screenshot once
@@ -124,6 +125,22 @@ app.post("/api/shipping-label/analyze", async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to analyze label" });
+  }
+});
+
+// Analyzes an Amazon return QR screenshot's item table: description and
+// quantity - see amazonReturns.js. The QR crop itself is deterministic and
+// happens entirely on the frontend.
+app.post("/api/amazon-return/analyze", async (req, res) => {
+  const { image, mediaType } = req.body || {};
+  if (!image || typeof image !== "string") {
+    return res.status(400).json({ error: "image is required" });
+  }
+  try {
+    const result = await analyzeReturnScreenshot(image, mediaType || "image/png");
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to analyze return screenshot" });
   }
 });
 

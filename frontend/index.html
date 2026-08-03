@@ -337,6 +337,39 @@
   .scratch-pad-note-delete:hover{color:var(--coral);}
   .scratch-pad-note-delete svg{width:.9em; height:.9em;}
 
+  .label-stage-thumbs{display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem;}
+  .label-stage-thumb{
+    position:relative; width:64px; height:64px; border:1px solid var(--panel-line);
+    border-radius:4px; overflow:hidden; background:var(--bg-inset); flex-shrink:0;
+  }
+  .label-stage-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .label-stage-thumb-remove{
+    position:absolute; top:2px; right:2px; width:1.1em; height:1.1em; line-height:1;
+    display:flex; align-items:center; justify-content:center; border-radius:50%;
+    background:rgba(0,0,0,.6); color:#fff; border:none; cursor:pointer; font-size:.75rem; padding:0;
+  }
+  .label-stage-thumb-remove:hover{background:var(--coral);}
+  .label-stage-actions{display:flex; gap:.5rem; align-items:center; margin-bottom:.75rem;}
+  .label-stage-actions select{flex:1;}
+
+  .amazon-return-modal-inner{max-width:min(90vw, 720px);}
+  .return-items{display:flex; flex-direction:column; gap:.75rem; max-height:60vh; overflow-y:auto; margin-bottom:1rem;}
+  .return-item{
+    display:flex; gap:.75rem; padding:.6rem; border:1px solid var(--panel-line);
+    border-radius:6px; position:relative; align-items:flex-start;
+  }
+  .return-item.error{border-color:var(--coral-dim);}
+  .return-item-error{color:var(--coral); font-size:.85rem; flex:1;}
+  .return-item-thumb{
+    width:110px; height:110px; flex-shrink:0; display:flex; align-items:center;
+    justify-content:center; background:var(--bg-inset); border-radius:4px; overflow:hidden;
+  }
+  .return-item-thumb img{max-width:100%; max-height:100%;}
+  .return-item-loading{font-size:.75rem; color:var(--text-dim); text-align:center;}
+  .return-item-fields{flex:1; display:flex; flex-direction:column; gap:.35rem; padding-right:1.5em;}
+  .return-item-fields label{font-size:.7rem; color:var(--text-dim);}
+  .return-item-remove{position:absolute; top:.4rem; right:.4rem;}
+
   .label-crop-modal-inner{max-width:min(90vw, 640px);}
   .label-crop-status{font-size:.9rem; color:var(--text-dim); padding:2rem 0; text-align:center;}
   .label-crop-preview-wrap{display:flex; flex-direction:column; align-items:center; gap:.75rem; margin-bottom:1.25rem;}
@@ -799,7 +832,16 @@
           <h2 class="card-handle">Scratch Pad</h2>
           <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
         </div>
-        <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" contenteditable="true" data-placeholder="Paste an image or drag a PDF here for a shipping label"></div>
+        <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" contenteditable="true" data-placeholder="Paste or drag image(s)/PDF here"></div>
+        <div class="label-stage-thumbs" id="label-stage-thumbs"></div>
+        <div class="label-stage-actions" id="label-stage-actions" style="display:none;">
+          <select class="add-task-ctrl" id="label-stage-action-select">
+            <option value="shipping-label">Print shipping label</option>
+            <option value="amazon-return-sheet">Print Amazon Return Sheet</option>
+          </select>
+          <button type="button" class="receipt-btn business" id="label-stage-go-btn">Go</button>
+          <button type="button" class="receipt-btn" id="label-stage-clear-btn">Clear</button>
+        </div>
         <div class="scratch-pad-notes" id="scratch-pad-notes"></div>
       </div>
 
@@ -1137,6 +1179,21 @@
       <div class="ignore-modal-actions">
         <button type="button" class="receipt-btn business" id="label-crop-confirm-btn" style="display:none;">Print &amp; Save</button>
         <button type="button" class="receipt-btn" id="label-crop-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="amazon-return-modal">
+    <div class="modal-inner label-crop-modal-inner amazon-return-modal-inner">
+      <div class="modal-head">
+        <span>Amazon Return Sheet</span>
+        <button class="modal-close" id="amazon-return-modal-close">Close</button>
+      </div>
+      <div class="return-items" id="amazon-return-items"></div>
+      <div class="ignore-modal-actions">
+        <span class="receipts-status" id="amazon-return-count"></span>
+        <button type="button" class="receipt-btn business" id="amazon-return-print-btn" disabled>Print Return Sheet</button>
+        <button type="button" class="receipt-btn" id="amazon-return-cancel-btn">Cancel</button>
       </div>
     </div>
   </div>
@@ -2878,6 +2935,47 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
   console.log(`[shipping-label timing] image load: ${Math.round(tImgLoaded - t0)}ms | analyze (network+server): ${Math.round(tAnalyzed - tImgLoaded)}ms | detect+normalize: ${Math.round(tDone - tAnalyzed)}ms | TOTAL: ${Math.round(tDone - t0)}ms`);
 }
 
+// Staging area: paste/drag accumulates images as thumbnails (rather than
+// immediately kicking off a single-image workflow) so a multi-image tool
+// like the Amazon Return Sheet can collect several before anything runs.
+// Choosing an action from the dropdown and clicking Go is what actually
+// starts a workflow; staged images survive across multiple paste/drop
+// events until Go or Clear is pressed.
+let stagedImages = []; // { id, dataUrl, mediaType, thumbUrl }
+
+async function makeThumbDataUrl(dataUrl, maxDim){
+  const img = await loadImage(dataUrl);
+  const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const { canvas, ctx } = makeCanvas(w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/png');
+}
+
+async function addStagedImage(dataUrl, mediaType){
+  const thumbUrl = await makeThumbDataUrl(dataUrl, 128);
+  stagedImages.push({ id: 'staged-' + Math.random().toString(36).slice(2), dataUrl, mediaType, thumbUrl });
+  renderStagedThumbs();
+}
+
+function renderStagedThumbs(){
+  const wrap = document.getElementById('label-stage-thumbs');
+  wrap.innerHTML = stagedImages.map(s => `
+    <div class="label-stage-thumb" data-id="${s.id}">
+      <img src="${s.thumbUrl}" alt="">
+      <button type="button" class="label-stage-thumb-remove" data-remove-staged="${s.id}" title="Remove">&times;</button>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('[data-remove-staged]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      stagedImages = stagedImages.filter(s => s.id !== btn.dataset.removeStaged);
+      renderStagedThumbs();
+    });
+  });
+  document.getElementById('label-stage-actions').style.display = stagedImages.length ? 'flex' : 'none';
+}
+
 // Global paste listener (not scoped to the dropzone) so pasting an image
 // anywhere on the page kicks this off, same as most native apps - but it
 // only ever intercepts when the clipboard actually contains an image, so
@@ -2891,7 +2989,7 @@ document.addEventListener('paste', async (e) => {
       e.preventDefault();
       const blob = item.getAsFile();
       const dataUrl = await blobToDataUrl(blob);
-      startLabelWorkflow(dataUrl, item.type);
+      await addStagedImage(dataUrl, item.type);
       return;
     }
   }
@@ -2906,15 +3004,39 @@ scratchPadDropzone.addEventListener('dragleave', () => scratchPadDropzone.classL
 scratchPadDropzone.addEventListener('drop', async (e) => {
   e.preventDefault();
   scratchPadDropzone.classList.remove('dragging');
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  if (file.type === 'application/pdf'){
-    const dataUrl = await renderPdfFirstPageToImageUrl(file);
-    startLabelWorkflow(dataUrl, 'image/png');
-  } else if (file.type.startsWith('image/')){
-    const dataUrl = await blobToDataUrl(file);
-    startLabelWorkflow(dataUrl, file.type);
+  const files = Array.from(e.dataTransfer.files || []);
+  for (const file of files){
+    if (file.type === 'application/pdf'){
+      const dataUrl = await renderPdfFirstPageToImageUrl(file);
+      await addStagedImage(dataUrl, 'image/png');
+    } else if (file.type.startsWith('image/')){
+      const dataUrl = await blobToDataUrl(file);
+      await addStagedImage(dataUrl, file.type);
+    }
   }
+});
+
+// "Print shipping label" only ever works one image at a time (it's an
+// interactive rotate/crop tool) - Go takes just the first staged image and
+// leaves any others staged, rather than silently discarding them.
+document.getElementById('label-stage-go-btn').addEventListener('click', () => {
+  if (!stagedImages.length) return;
+  const action = document.getElementById('label-stage-action-select').value;
+  if (action === 'shipping-label'){
+    const first = stagedImages[0];
+    stagedImages = stagedImages.slice(1);
+    renderStagedThumbs();
+    startLabelWorkflow(first.dataUrl, first.mediaType);
+  } else if (action === 'amazon-return-sheet'){
+    const batch = stagedImages;
+    stagedImages = [];
+    renderStagedThumbs();
+    startAmazonReturnWorkflow(batch);
+  }
+});
+document.getElementById('label-stage-clear-btn').addEventListener('click', () => {
+  stagedImages = [];
+  renderStagedThumbs();
 });
 
 // Re-fits the current crop box to a new aspect ratio, anchored on its
@@ -3049,6 +3171,241 @@ document.getElementById('label-preset-add-btn').addEventListener('click', () => 
   nameInput.value = ''; widthInput.value = ''; heightInput.value = '';
   renderLabelPresetsList();
   populateLabelPresetSelect();
+});
+
+// Amazon Return Sheet: crops just the QR code plus its immediately
+// surrounding text out of an arbitrary screenshot (item table above it is
+// deliberately excluded from the crop - its description/quantity are read
+// via Claude vision instead, same "pixels for geometry, Claude for text"
+// split as the shipping-label tool), then lays up to 4 per US-letter page
+// for printing.
+//
+// Detection is purely deterministic, reusing the same row-band splitting
+// and content-bbox helpers as the shipping-label pipeline above: a real QR
+// code's own inked bounding box is always near-square (unlike a table row
+// or a line of text, which are always much wider than tall) and has a much
+// higher ink density than ordinary text (a checkerboard of modules vs.
+// sparse strokes), so those two properties alone reliably pick it out of
+// whatever else got swept into the pasted screenshot.
+const QR_MIN_ASPECT = 0.75, QR_MAX_ASPECT = 1.35, QR_MIN_DENSITY = 0.25;
+const RETURN_ITEMS_PER_PAGE = 4;
+
+function bandStats(gray, w, h, roughBbox, block){
+  const region = { x: roughBbox.x, y: roughBbox.y + block.y, width: roughBbox.width, height: block.height };
+  const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF, region);
+  if (!bbox) return null;
+  let dark = 0;
+  for (let y = bbox.y; y < bbox.y + bbox.height; y++){
+    const rowStart = y * w;
+    for (let x = bbox.x; x < bbox.x + bbox.width; x++) if (gray[rowStart + x] < LABEL_DARK) dark++;
+  }
+  return { bbox, density: dark / (bbox.width * bbox.height), aspect: bbox.width / bbox.height };
+}
+
+// Finds the QR code's own tight ink bbox, then bounds the final crop to
+// that block plus exactly one band above it (the carrier/store line) and
+// up to two bands below it (the box/label instructions + the RMA ID line)
+// - real examples show exactly this shape. The cap matters as much as the
+// detection: without it, any stray artifact further down an over-eager
+// screenshot would get swept into the crop right along with the RMA ID.
+function findQrGroupBbox(gray, w, h){
+  const roughBbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
+  if (!roughBbox) throw new Error('image appears blank');
+  const blocks = splitContentBlocksRows(gray, w, roughBbox);
+  if (!blocks.length) throw new Error('no content found');
+
+  const stats = blocks.map(b => bandStats(gray, w, h, roughBbox, b));
+  let qrIdx = -1, bestDensity = -1;
+  stats.forEach((s, i) => {
+    if (!s) return;
+    if (s.aspect >= QR_MIN_ASPECT && s.aspect <= QR_MAX_ASPECT && s.density >= QR_MIN_DENSITY && s.density > bestDensity){
+      bestDensity = s.density; qrIdx = i;
+    }
+  });
+  if (qrIdx < 0) throw new Error("couldn't find a QR code in this image");
+
+  const startIdx = Math.max(0, qrIdx - 1);
+  const endIdx = Math.min(blocks.length - 1, qrIdx + 2);
+  const groupTop = blocks[startIdx].y;
+  const groupBottom = blocks[endIdx].y + blocks[endIdx].height;
+  const groupRegion = { x: roughBbox.x, y: roughBbox.y + groupTop, width: roughBbox.width, height: groupBottom - groupTop };
+  const tight = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF, groupRegion);
+  if (!tight) throw new Error('could not isolate QR block');
+
+  console.debug('[findQrGroupBbox]', JSON.stringify({
+    qrIdx, bandCount: blocks.length,
+    bands: stats.map(s => s && { density: Math.round(s.density * 100) / 100, aspect: Math.round(s.aspect * 100) / 100 }),
+    tight,
+  }));
+
+  // Pad outward slightly so nothing right at the edge of the tight ink
+  // bbox (a QR's own quiet zone, a line's descender) gets clipped.
+  const padX = Math.round(tight.width * 0.04), padY = Math.round(tight.height * 0.04);
+  const x = Math.max(0, tight.x - padX), y = Math.max(0, tight.y - padY);
+  const x2 = Math.min(w, tight.x + tight.width + padX), y2 = Math.min(h, tight.y + tight.height + padY);
+  return { x, y, width: x2 - x, height: y2 - y };
+}
+
+async function cropQrGroup(img){
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const { gray } = toGrayscale(img, w, h);
+  const box = findQrGroupBbox(gray, w, h);
+  const { canvas, ctx } = makeCanvas(box.width, box.height);
+  ctx.drawImage(img, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
+  return canvas;
+}
+
+async function analyzeReturnImage(dataUrl, mediaType){
+  const base64 = dataUrl.split(',')[1];
+  const res = await fetch('/api/amazon-return/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: base64, mediaType }),
+  });
+  if (!res.ok) throw new Error('analysis failed');
+  return res.json(); // { itemDescription, quantity }
+}
+
+let returnItems = []; // { id, sourceDataUrl, mediaType, cropDataUrl, itemDescription, quantity, error }
+
+function amazonReturnItemHtml(item){
+  const pending = !item.cropDataUrl && !item.error;
+  return `<div class="return-item${item.error && !item.cropDataUrl ? ' error' : ''}" data-id="${item.id}">
+    <div class="return-item-thumb">
+      ${pending ? '<div class="return-item-loading">Analyzing&hellip;</div>' : ''}
+      ${item.cropDataUrl ? `<img src="${item.cropDataUrl}" alt="">` : ''}
+      ${item.error && !item.cropDataUrl ? `<div class="return-item-error">${escapeHtml(item.error)}</div>` : ''}
+    </div>
+    ${item.cropDataUrl ? `
+    <div class="return-item-fields">
+      <label>Item description</label>
+      <textarea class="add-task-ctrl return-item-desc" data-id="${item.id}" rows="2">${escapeHtml(item.itemDescription)}</textarea>
+      <label>Quantity</label>
+      <input type="text" class="add-task-ctrl return-item-qty" data-id="${item.id}" value="${escapeHtml(item.quantity)}">
+      ${item.error ? `<div class="receipts-status error">${escapeHtml(item.error)}</div>` : ''}
+    </div>` : ''}
+    <button type="button" class="label-stage-thumb-remove return-item-remove" data-remove-return="${item.id}" title="Remove">&times;</button>
+  </div>`;
+}
+
+function renderAmazonReturnItems(){
+  const el = document.getElementById('amazon-return-items');
+  el.innerHTML = returnItems.map(amazonReturnItemHtml).join('');
+  el.querySelectorAll('[data-remove-return]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      returnItems = returnItems.filter(it => it.id !== btn.dataset.removeReturn);
+      renderAmazonReturnItems();
+    });
+  });
+  el.querySelectorAll('.return-item-desc').forEach(t => {
+    t.addEventListener('input', () => {
+      const it = returnItems.find(x => x.id === t.dataset.id);
+      if (it) it.itemDescription = t.value;
+    });
+  });
+  el.querySelectorAll('.return-item-qty').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const it = returnItems.find(x => x.id === inp.dataset.id);
+      if (it) it.quantity = inp.value;
+    });
+  });
+  const ready = returnItems.filter(it => it.cropDataUrl).length;
+  document.getElementById('amazon-return-print-btn').disabled = !ready;
+  document.getElementById('amazon-return-count').textContent = ready
+    ? `${ready} item${ready === 1 ? '' : 's'}, ${Math.ceil(ready / RETURN_ITEMS_PER_PAGE)} page${Math.ceil(ready / RETURN_ITEMS_PER_PAGE) === 1 ? '' : 's'}`
+    : '';
+}
+
+async function processReturnItem(item){
+  try {
+    const img = await loadImage(item.sourceDataUrl);
+    const cropCanvas = await cropQrGroup(img);
+    item.cropDataUrl = cropCanvas.toDataURL('image/png');
+  } catch (e){
+    item.error = "Couldn't find a QR code in this image (" + (e.message || 'unknown error') + ')';
+    renderAmazonReturnItems();
+    return;
+  }
+  try {
+    const analysis = await analyzeReturnImage(item.sourceDataUrl, item.mediaType);
+    item.itemDescription = analysis.itemDescription || '';
+    item.quantity = analysis.quantity != null ? String(analysis.quantity) : '';
+  } catch {
+    item.error = 'Could not read the item description automatically - fill it in below.';
+  }
+  renderAmazonReturnItems();
+}
+
+function openAmazonReturnModal(){
+  document.getElementById('amazon-return-modal').classList.add('open');
+}
+function closeAmazonReturnModal(){
+  document.getElementById('amazon-return-modal').classList.remove('open');
+  returnItems = [];
+}
+
+async function startAmazonReturnWorkflow(staged){
+  returnItems = staged.map(s => ({
+    id: s.id, sourceDataUrl: s.dataUrl, mediaType: s.mediaType,
+    cropDataUrl: null, itemDescription: '', quantity: '', error: null,
+  }));
+  openAmazonReturnModal();
+  renderAmazonReturnItems();
+  await Promise.all(returnItems.map(processReturnItem));
+}
+
+// Builds one flex column per page (not a canvas composite) so the browser
+// handles text wrapping/fonts itself, same approach as printLabelImage
+// below just generalized to a repeating grid - paginated with plain CSS
+// page-break-after rather than any manual page-size math.
+function printAmazonReturnSheet(){
+  const items = returnItems.filter(it => it.cropDataUrl);
+  if (!items.length) return;
+  const pages = [];
+  for (let i = 0; i < items.length; i += RETURN_ITEMS_PER_PAGE) pages.push(items.slice(i, i + RETURN_ITEMS_PER_PAGE));
+
+  const pagesHtml = pages.map(pageItems => `
+    <div class="return-page">
+      ${pageItems.map(it => `
+        <div class="return-print-row">
+          <img src="${it.cropDataUrl}">
+          <div class="return-print-desc">
+            <div class="return-print-desc-text">${escapeHtml(it.itemDescription || '')}</div>
+            <div class="return-print-qty">Qty: ${escapeHtml(it.quantity || '1')}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`<!doctype html><html><head><title>Amazon Return Sheet</title><style>
+    @page { size: 8.5in 11in; margin: 0.5in; }
+    html, body { margin:0; padding:0; font-family: Arial, Helvetica, sans-serif; }
+    .return-page { display:flex; flex-direction:column; height:10in; }
+    .return-page:not(:last-child){ page-break-after: always; }
+    .return-print-row { display:flex; align-items:center; gap:.4in; flex:1; border-bottom:1px solid #ccc; min-height:0; }
+    .return-print-row:last-child{ border-bottom:none; }
+    .return-print-row img { max-width:2.6in; max-height:2.3in; object-fit:contain; }
+    .return-print-desc-text { font-size:14pt; margin-bottom:.15in; }
+    .return-print-qty { font-size:13pt; font-weight:bold; }
+  </style></head><body>${pagesHtml}</body></html>`);
+  printWindow.document.close();
+  printWindow.onload = () => {
+    printWindow.focus();
+    printWindow.print();
+    printWindow.onafterprint = () => printWindow.close();
+  };
+}
+
+document.getElementById('amazon-return-print-btn').addEventListener('click', () => {
+  printAmazonReturnSheet();
+  closeAmazonReturnModal();
+});
+document.getElementById('amazon-return-cancel-btn').addEventListener('click', closeAmazonReturnModal);
+document.getElementById('amazon-return-modal-close').addEventListener('click', closeAmazonReturnModal);
+document.getElementById('amazon-return-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'amazon-return-modal') closeAmazonReturnModal();
 });
 
 let currentPc = null;
