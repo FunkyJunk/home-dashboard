@@ -1427,6 +1427,12 @@ const PLATFORM_LABELS = {
   denonavr: 'Denon', apple_tv: 'Apple TV', kodi: 'Kodi', plex: 'Plex',
   yamaha_musiccast: 'Yamaha', bluesound: 'BluOS', heos: 'HEOS', squeezebox: 'Squeezebox',
   spotify: 'Spotify',
+  // Devices bridged through a hub integration report the HUB as their HA
+  // platform, not the underlying brand - a Homey-bridged Alexa/Sonos/etc.
+  // device shows up here as "homey_hass" regardless of what it actually
+  // is, since HA's registry has no visibility past that hop. The device's
+  // own friendly_name is often the only real hint (e.g. "Alexa Kitchen").
+  homey_hass: 'Homey',
 };
 function platformLabel(platform){
   if (!platform) return null;
