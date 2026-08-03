@@ -94,6 +94,27 @@ async function getDeviceStatus(device) {
   }
 }
 
+// Roku's ECP remote-control commands are just an unauthenticated POST to
+// the same LAN endpoint getDeviceStatus already reads from - no session,
+// no separate control API to integrate. Reuses ROKU_DEVICES as the only
+// source of truth for id -> ip, same as status polling above, so a device
+// added there is immediately controllable too.
+export async function sendRokuKey(id, key) {
+  const device = ROKU_DEVICES.find((d) => d.id === id);
+  if (!device) throw new Error(`unknown Roku device: ${id}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ECP_TIMEOUT_MS);
+  try {
+    const res = await fetch(`http://${device.ip}:8060/keypress/${encodeURIComponent(key)}`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`ECP keypress ${key} returned ${res.status}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function getAllRokuStatuses() {
   const [sessions, statuses] = await Promise.all([
     getPlexSessions().catch(() => []),

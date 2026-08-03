@@ -5,7 +5,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
 import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
-import { getAllRokuStatuses } from "./roku.js";
+import { getAllRokuStatuses, sendRokuKey } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
@@ -141,6 +141,18 @@ app.post("/api/amazon-return/analyze", async (req, res) => {
     res.json(result);
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to analyze return screenshot" });
+  }
+});
+
+// Direct Roku ECP remote control - these are the same 7 devices
+// getAllRokuStatuses polls, not the HA-integrated media_player entities
+// (those already go through /api/ha/control). See roku.js sendRokuKey.
+app.post("/api/roku/:id/key/:key", async (req, res) => {
+  try {
+    await sendRokuKey(req.params.id, req.params.key);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to send Roku key" });
   }
 });
 

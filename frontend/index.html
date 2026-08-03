@@ -492,6 +492,7 @@
   .roku-progress-fill{height:100%; background:var(--teal); border-radius:2px;}
   .roku-tile-caption{font-size:.68rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
 
+  .home-roku-modal-inner{max-width:min(90vw, 640px);}
   .roku-device-modal-inner{max-width:min(90vw, 480px);}
   .roku-detail-grid{display:flex; gap:1.25rem;}
   .roku-detail-poster{
@@ -881,11 +882,6 @@
         <h2 class="card-handle">Ring cameras</h2>
         <div class="ring-strip" id="ring-cams"></div>
       </div>
-
-      <div class="card wide" data-tile-id="roku-devices" id="roku-devices-section" style="display:none;">
-        <h2 class="card-handle">Roku Devices</h2>
-        <div class="roku-strip" id="roku-devices"></div>
-      </div>
     </div>
 
     <div class="card receipts-card" id="receipts-section" data-tile-id="receipts">
@@ -1174,6 +1170,16 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="home-roku-modal">
+    <div class="modal-inner home-roku-modal-inner">
+      <div class="modal-head">
+        <span>Roku Devices</span>
+        <button class="modal-close" id="home-roku-modal-close">Close</button>
+      </div>
+      <div class="roku-strip" id="home-roku-modal-list"></div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="label-crop-modal">
     <div class="modal-inner label-crop-modal-inner">
       <div class="modal-head">
@@ -1402,6 +1408,19 @@ function renderHomeStatus(entities){
     </div>
   `);
 
+  if (currentRokuDevices.length){
+    // "Active" mirrors the Playing-now semantics above: online AND
+    // actually running something, not just powered on and sitting idle
+    // on the Home screen.
+    const activeRoku = currentRokuDevices.filter(d => d.online && !d.idle);
+    rows.push(`
+      <div class="status-row status-row-clickable" id="home-status-roku-row">
+        <span class="status-label">Roku Devices</span>
+        <span class="status-value ${activeRoku.length ? 'warm' : 'calm'}">${activeRoku.length ? activeRoku.length + ' active' : 'Idle'}</span>
+      </div>
+    `);
+  }
+
   rows.push(`
     <div class="status-row">
       <span class="status-label">Motion (last 15 min)</span>
@@ -1414,6 +1433,8 @@ function renderHomeStatus(entities){
   el.innerHTML = rows.join('');
 
   document.getElementById('home-status-media-row').addEventListener('click', () => openHomeMediaModal(media));
+  const rokuRow = document.getElementById('home-status-roku-row');
+  if (rokuRow) rokuRow.addEventListener('click', openHomeRokuModal);
 }
 
 // HA's own /api/states never says which integration owns an entity (that
@@ -2193,19 +2214,66 @@ function rokuTileHtml(d){
 
 let currentRokuDevices = [];
 
+// No dedicated Roku card any more - devices are surfaced through the Home
+// Status card's "Roku Devices" row instead (see renderHomeStatus), which
+// just needs this list kept current for the count and for the popup.
 function renderRokuDevices(devices){
-  const section = document.getElementById('roku-devices-section');
-  const el = document.getElementById('roku-devices');
   currentRokuDevices = devices || [];
-  if (!devices || devices.length === 0){
-    section.style.display = 'none';
-    return;
-  }
-  section.style.display = '';
-  el.innerHTML = devices.map(rokuTileHtml).join('');
+}
+
+function homeRokuListHtml(){
+  return currentRokuDevices.map(rokuTileHtml).join('');
+}
+function openHomeRokuModal(){
+  const el = document.getElementById('home-roku-modal-list');
+  el.innerHTML = currentRokuDevices.length ? homeRokuListHtml() : '<div class="empty">No Roku devices found.</div>';
   el.querySelectorAll('.roku-tile').forEach(btn => {
     btn.addEventListener('click', () => openRokuDeviceModal(btn.dataset.id));
   });
+  document.getElementById('home-roku-modal').classList.add('open');
+}
+function closeHomeRokuModal(){
+  document.getElementById('home-roku-modal').classList.remove('open');
+}
+document.getElementById('home-roku-modal-close').addEventListener('click', closeHomeRokuModal);
+document.getElementById('home-roku-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'home-roku-modal') closeHomeRokuModal();
+});
+
+// Direct ECP keypress - a different device/backend entirely from the
+// HA-based setControl() used elsewhere (that one drives media_player
+// entities via /api/ha/control; these are the same 7 devices roku.js
+// polls for status, controlled straight over their own LAN endpoint).
+async function sendRokuDeviceKey(id, key){
+  try {
+    await fetch(`/api/roku/${encodeURIComponent(id)}/key/${encodeURIComponent(key)}`, { method: 'POST' });
+  } catch {
+    // best-effort, same as setControl - next status poll reflects reality either way
+  }
+}
+function rokuControlsHtml(id){
+  return `
+    <div class="dpad">
+      <button type="button" class="dpad-btn" data-roku-key="Up">&#9650;</button>
+      <div class="dpad-row">
+        <button type="button" class="dpad-btn" data-roku-key="Left">&#9664;</button>
+        <button type="button" class="dpad-btn dpad-ok" data-roku-key="Select">OK</button>
+        <button type="button" class="dpad-btn" data-roku-key="Right">&#9654;</button>
+      </div>
+      <button type="button" class="dpad-btn" data-roku-key="Down">&#9660;</button>
+    </div>
+    <div class="roku-modal-row">
+      <button type="button" class="media-btn" data-roku-key="Back">Back</button>
+      <button type="button" class="media-btn" data-roku-key="Home">Home</button>
+      <button type="button" class="media-btn" data-roku-key="InstantReplay">Replay</button>
+      <button type="button" class="media-btn" data-roku-key="Info">Info</button>
+    </div>
+    <div class="roku-modal-row">
+      <button type="button" class="media-btn" data-roku-key="Rev">&#9198;</button>
+      <button type="button" class="media-btn" data-roku-key="Play">&#9199;</button>
+      <button type="button" class="media-btn" data-roku-key="Fwd">&#9197;</button>
+    </div>
+  `;
 }
 
 function openRokuDeviceModal(id){
@@ -2245,6 +2313,13 @@ function openRokuDeviceModal(id){
   } else {
     body.innerHTML = `<div class="roku-detail-idle">Playing <strong>${escapeHtml(d.appName)}</strong></div>`;
   }
+
+  // Controls only make sense against a device that's actually reachable -
+  // an offline device has nowhere to send a keypress to.
+  if (d.online) body.innerHTML += rokuControlsHtml(d.id);
+  body.querySelectorAll('[data-roku-key]').forEach(btn => {
+    btn.addEventListener('click', () => sendRokuDeviceKey(d.id, btn.dataset.rokuKey));
+  });
 
   document.getElementById('roku-device-modal').classList.add('open');
 }
@@ -3630,11 +3705,11 @@ async function refresh(){
     renderWeek(data.weather?.daily);
     renderHourly(data.weather?.hourly);
     renderEvents(data.calendar);
+    renderRokuDevices(data.roku);
     renderHomeStatus(data.homeAssistant);
     renderTasks(data.tasks);
     renderControls(data.controls);
     renderRing(data.ring);
-    renderRokuDevices(data.roku);
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){
@@ -3681,7 +3756,6 @@ const CARD_REGISTRY = [
   { id: 'scratch-pad', label: 'Scratch Pad' },
   { id: 'controls', label: 'Controls' },
   { id: 'ring', label: 'Ring Cameras' },
-  { id: 'roku-devices', label: 'Roku Devices' },
   { id: 'receipts', label: 'Business Receipts' },
 ];
 const CARD_VISIBILITY_KEY = 'dashboard-card-visibility';
