@@ -11,10 +11,16 @@ import Anthropic from "@anthropic-ai/sdk";
 // precise spatial/visual judgment task (bounding boxes, rotation
 // direction), and label prints are low-volume compared to bulk receipt
 // scanning, so the accuracy is worth the extra per-call cost. Confirmed
-// against two real labels that Haiku-tier spatial judgment wasn't reliable
-// enough here: it cut off the barcode/tracking section from the crop box
-// on one, and misjudged rotation (flipped an already-upright label 180)
-// on another.
+// against real labels that Haiku-tier spatial judgment wasn't reliable
+// enough here, in two distinct ways: it cut off the barcode/tracking
+// section from the crop box on one label, and got the rotation direction
+// backwards on another (rotated a sideways label the wrong way, leaving
+// it upside down instead of upright) - the latter is why rotation is
+// determined via labelTopEdge + a fixed lookup table below rather than
+// asking the model to compute a rotation angle directly: "which edge is
+// the top pointing at" is a concrete perceptual question, "what's the
+// clockwise angle to fix this" requires the model to do its own mental
+// rotation arithmetic, which is exactly where it went wrong.
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
 const ANALYZE_TOOL = {
@@ -44,9 +50,19 @@ const ANALYZE_TOOL = {
         type: ["string", "null"],
         description: "The name of the person or business the package is addressed to (the 'Ship To' recipient), exactly as printed on the label. Null if not legible.",
       },
-      rotationDegrees: {
-        type: ["integer", "null"],
-        description: "Based on part (3) of labelDescription: the CLOCKWISE rotation in degrees (must be exactly 0, 90, 180, or 270) needed to make the label's text and barcode read normally upright. Default to 0 - only answer 90/180/270 if the description above clearly established the text is sideways or upside down, never guess a rotation from an image that already reads normally. Null if this can't be determined at all.",
+      // Asking for a rotation ANGLE directly requires the model to do
+      // mental rotation arithmetic (which way is "clockwise" from this
+      // orientation?), and that's proven unreliable in practice - it fixed
+      // one real upside-down label but then rotated a different sideways
+      // label the wrong way, leaving it upside down instead of upright.
+      // Asking which EDGE the label's top is touching is a much more
+      // concrete, purely perceptual question with no arithmetic involved;
+      // the actual rotation angle is then computed in code from a fixed
+      // lookup table, never left to the model's own reasoning.
+      labelTopEdge: {
+        type: ["string", "null"],
+        enum: ["top", "bottom", "left", "right", null],
+        description: "A label has a natural top (the postage/address end) and bottom (the barcode/tracking-number end), always at OPPOSITE ends. Looking at the image exactly as given (do not mentally rotate it first): which edge of the IMAGE is the label's TOP end currently pointing toward? Example: if the barcode/tracking end is on the image's left side and the postage/address end is on the image's right side, the top is pointing toward 'right'. If the label already reads normally upright, answer 'top'. Null if this can't be determined.",
       },
       cropBox: {
         type: ["object", "null"],
@@ -80,7 +96,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
           {
             type: "text",
-            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Describe what you see first, then identify the marketplace/carrier, the recipient's name, the rotation needed to make it read upright, and the complete crop box.",
+            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Describe what you see first, then identify the marketplace/carrier, the recipient's name, which edge of the image the label's top is pointing toward, and the complete crop box.",
           },
         ],
       },
@@ -89,5 +105,13 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
   console.log(`[shippingLabels] Anthropic call took ${Date.now() - startedAt}ms (image ~${Math.round(base64Image.length / 1024)}KB base64)`);
   const toolUse = msg.content.find((b) => b.type === "tool_use");
   if (!toolUse) throw new Error("Claude did not return a structured result");
-  return toolUse.input;
+  const result = toolUse.input;
+
+  // The clockwise rotation needed to bring that edge back to "top" - e.g.
+  // if the top is currently pointing right, the whole image was rotated
+  // 90 clockwise from upright, so undoing it takes another 270 clockwise.
+  const ROTATION_FOR_TOP_EDGE = { top: 0, right: 270, bottom: 180, left: 90 };
+  result.rotationDegrees = ROTATION_FOR_TOP_EDGE[result.labelTopEdge] ?? 0;
+
+  return result;
 }
