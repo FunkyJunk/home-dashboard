@@ -47,6 +47,17 @@ function extractColors(html) {
 export function createThemeRouter() {
   const router = express.Router();
 
+  // Same extraction as /from-url, just given text directly instead of
+  // fetching it - lets the frontend hand over an uploaded brand/style
+  // guide (markdown, plain text, whatever) without needing a URL at all.
+  // No fetch, no network call, so there's no timeout/CORS handling here.
+  router.post("/from-text", (req, res) => {
+    const text = String(req.body?.text || "").slice(0, 500_000);
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+    const colors = extractColors(text);
+    res.json({ colors });
+  });
+
   router.post("/from-url", async (req, res) => {
     const targetUrl = String(req.body?.url || "").trim();
     if (!/^https?:\/\//i.test(targetUrl)) {

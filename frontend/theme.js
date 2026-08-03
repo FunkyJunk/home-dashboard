@@ -30,8 +30,27 @@ const THEME_PRESETS = {
   },
 };
 
+// Every variable a theme can set, in display order, with a human label -
+// the Settings > Theme full editor uses this list to build one input per
+// variable rather than hand-listing them a second time somewhere else.
+const THEME_VAR_KEYS = [
+  { key: '--bg', label: 'Background' },
+  { key: '--bg-inset', label: 'Background (inset)' },
+  { key: '--panel', label: 'Panel' },
+  { key: '--panel-line', label: 'Panel border' },
+  { key: '--text', label: 'Text' },
+  { key: '--text-dim', label: 'Text (dim)' },
+  { key: '--amber', label: 'Amber accent' },
+  { key: '--amber-dim', label: 'Amber accent (dim)' },
+  { key: '--teal', label: 'Teal accent' },
+  { key: '--teal-dim', label: 'Teal accent (dim)' },
+  { key: '--coral', label: 'Coral accent' },
+  { key: '--coral-dim', label: 'Coral accent (dim)' },
+];
+
 const THEME_KEY = 'dashboard-theme';
 const CUSTOM_THEMES_KEY = 'dashboard-custom-themes';
+const HIDDEN_THEMES_KEY = 'dashboard-hidden-themes';
 
 function applyThemeVars(vars){
   const root = document.documentElement.style;
@@ -41,17 +60,61 @@ function applyThemeVars(vars){
 function loadCustomThemes(){
   try { return JSON.parse(localStorage.getItem(CUSTOM_THEMES_KEY) || '{}'); } catch { return {}; }
 }
+function saveCustomThemes(themes){
+  localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes));
+}
+function saveCustomTheme(key, label, vars){
+  const themes = loadCustomThemes();
+  themes[key] = { label, vars };
+  saveCustomThemes(themes);
+}
+function deleteCustomTheme(key){
+  const themes = loadCustomThemes();
+  delete themes[key];
+  saveCustomThemes(themes);
+  setThemeHidden('custom:' + key, false); // don't leave an orphaned hidden-list entry behind
+}
+
+// Hiding applies to built-ins and custom themes alike - a preset can't be
+// deleted (it's code, not data), but it can be kept out of the picker.
+function loadHiddenThemes(){
+  try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_THEMES_KEY) || '[]')); } catch { return new Set(); }
+}
+function setThemeHidden(themeKey, hidden){
+  const hidden_set = loadHiddenThemes();
+  if (hidden) hidden_set.add(themeKey); else hidden_set.delete(themeKey);
+  localStorage.setItem(HIDDEN_THEMES_KEY, JSON.stringify([...hidden_set]));
+}
+function isThemeHidden(themeKey){
+  return loadHiddenThemes().has(themeKey);
+}
+
+// Every theme (built-in + custom) as one flat, uniformly-shaped list -
+// {key, label, vars, isCustom, hidden} - so callers (the picker, the
+// Settings > Theme list) don't need to know the built-in/custom split.
+function listAllThemes(){
+  const hidden = loadHiddenThemes();
+  const builtins = Object.entries(THEME_PRESETS).map(([key, t]) => ({
+    key, label: t.label, vars: t.vars, isCustom: false, hidden: hidden.has(key),
+  }));
+  const customs = Object.entries(loadCustomThemes()).map(([key, t]) => ({
+    key: 'custom:' + key, label: t.label, vars: t.vars, isCustom: true, hidden: hidden.has('custom:' + key),
+  }));
+  return [...builtins, ...customs];
+}
+
+function themeVarsForKey(themeKey){
+  if (themeKey.startsWith('custom:')){
+    const t = loadCustomThemes()[themeKey.slice(7)];
+    return t ? t.vars : null;
+  }
+  return THEME_PRESETS[themeKey] ? THEME_PRESETS[themeKey].vars : null;
+}
 
 // theme-select is index.html-only (settings.html has no picker yet), so
 // this only touches it when present rather than assuming it exists.
 function applyTheme(themeKey){
-  let vars = null;
-  if (themeKey.startsWith('custom:')){
-    const t = loadCustomThemes()[themeKey.slice(7)];
-    if (t) vars = t.vars;
-  } else if (THEME_PRESETS[themeKey]){
-    vars = THEME_PRESETS[themeKey].vars;
-  }
+  let vars = themeVarsForKey(themeKey);
   if (!vars){ themeKey = 'midnight'; vars = THEME_PRESETS.midnight.vars; }
   applyThemeVars(vars);
   localStorage.setItem(THEME_KEY, themeKey);

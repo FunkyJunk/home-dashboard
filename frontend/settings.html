@@ -11,193 +11,290 @@
 <script src="idb.js"></script>
 <style>
   :root{
-    --bg: #12161c;
-    --bg-inset: #0d1116;
-    --panel: #1b212b;
-    --panel-line: #2a323f;
-    --text: #ece7db;
-    --text-dim: #8b93a1;
-    --amber: #e8a33d;
-    --amber-dim: #6b5730;
-    --teal: #4fb8ae;
-    --teal-dim: #2c5b56;
-    --coral: #e2574c;
-    --coral-dim: #5a2a26;
+    --bg: #12161c; --bg-inset: #0d1116; --panel: #1b212b; --panel-line: #2a323f;
+    --text: #ece7db; --text-dim: #8b93a1; --amber: #e8a33d; --amber-dim: #6b5730;
+    --teal: #4fb8ae; --teal-dim: #2c5b56; --coral: #e2574c; --coral-dim: #5a2a26;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
-  body{
-    background:var(--bg); color:var(--text); font-family:'IBM Plex Sans', sans-serif;
-    min-height:100vh; padding:2.5vw;
+  html, body{height:100%;}
+  body{font-family:'IBM Plex Sans', sans-serif; overflow:hidden;}
+
+  /* --- Sidebar: uses the dashboard's own selected theme (theme.js
+     overwrites the vars above), so switching between the dashboard and
+     Settings for navigation doesn't feel visually disconnected. --- */
+  .settings-shell{display:flex; height:100vh;}
+  .settings-sidebar{
+    width:230px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--panel-line);
+    display:flex; flex-direction:column; padding:1.25rem 1rem; gap:1.5rem; color:var(--text);
   }
-  .settings-page{max-width:800px; margin:0 auto;}
-  .settings-page-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;}
-  .settings-page-header h1{font-size:1.4rem; font-weight:600;}
   .back-link{
-    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
-    border-radius:4px; padding:.5em 1em; cursor:pointer; font-family:inherit; font-size:.85rem;
-    text-decoration:none; display:inline-block;
+    background:var(--bg-inset); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.5em .8em; cursor:pointer; font-family:inherit; font-size:.82rem;
+    text-decoration:none; display:block; text-align:center;
   }
   .back-link:hover{border-color:var(--teal); color:var(--teal);}
+  .settings-nav{display:flex; flex-direction:column; gap:.25rem;}
+  .settings-nav-item{
+    text-align:left; background:none; border:none; color:var(--text-dim); padding:.6rem .75rem; border-radius:6px;
+    font-family:inherit; font-size:.88rem; cursor:pointer;
+  }
+  .settings-nav-item:hover{background:var(--bg-inset); color:var(--text);}
+  .settings-nav-item.active{background:var(--teal-dim); color:var(--teal); font-weight:600;}
+  .settings-sidebar-footer{margin-top:auto; display:flex; flex-direction:column; gap:.5rem;}
+  .settings-sidebar-footer-label{font-family:'IBM Plex Mono', monospace; font-size:.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.05em;}
 
-  .card{background:var(--panel); border:1px solid var(--panel-line); border-radius:6px; padding:1.5rem;}
-  .card + .card{margin-top:1.5rem;}
-  .settings-section-title{font-size:1.05rem; font-weight:600; color:var(--text); margin:0 0 1rem;}
-  .settings-subsection{margin-bottom:1.5rem;}
-  .settings-subsection:last-child{margin-bottom:0;}
-  .settings-subsection-title{
-    font-family:'IBM Plex Mono', monospace; font-size:.75rem; color:var(--text-dim);
-    text-transform:uppercase; letter-spacing:.05em; margin:0 0 .6rem;
+  /* --- Content pane: deliberately its OWN neutral dark/light palette,
+     independent of the dashboard's theme, so this always reads as a
+     plain, clean data-management surface no matter how colorful the
+     active dashboard theme is. Two fixed options, not the 6-preset system. --- */
+  .settings-content{flex:1; min-width:0; overflow-y:auto; padding:2rem 2.5rem;}
+  .settings-content[data-theme="dark"]{
+    --c-bg:#1a1d21; --c-panel:#22262b; --c-border:#33383e; --c-text:#e6e8eb; --c-text-dim:#8b9099;
+    --c-accent:#4a90d9; --c-accent-dim:#1f3a54; --c-danger:#e2574c; --c-danger-dim:#3d2320; --c-row-alt:#1f2226;
+    background:var(--c-bg); color:var(--c-text);
   }
-  .settings-hint{font-size:.8rem; color:var(--text-dim); margin:0 0 .75rem; line-height:1.4;}
-  .settings-folder-row{display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;}
-  .receipts-folder-status{font-size:.85rem; color:var(--text-dim);}
+  .settings-content[data-theme="light"]{
+    --c-bg:#f6f7f9; --c-panel:#ffffff; --c-border:#dde1e6; --c-text:#1b1e22; --c-text-dim:#6b7280;
+    --c-accent:#2f6fed; --c-accent-dim:#dce8fc; --c-danger:#c0392b; --c-danger-dim:#f8e2e0; --c-row-alt:#f0f2f5;
+    background:var(--c-bg); color:var(--c-text);
+  }
+  .settings-panel-title{font-size:1.3rem; font-weight:600; margin-bottom:1.5rem;}
+  .settings-block{background:var(--c-panel); border:1px solid var(--c-border); border-radius:6px; padding:1.25rem; margin-bottom:1.5rem;}
+  .settings-block-title{font-size:.95rem; font-weight:600; margin-bottom:.75rem;}
+  .settings-block-hint{font-size:.8rem; color:var(--c-text-dim); margin-bottom:.75rem; line-height:1.4;}
+  .settings-row{display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;}
 
-  .settings-ignore-grid{display:flex; flex-direction:column; gap:.4rem; margin-bottom:.75rem;}
-  .settings-ignore-row{
-    display:grid; grid-template-columns:1fr auto auto auto; align-items:center; gap:.75rem;
-    padding:.5rem .6rem; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
+  .plain-input, .plain-select{
+    font-family:inherit; font-size:.85rem; border-radius:4px; border:1px solid var(--c-border);
+    background:var(--c-bg); color:var(--c-text); padding:.45em .6em;
   }
-  .settings-ignore-value{font-size:.85rem; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .settings-ignore-type-badge{
-    font-family:'IBM Plex Mono', monospace; font-size:.68rem; color:var(--text-dim);
-    text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--panel-line); border-radius:4px; padding:.15rem .4rem;
+  .plain-input:focus, .plain-select:focus{outline:none; border-color:var(--c-accent);}
+  .plain-btn{
+    font-family:inherit; font-size:.85rem; border-radius:4px; border:1px solid var(--c-border);
+    background:var(--c-panel); color:var(--c-text); padding:.45em .9em; cursor:pointer;
   }
-  .settings-mode-toggle{display:flex; gap:.3rem;}
-  .settings-mode-btn{
-    font-size:.72rem; padding:.3rem .55rem; border-radius:5px; border:1px solid var(--panel-line);
-    background:transparent; color:var(--text-dim); cursor:pointer; font-family:inherit;
-  }
-  .settings-mode-btn:hover{border-color:var(--teal);}
-  .settings-mode-btn.active{background:var(--teal-dim); border-color:var(--teal); color:var(--teal); font-weight:600;}
-  .settings-mode-btn.active[data-mode="skip"]{background:var(--coral-dim); border-color:var(--coral); color:var(--coral);}
-  .settings-ignore-add{display:flex; gap:.5rem; flex-wrap:wrap;}
-  .settings-ignore-add input{flex:1; min-width:140px;}
-  .settings-ignore-add select{width:auto;}
-  .settings-ignore-group-title{
-    font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);
-    text-transform:uppercase; letter-spacing:.04em; margin:.75rem 0 .4rem;
-  }
-  .settings-ignore-group-title:first-of-type{margin-top:0;}
+  .plain-btn:hover{border-color:var(--c-accent); color:var(--c-accent);}
+  .plain-btn.primary{background:var(--c-accent-dim); border-color:var(--c-accent); color:var(--c-accent); font-weight:600;}
+  .plain-btn.danger:hover{border-color:var(--c-danger); color:var(--c-danger);}
+  .plain-btn-sm{font-size:.72rem; padding:.3em .6em;}
+  .file-btn{position:relative; overflow:hidden;}
+  .file-btn input[type="file"]{position:absolute; inset:0; opacity:0; cursor:pointer; width:100%;}
+  .status-text{font-size:.8rem; color:var(--c-text-dim);}
+  .status-text.error{color:var(--c-danger);}
 
-  /* Database - a grid of table "cards" (schema + row count), each one a
-     button that loads a capped row preview below. No delete/edit anywhere
-     in this section, by design - it's a read-only introspection tool. */
-  .db-tables-grid{
-    display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:1rem; margin-bottom:1.25rem;
+  .mode-toggle{display:inline-flex; gap:.25rem;}
+  .mode-btn{
+    font-size:.72rem; padding:.25em .55em; border-radius:4px; border:1px solid var(--c-border);
+    background:transparent; color:var(--c-text-dim); cursor:pointer; font-family:inherit;
   }
-  .db-table-card{
-    display:flex; flex-direction:column; gap:.5rem; text-align:left; cursor:pointer;
-    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
-    padding:.85rem; font:inherit; color:inherit;
-  }
-  .db-table-card:hover{border-color:var(--teal);}
-  .db-table-card-head{display:flex; justify-content:space-between; align-items:baseline; gap:.5rem;}
-  .db-table-name{font-family:'IBM Plex Mono', monospace; font-size:.85rem; color:var(--text); font-weight:600;}
-  .db-table-row-count{font-size:.72rem; color:var(--text-dim); white-space:nowrap;}
-  .db-table-cols{display:flex; flex-direction:column; gap:.2rem;}
-  .db-col-row{display:flex; justify-content:space-between; gap:.5rem; font-size:.72rem;}
-  .db-col-name{color:var(--text-dim);}
-  .db-col-type{color:var(--text-dim); font-family:'IBM Plex Mono', monospace; text-align:right;}
-  .db-table-preview{
-    border-top:1px solid var(--panel-line); padding-top:1.25rem;
-  }
-  .db-table-preview-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem;}
-  .db-table-preview-head h3{font-family:'IBM Plex Mono', monospace; font-size:.95rem;}
-  .db-table-preview-note{font-size:.78rem; color:var(--text-dim); margin-bottom:.6rem;}
-  .db-table-scroll{overflow-x:auto; border:1px solid var(--panel-line); border-radius:6px;}
-  .db-data-table{width:100%; border-collapse:collapse; font-size:.78rem; white-space:nowrap;}
-  .db-data-table th, .db-data-table td{
-    padding:.45rem .6rem; text-align:left; border-bottom:1px solid var(--panel-line);
-    max-width:260px; overflow:hidden; text-overflow:ellipsis;
-  }
-  .db-data-table th{
-    font-family:'IBM Plex Mono', monospace; font-size:.68rem; color:var(--text-dim);
-    text-transform:uppercase; letter-spacing:.03em; background:var(--bg-inset);
-  }
-  .db-data-table tr:last-child td{border-bottom:none;}
+  .mode-btn:hover{border-color:var(--c-accent);}
+  .mode-btn.active{background:var(--c-accent-dim); border-color:var(--c-accent); color:var(--c-accent); font-weight:600;}
+  .mode-btn.active[data-mode="skip"]{background:var(--c-danger-dim); border-color:var(--c-danger); color:var(--c-danger);}
 
-  .receipts-toolbar-btn{
-    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
-    border-radius:4px; padding:.5em 1em; cursor:pointer; font-family:inherit; font-size:.85rem;
+  .data-grid{width:100%; border-collapse:collapse; font-size:.85rem;}
+  .data-grid th{
+    text-align:left; padding:.5rem .6rem; font-size:.7rem; text-transform:uppercase; letter-spacing:.03em;
+    color:var(--c-text-dim); border-bottom:2px solid var(--c-border); white-space:nowrap;
   }
-  .receipts-toolbar-btn:hover{border-color:var(--teal);}
-  .receipt-btn{
-    border-radius:4px; padding:.4em .7em; cursor:pointer; font-family:inherit; font-size:.78rem;
-    border:1px solid var(--panel-line); background:var(--panel); color:var(--text);
+  .data-grid th[data-sort]{cursor:pointer; user-select:none;}
+  .data-grid th[data-sort]:hover{color:var(--c-text);}
+  .data-grid td{padding:.5rem .6rem; border-bottom:1px solid var(--c-border); vertical-align:middle; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .data-grid tbody tr:nth-child(even){background:var(--c-row-alt);}
+
+  /* --- Database: Explorer-style two-pane layout - tables on the left
+     like a folder tree, the selected table's rows on the right. --- */
+  .explorer{display:flex; border:1px solid var(--c-border); border-radius:6px; overflow:hidden; height:65vh;}
+  .explorer-sidebar{width:220px; flex-shrink:0; background:var(--c-panel); border-right:1px solid var(--c-border); overflow-y:auto;}
+  .explorer-item{
+    display:flex; justify-content:space-between; gap:.5rem; padding:.6rem .8rem; cursor:pointer;
+    font-size:.82rem; border-bottom:1px solid var(--c-border); color:var(--c-text);
   }
-  .receipt-btn.business{border-color:var(--teal); color:var(--teal);}
-  .receipt-btn:hover{filter:brightness(1.2);}
-  .add-task-ctrl{
-    box-sizing:border-box; background:var(--bg-inset);
-    border:1px solid var(--panel-line); border-radius:8px;
-    padding:.55rem .7rem; color:var(--text); font-family:inherit; font-size:.85rem;
+  .explorer-item:hover{background:var(--c-row-alt);}
+  .explorer-item.active{background:var(--c-accent-dim); color:var(--c-accent); font-weight:600;}
+  .explorer-item-count{color:var(--c-text-dim); font-size:.72rem;}
+  .explorer-main{flex:1; min-width:0; display:flex; flex-direction:column; background:var(--c-bg);}
+  .explorer-main-header{padding:.65rem 1rem; border-bottom:1px solid var(--c-border); font-size:.78rem; color:var(--c-text-dim);}
+  .explorer-main-scroll{flex:1; overflow:auto;}
+
+  /* --- Theme editor --- */
+  .theme-list{display:flex; flex-direction:column; gap:.5rem; margin-bottom:1rem;}
+  .theme-list-row{
+    display:flex; align-items:center; gap:.75rem; padding:.6rem .8rem; background:var(--c-bg);
+    border:1px solid var(--c-border); border-radius:6px; flex-wrap:wrap;
   }
-  .add-task-ctrl:focus{outline:none; border-color:var(--teal);}
-  .keyword-remove{
-    background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1rem; padding:0 .3rem;
-  }
-  .keyword-remove:hover{color:var(--coral);}
-  .receipts-status{font-size:.8rem; color:var(--text-dim);}
-  .receipts-status.error{color:var(--coral);}
+  .theme-swatch-strip{display:flex; gap:2px; flex-shrink:0;}
+  .theme-swatch-chip{width:16px; height:16px; border-radius:3px; border:1px solid rgba(128,128,128,.35);}
+  .theme-list-label{flex:1; font-size:.85rem; font-weight:600; min-width:80px;}
+  .theme-badge{font-size:.66rem; color:var(--c-text-dim); border:1px solid var(--c-border); border-radius:4px; padding:.1em .4em;}
+  .theme-hide-toggle{display:flex; align-items:center; gap:.3rem; font-size:.78rem; color:var(--c-text-dim); cursor:pointer;}
+
+  .theme-editor-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:.6rem; margin:1rem 0;}
+  .theme-editor-var-row{display:flex; align-items:center; gap:.5rem;}
+  .theme-editor-color{width:32px; height:32px; padding:0; border:1px solid var(--c-border); border-radius:4px; cursor:pointer; background:none; flex-shrink:0;}
+  .theme-editor-hex{width:85px; font-family:'IBM Plex Mono', monospace; font-size:.78rem; flex-shrink:0;}
+  .theme-editor-var-label{font-size:.78rem; color:var(--c-text-dim);}
+  .theme-editor-preview{margin:1rem 0;}
+
+  .theme-extract-swatches{display:flex; flex-wrap:wrap; gap:.5rem; margin:.75rem 0;}
+  .theme-swatch-btn{width:34px; height:34px; border-radius:6px; cursor:pointer; border:2px solid var(--c-border);}
+  .theme-swatch-btn:hover{border-color:var(--c-text-dim);}
+  .theme-swatch-btn.picked-primary{border-color:var(--c-accent);}
+  .theme-swatch-btn.picked-secondary{border-color:var(--c-danger);}
+  .theme-extract-picked-row{display:flex; align-items:center; gap:.5rem; margin:.5rem 0; font-size:.8rem; color:var(--c-text-dim);}
+  .theme-swatch{width:22px; height:22px; border-radius:4px; border:1px solid var(--c-border); display:inline-block;}
 </style>
 </head>
 <body>
 
-<div class="settings-page">
-  <div class="settings-page-header">
-    <h1>Settings</h1>
-    <a class="back-link" href="index.html">&larr; Back to Dashboard</a>
-  </div>
-
-  <div class="card">
-    <h2 class="settings-section-title">Business Receipts</h2>
-
-    <div class="settings-subsection">
-      <h3 class="settings-subsection-title">Tax folder</h3>
-      <div class="settings-folder-row">
-        <span class="receipts-folder-status" id="settings-folder-status">No folder chosen yet</span>
-        <button type="button" id="settings-pick-folder" class="receipts-toolbar-btn">Choose folder&hellip;</button>
-        <button type="button" id="settings-reconnect-folder" class="receipts-toolbar-btn" style="display:none;">Reconnect</button>
+<div class="settings-shell">
+  <nav class="settings-sidebar">
+    <a class="back-link" href="index.html">&larr; Dashboard</a>
+    <div class="settings-nav">
+      <button type="button" class="settings-nav-item" data-section="receipts">Business Receipts</button>
+      <button type="button" class="settings-nav-item" data-section="database">Database</button>
+      <button type="button" class="settings-nav-item" data-section="theme">Theme</button>
+    </div>
+    <div class="settings-sidebar-footer">
+      <span class="settings-sidebar-footer-label">Content theme</span>
+      <div class="mode-toggle">
+        <button type="button" class="mode-btn" data-content-theme="dark">Dark</button>
+        <button type="button" class="mode-btn" data-content-theme="light">Light</button>
       </div>
     </div>
+  </nav>
 
-    <div class="settings-subsection">
-      <h3 class="settings-subsection-title">Ignore keywords &amp; domains</h3>
-      <p class="settings-hint">"Highlight" pre-selects the Ignore button for review but still imports the email; "Auto-skip" excludes a match from import entirely.</p>
+  <main class="settings-content" id="settings-content" data-theme="dark">
 
-      <h4 class="settings-ignore-group-title">Keywords</h4>
-      <div class="settings-ignore-grid" id="settings-ignore-keywords-grid"></div>
+    <section class="settings-panel" data-panel="receipts">
+      <h1 class="settings-panel-title">Business Receipts</h1>
 
-      <h4 class="settings-ignore-group-title">Domains</h4>
-      <div class="settings-ignore-grid" id="settings-ignore-domains-grid"></div>
-
-      <div class="settings-ignore-add">
-        <input type="text" class="add-task-ctrl" id="settings-ignore-input" placeholder="Add a keyword or domain&hellip;">
-        <select class="add-task-ctrl" id="settings-ignore-type">
-          <option value="keyword">Keyword</option>
-          <option value="domain">Domain</option>
-        </select>
-        <select class="add-task-ctrl" id="settings-ignore-mode">
-          <option value="highlight">Highlight</option>
-          <option value="skip">Auto-skip</option>
-        </select>
-        <button type="button" class="receipt-btn business" id="settings-ignore-add-btn">Add</button>
+      <div class="settings-block">
+        <div class="settings-block-title">Tax folder</div>
+        <div class="settings-row">
+          <span class="status-text" id="settings-folder-status">No folder chosen yet</span>
+          <button type="button" id="settings-pick-folder" class="plain-btn">Choose folder&hellip;</button>
+          <button type="button" id="settings-reconnect-folder" class="plain-btn" style="display:none;">Reconnect</button>
+        </div>
       </div>
-    </div>
-  </div>
 
-  <div class="card">
-    <h2 class="settings-section-title">Database</h2>
-    <p class="settings-hint">Read-only - click a table to preview its rows. No editing here.</p>
-    <div class="db-tables-grid" id="db-tables-grid"></div>
-    <div class="db-table-preview" id="db-table-preview" style="display:none;">
-      <div class="db-table-preview-head">
-        <h3 id="db-table-preview-title"></h3>
-        <button type="button" class="back-link" id="db-table-preview-close">Close preview</button>
+      <div class="settings-block">
+        <div class="settings-block-title">Ignore keywords</div>
+        <p class="settings-block-hint">"Highlight" pre-selects the Ignore button for review but still imports the email; "Auto-skip" excludes a match from import entirely.</p>
+        <table class="data-grid" id="keywords-grid">
+          <thead><tr>
+            <th data-sort="value" data-label="Value">Value</th>
+            <th data-sort="mode" data-label="Mode">Mode</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="keywords-grid-body"></tbody>
+        </table>
       </div>
-      <div id="db-table-preview-body"></div>
-    </div>
-  </div>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Ignore domains</div>
+        <table class="data-grid" id="domains-grid">
+          <thead><tr>
+            <th data-sort="value" data-label="Value">Value</th>
+            <th data-sort="mode" data-label="Mode">Mode</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="domains-grid-body"></tbody>
+        </table>
+      </div>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Add keyword or domain</div>
+        <div class="settings-row">
+          <input type="text" class="plain-input" id="settings-ignore-input" placeholder="Add a keyword or domain&hellip;" style="flex:1; min-width:160px;">
+          <select class="plain-select" id="settings-ignore-type">
+            <option value="keyword">Keyword</option>
+            <option value="domain">Domain</option>
+          </select>
+          <select class="plain-select" id="settings-ignore-mode">
+            <option value="highlight">Highlight</option>
+            <option value="skip">Auto-skip</option>
+          </select>
+          <button type="button" class="plain-btn primary" id="settings-ignore-add-btn">Add</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-panel" data-panel="database" hidden>
+      <h1 class="settings-panel-title">Database</h1>
+      <p class="settings-block-hint">Read-only - click a table to browse its rows, click a column to sort. No editing here.</p>
+      <div class="explorer">
+        <div class="explorer-sidebar" id="db-tables-list"></div>
+        <div class="explorer-main">
+          <div class="explorer-main-header" id="explorer-main-header">Loading&hellip;</div>
+          <div class="explorer-main-scroll">
+            <table class="data-grid" id="db-data-grid">
+              <thead id="db-data-grid-head"></thead>
+              <tbody id="db-data-grid-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-panel" data-panel="theme" hidden>
+      <h1 class="settings-panel-title">Theme</h1>
+
+      <div id="theme-list-view">
+        <div class="settings-block">
+          <div class="settings-block-title">Themes</div>
+          <p class="settings-block-hint">Hide a theme to keep it out of the dashboard's quick switcher without deleting it. Built-in themes can't be deleted, only hidden or edited (editing one saves a new custom theme).</p>
+          <div class="theme-list" id="theme-list"></div>
+          <div class="settings-row">
+            <button type="button" class="plain-btn primary" id="theme-new-btn">+ New theme</button>
+            <button type="button" class="plain-btn" id="theme-extract-open-btn">Create from colors&hellip;</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="theme-editor-view" style="display:none;">
+        <div class="settings-block">
+          <div class="settings-block-title" id="theme-editor-title">Edit theme</div>
+          <div class="settings-row">
+            <input type="text" class="plain-input" id="theme-editor-name" placeholder="Theme name" style="flex:1; min-width:200px;">
+          </div>
+          <div class="theme-editor-grid" id="theme-editor-vars"></div>
+          <div class="theme-editor-preview" id="theme-editor-preview"></div>
+          <div class="settings-row">
+            <button type="button" class="plain-btn primary" id="theme-editor-save-btn">Save</button>
+            <button type="button" class="plain-btn" id="theme-editor-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="theme-extract-view" style="display:none;">
+        <div class="settings-block">
+          <div class="settings-block-title">Create theme from colors</div>
+          <p class="settings-block-hint">Pull accent colors from a website, or import a brand style guide (.md/.txt) - either way, pick one color for Primary and another for Secondary below.</p>
+          <div class="settings-row">
+            <input type="text" class="plain-input" id="theme-extract-url" placeholder="https://example.com" style="flex:1; min-width:200px;">
+            <button type="button" class="plain-btn" id="theme-extract-url-btn">Fetch from URL</button>
+            <label class="plain-btn file-btn">Import brand file&hellip;<input type="file" id="theme-extract-md-input" accept=".md,.txt,text/markdown,text/plain"></label>
+          </div>
+          <div class="status-text" id="theme-extract-status" style="margin-top:.5rem;"></div>
+          <div class="theme-extract-swatches" id="theme-extract-swatches"></div>
+          <div class="theme-extract-picked" id="theme-extract-picked" style="display:none;">
+            <div class="theme-extract-picked-row">
+              <span>Primary</span><span class="theme-swatch" id="theme-extract-primary-swatch"></span>
+              <span>Secondary</span><span class="theme-swatch" id="theme-extract-secondary-swatch"></span>
+            </div>
+            <div class="settings-row">
+              <input type="text" class="plain-input" id="theme-extract-name" placeholder="Theme name" style="flex:1; min-width:200px;">
+              <button type="button" class="plain-btn primary" id="theme-extract-save-btn">Save theme</button>
+            </div>
+          </div>
+          <div class="settings-row" style="margin-top:1rem;">
+            <button type="button" class="plain-btn" id="theme-extract-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
 </div>
 
 <script>
@@ -206,6 +303,35 @@ function escapeHtml(s){
   d.textContent = s;
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+function compareValues(a, b){
+  if (a == null && b == null) return 0;
+  if (a == null) return -1;
+  if (b == null) return 1;
+  const an = Number(a), bn = Number(b);
+  if (a !== '' && b !== '' && !Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
+  return String(a).localeCompare(String(b));
+}
+
+// --- Sidebar: section switching + content theme ---
+function showSection(name){
+  document.querySelectorAll('.settings-nav-item').forEach(b => b.classList.toggle('active', b.dataset.section === name));
+  document.querySelectorAll('.settings-panel').forEach(p => p.hidden = p.dataset.panel !== name);
+  history.replaceState(null, '', '#' + name);
+}
+document.querySelectorAll('.settings-nav-item').forEach(btn => {
+  btn.addEventListener('click', () => showSection(btn.dataset.section));
+});
+
+const SETTINGS_CONTENT_THEME_KEY = 'settings-content-theme';
+function applyContentTheme(t){
+  document.getElementById('settings-content').dataset.theme = t;
+  localStorage.setItem(SETTINGS_CONTENT_THEME_KEY, t);
+  document.querySelectorAll('[data-content-theme]').forEach(b => b.classList.toggle('active', b.dataset.contentTheme === t));
+}
+document.querySelectorAll('[data-content-theme]').forEach(btn => {
+  btn.addEventListener('click', () => applyContentTheme(btn.dataset.contentTheme));
+});
+applyContentTheme(localStorage.getItem(SETTINGS_CONTENT_THEME_KEY) || 'dark');
 
 // --- Tax folder (own copy of index.html's state - both pages read/write
 // the same IndexedDB-stored handle via idb.js, just via separate
@@ -227,7 +353,6 @@ function updateFolderStatus(){
     reconnectBtn.style.display = 'none';
   }
 }
-
 async function pickTaxFolder(){
   if (!window.showDirectoryPicker){
     alert('This feature needs Chrome or Edge (File System Access API not supported here).');
@@ -242,7 +367,6 @@ async function pickTaxFolder(){
     // User cancelled the picker - nothing to do.
   }
 }
-
 async function restoreTaxFolder(){
   if (!window.showDirectoryPicker) return;
   try {
@@ -256,7 +380,6 @@ async function restoreTaxFolder(){
   } catch (e){ /* ignore - just means no folder chosen yet */ }
   updateFolderStatus();
 }
-
 async function reconnectTaxFolder(){
   if (!pendingTaxFolderHandle) return;
   try {
@@ -267,10 +390,13 @@ async function reconnectTaxFolder(){
     }
   } catch (e){ /* ignore */ }
 }
+document.getElementById('settings-pick-folder').addEventListener('click', pickTaxFolder);
+document.getElementById('settings-reconnect-folder').addEventListener('click', reconnectTaxFolder);
 
-// --- Ignore keywords & domains grid ---
+// --- Ignore keywords & domains: two sortable grids ---
 let ignoreKeywords = [];
 let ignoreDomains = [];
+let ignoreSort = { keywords: { col: null, dir: 1 }, domains: { col: null, dir: 1 } };
 
 async function loadIgnoreKeywords(){
   try {
@@ -281,61 +407,76 @@ async function loadIgnoreKeywords(){
   } catch (e){ /* non-fatal - grid just won't reflect the list */ }
 }
 
-// Each entry is {value, mode} - mode is "highlight" (still imported on
-// the dashboard, Ignore button pre-selected for review) or "skip"
-// (excluded from /scan results entirely, enforced server-side).
-function settingsIgnoreRowHtml(entry, type){
+function ignoreRowHtml(entry, type){
   const modeButtons = ['highlight', 'skip'].map(m => `
-    <button type="button" class="settings-mode-btn${entry.mode === m ? ' active' : ''}" data-mode="${m}" data-v="${escapeHtml(entry.value)}" data-type="${type}">
+    <button type="button" class="mode-btn${entry.mode === m ? ' active' : ''}" data-mode="${m}" data-v="${escapeHtml(entry.value)}" data-type="${type}">
       ${m === 'highlight' ? 'Highlight' : 'Auto-skip'}
     </button>
   `).join('');
   return `
-    <div class="settings-ignore-row">
-      <span class="settings-ignore-value" title="${escapeHtml(entry.value)}">${type === 'domain' ? '@' : ''}${escapeHtml(entry.value)}</span>
-      <span class="settings-ignore-type-badge">${type}</span>
-      <div class="settings-mode-toggle">${modeButtons}</div>
-      <button type="button" class="keyword-remove" data-v="${escapeHtml(entry.value)}" data-type="${type}" title="Remove">&times;</button>
-    </div>
+    <tr>
+      <td>${type === 'domain' ? '@' : ''}${escapeHtml(entry.value)}</td>
+      <td><div class="mode-toggle">${modeButtons}</div></td>
+      <td><button type="button" class="plain-btn plain-btn-sm danger" data-remove-v="${escapeHtml(entry.value)}" data-remove-type="${type}">Remove</button></td>
+    </tr>
   `;
 }
 
-function wireIgnoreGrid(grid){
-  grid.querySelectorAll('.settings-mode-btn').forEach(btn => {
+function updateIgnoreSortArrows(tableId, sortState){
+  document.querySelectorAll(`#${tableId} th[data-sort]`).forEach(th => {
+    const arrow = sortState.col === th.dataset.sort ? (sortState.dir === 1 ? ' ▲' : ' ▼') : '';
+    th.textContent = th.dataset.label + arrow;
+  });
+}
+
+function renderIgnoreTable(bodyId, entries, type, sortState){
+  const body = document.getElementById(bodyId);
+  const sorted = sortState.col ? [...entries].sort((a, b) => sortState.dir * compareValues(a[sortState.col], b[sortState.col])) : entries;
+  body.innerHTML = sorted.length
+    ? sorted.map(e => ignoreRowHtml(e, type)).join('')
+    : `<tr><td colspan="3" class="status-text">No ignore ${type === 'domain' ? 'domains' : 'keywords'} yet.</td></tr>`;
+  body.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: btn.dataset.mode }),
       });
       await loadIgnoreKeywords();
-      renderSettingsIgnoreGrid();
+      renderSettingsIgnoreGrids();
     });
   });
-  grid.querySelectorAll('.keyword-remove').forEach(btn => {
+  body.querySelectorAll('[data-remove-v]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, { method: 'DELETE' });
+      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.removeV)}?type=${btn.dataset.removeType}`, { method: 'DELETE' });
       await loadIgnoreKeywords();
-      renderSettingsIgnoreGrid();
+      renderSettingsIgnoreGrids();
     });
   });
 }
 
-// Keywords and domains render as two separate grids (same row/toggle/
-// remove markup either way) rather than one interleaved list.
-function renderSettingsIgnoreGrid(){
-  const keywordsGrid = document.getElementById('settings-ignore-keywords-grid');
-  const domainsGrid = document.getElementById('settings-ignore-domains-grid');
-
-  keywordsGrid.innerHTML = ignoreKeywords.length
-    ? ignoreKeywords.map(k => settingsIgnoreRowHtml(k, 'keyword')).join('')
-    : '<span class="receipts-status">No ignore keywords yet.</span>';
-  domainsGrid.innerHTML = ignoreDomains.length
-    ? ignoreDomains.map(d => settingsIgnoreRowHtml(d, 'domain')).join('')
-    : '<span class="receipts-status">No ignore domains yet.</span>';
-
-  wireIgnoreGrid(keywordsGrid);
-  wireIgnoreGrid(domainsGrid);
+function renderSettingsIgnoreGrids(){
+  renderIgnoreTable('keywords-grid-body', ignoreKeywords, 'keyword', ignoreSort.keywords);
+  renderIgnoreTable('domains-grid-body', ignoreDomains, 'domain', ignoreSort.domains);
+  updateIgnoreSortArrows('keywords-grid', ignoreSort.keywords);
+  updateIgnoreSortArrows('domains-grid', ignoreSort.domains);
 }
+
+document.querySelectorAll('#keywords-grid th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    ignoreSort.keywords.dir = ignoreSort.keywords.col === col ? -ignoreSort.keywords.dir : 1;
+    ignoreSort.keywords.col = col;
+    renderSettingsIgnoreGrids();
+  });
+});
+document.querySelectorAll('#domains-grid th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    ignoreSort.domains.dir = ignoreSort.domains.col === col ? -ignoreSort.domains.dir : 1;
+    ignoreSort.domains.col = col;
+    renderSettingsIgnoreGrids();
+  });
+});
 
 async function addIgnoreEntry(){
   const input = document.getElementById('settings-ignore-input');
@@ -349,97 +490,342 @@ async function addIgnoreEntry(){
   });
   input.value = '';
   await loadIgnoreKeywords();
-  renderSettingsIgnoreGrid();
+  renderSettingsIgnoreGrids();
 }
-
-document.getElementById('settings-pick-folder').addEventListener('click', pickTaxFolder);
-document.getElementById('settings-reconnect-folder').addEventListener('click', reconnectTaxFolder);
 document.getElementById('settings-ignore-add-btn').addEventListener('click', addIgnoreEntry);
 document.getElementById('settings-ignore-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addIgnoreEntry();
 });
 
-// --- Database (read-only) ---
-// One table box per real table (schema + row count) - clicking one loads
-// a capped row preview below. No create/edit/delete anywhere here.
-function dbTableCardHtml(t){
-  const cols = t.columns.map(c => `
-    <div class="db-col-row">
-      <span class="db-col-name">${escapeHtml(c.name)}</span>
-      <span class="db-col-type">${escapeHtml(c.type || '')}${c.pk ? ' &bull; PK' : ''}</span>
-    </div>
-  `).join('');
-  return `
-    <button type="button" class="db-table-card" data-table="${escapeHtml(t.name)}">
-      <div class="db-table-card-head">
-        <span class="db-table-name">${escapeHtml(t.name)}</span>
-        <span class="db-table-row-count">${t.rowCount} row${t.rowCount === 1 ? '' : 's'}</span>
-      </div>
-      <div class="db-table-cols">${cols}</div>
-    </button>
-  `;
-}
+// --- Database: Explorer-style, read-only ---
+function dbValueToText(v){ return v == null ? '' : String(v); }
 
-async function loadDbSchema(){
-  const grid = document.getElementById('db-tables-grid');
-  try {
-    const res = await fetch('/api/receipts/db/schema');
-    const data = await res.json();
-    grid.innerHTML = (data.tables || []).map(dbTableCardHtml).join('');
-    grid.querySelectorAll('.db-table-card').forEach(btn => {
-      btn.addEventListener('click', () => openDbTablePreview(btn.dataset.table));
+let currentDbRows = [];
+let currentDbCols = [];
+let dbSortState = { col: null, dir: 1 };
+
+function renderDbGrid(){
+  const head = document.getElementById('db-data-grid-head');
+  const body = document.getElementById('db-data-grid-body');
+  if (!currentDbCols.length){ head.innerHTML = ''; body.innerHTML = ''; return; }
+  head.innerHTML = `<tr>${currentDbCols.map(c => {
+    const arrow = dbSortState.col === c ? (dbSortState.dir === 1 ? ' ▲' : ' ▼') : '';
+    return `<th data-sort="${escapeHtml(c)}">${escapeHtml(c)}${arrow}</th>`;
+  }).join('')}</tr>`;
+  head.querySelectorAll('th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      dbSortState.dir = dbSortState.col === col ? -dbSortState.dir : 1;
+      dbSortState.col = col;
+      currentDbRows = [...currentDbRows].sort((a, b) => dbSortState.dir * compareValues(a[col], b[col]));
+      renderDbGrid();
     });
-  } catch {
-    grid.innerHTML = '<span class="receipts-status error">Could not load the database schema.</span>';
-  }
+  });
+  body.innerHTML = currentDbRows.map(row =>
+    `<tr>${currentDbCols.map(c => `<td>${escapeHtml(dbValueToText(row[c]))}</td>`).join('')}</tr>`
+  ).join('');
 }
 
-function dbValueToText(v){
-  if (v == null) return '';
-  return String(v);
-}
-
-function renderDbTableRows(name, data){
-  const body = document.getElementById('db-table-preview-body');
-  if (!data.rows.length){
-    body.innerHTML = '<div class="receipts-status">No rows.</div>';
-    return;
-  }
-  const cols = Object.keys(data.rows[0]);
-  body.innerHTML = `
-    <div class="db-table-preview-note">Showing ${data.rows.length} of ${data.rowCount} row${data.rowCount === 1 ? '' : 's'}</div>
-    <div class="db-table-scroll">
-      <table class="db-data-table">
-        <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
-        <tbody>
-          ${data.rows.map(row => `<tr>${cols.map(c => `<td>${escapeHtml(dbValueToText(row[c]))}</td>`).join('')}</tr>`).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-async function openDbTablePreview(name){
-  document.getElementById('db-table-preview-title').textContent = name;
-  document.getElementById('db-table-preview').style.display = '';
-  document.getElementById('db-table-preview-body').innerHTML = '<div class="receipts-status">Loading&hellip;</div>';
+async function selectDbTable(name){
+  document.querySelectorAll('.explorer-item').forEach(item => item.classList.toggle('active', item.dataset.table === name));
+  document.getElementById('explorer-main-header').textContent = 'Loading…';
+  dbSortState = { col: null, dir: 1 };
   try {
     const res = await fetch(`/api/receipts/db/table/${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error('failed to load table');
     const data = await res.json();
-    renderDbTableRows(name, data);
+    currentDbRows = data.rows;
+    currentDbCols = data.rows.length ? Object.keys(data.rows[0]) : [];
+    document.getElementById('explorer-main-header').textContent =
+      `${name} — showing ${data.rows.length} of ${data.rowCount} row${data.rowCount === 1 ? '' : 's'}`;
+    renderDbGrid();
   } catch {
-    document.getElementById('db-table-preview-body').innerHTML = '<div class="receipts-status error">Failed to load rows.</div>';
+    document.getElementById('explorer-main-header').textContent = 'Failed to load rows.';
+    currentDbRows = []; currentDbCols = [];
+    renderDbGrid();
   }
 }
 
-document.getElementById('db-table-preview-close').addEventListener('click', () => {
-  document.getElementById('db-table-preview').style.display = 'none';
-});
+async function loadDbSchema(){
+  const list = document.getElementById('db-tables-list');
+  try {
+    const res = await fetch('/api/receipts/db/schema');
+    const data = await res.json();
+    const tables = data.tables || [];
+    list.innerHTML = tables.map(t =>
+      `<div class="explorer-item" data-table="${escapeHtml(t.name)}"><span>${escapeHtml(t.name)}</span><span class="explorer-item-count">${t.rowCount}</span></div>`
+    ).join('');
+    list.querySelectorAll('.explorer-item').forEach(item => {
+      item.addEventListener('click', () => selectDbTable(item.dataset.table));
+    });
+    if (tables.length) selectDbTable(tables[0].name);
+  } catch {
+    list.innerHTML = '<div class="status-text error" style="padding:.75rem;">Failed to load schema.</div>';
+  }
+}
 
+// --- Theme: list (hide/edit/delete), full-variable editor, create-from-colors ---
+function showThemeView(view){
+  document.getElementById('theme-list-view').style.display = view === 'list' ? '' : 'none';
+  document.getElementById('theme-editor-view').style.display = view === 'editor' ? '' : 'none';
+  document.getElementById('theme-extract-view').style.display = view === 'extract' ? '' : 'none';
+}
+
+function themeSwatchStripHtml(vars){
+  return ['--bg', '--panel', '--teal', '--amber', '--coral', '--text']
+    .map(k => `<span class="theme-swatch-chip" style="background:${vars[k] || '#000'};"></span>`).join('');
+}
+function themeListRowHtml(t){
+  return `
+    <div class="theme-list-row">
+      <div class="theme-swatch-strip">${themeSwatchStripHtml(t.vars)}</div>
+      <span class="theme-list-label">${escapeHtml(t.label)}</span>
+      ${t.isCustom ? '' : '<span class="theme-badge">built-in</span>'}
+      <label class="theme-hide-toggle"><input type="checkbox" class="theme-hide-cb" data-key="${escapeHtml(t.key)}" ${t.hidden ? 'checked' : ''}> Hidden</label>
+      <button type="button" class="plain-btn plain-btn-sm" data-action="edit" data-key="${escapeHtml(t.key)}">Edit</button>
+      ${t.isCustom ? `<button type="button" class="plain-btn plain-btn-sm danger" data-action="delete" data-key="${escapeHtml(t.key)}">Delete</button>` : ''}
+    </div>
+  `;
+}
+function renderThemeList(){
+  const el = document.getElementById('theme-list');
+  const themes = listAllThemes();
+  el.innerHTML = themes.map(themeListRowHtml).join('');
+  el.querySelectorAll('.theme-hide-cb').forEach(cb => {
+    cb.addEventListener('change', () => setThemeHidden(cb.dataset.key, cb.checked));
+  });
+  el.querySelectorAll('[data-action="edit"]').forEach(btn => {
+    btn.addEventListener('click', () => openThemeEditor(btn.dataset.key));
+  });
+  el.querySelectorAll('[data-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const label = btn.closest('.theme-list-row').querySelector('.theme-list-label').textContent;
+      if (!confirm(`Delete theme "${label}"? This can't be undone.`)) return;
+      deleteCustomTheme(btn.dataset.key.slice(7));
+      renderThemeList();
+    });
+  });
+}
+
+let editingThemeKey = null; // null = Save creates a new custom theme
+
+function renderThemeEditorVars(vars){
+  const wrap = document.getElementById('theme-editor-vars');
+  wrap.innerHTML = THEME_VAR_KEYS.map(({ key, label }) => `
+    <div class="theme-editor-var-row">
+      <input type="color" class="theme-editor-color" data-var="${key}" value="${vars[key] || '#000000'}">
+      <input type="text" class="plain-input theme-editor-hex" data-var="${key}" value="${escapeHtml(vars[key] || '')}">
+      <span class="theme-editor-var-label">${escapeHtml(label)}</span>
+    </div>
+  `).join('');
+  wrap.querySelectorAll('.theme-editor-color').forEach(inp => {
+    inp.addEventListener('input', () => {
+      wrap.querySelector(`.theme-editor-hex[data-var="${inp.dataset.var}"]`).value = inp.value;
+      updateThemeEditorPreview();
+    });
+  });
+  wrap.querySelectorAll('.theme-editor-hex').forEach(inp => {
+    inp.addEventListener('input', () => {
+      if (/^#[0-9a-fA-F]{6}$/.test(inp.value)) wrap.querySelector(`.theme-editor-color[data-var="${inp.dataset.var}"]`).value = inp.value;
+      updateThemeEditorPreview();
+    });
+  });
+  updateThemeEditorPreview();
+}
+function collectThemeEditorVars(){
+  const vars = {};
+  document.querySelectorAll('#theme-editor-vars .theme-editor-hex').forEach(inp => { vars[inp.dataset.var] = inp.value; });
+  return vars;
+}
+function updateThemeEditorPreview(){
+  const v = collectThemeEditorVars();
+  document.getElementById('theme-editor-preview').innerHTML = `
+    <div style="background:${v['--bg']}; border:1px solid ${v['--panel-line']}; border-radius:6px; padding:1rem;">
+      <div style="background:${v['--panel']}; border:1px solid ${v['--panel-line']}; border-radius:6px; padding:.85rem;">
+        <div style="color:${v['--text']}; font-weight:600; margin-bottom:.3rem;">Sample card</div>
+        <div style="color:${v['--text-dim']}; font-size:.85rem; margin-bottom:.6rem;">Dim supporting text</div>
+        <button style="background:${v['--teal-dim']}; border:1px solid ${v['--teal']}; color:${v['--teal']}; padding:.35em .8em; border-radius:4px; font-size:.8rem; margin-right:.4rem;">Teal</button>
+        <button style="background:${v['--amber-dim']}; border:1px solid ${v['--amber']}; color:${v['--amber']}; padding:.35em .8em; border-radius:4px; font-size:.8rem; margin-right:.4rem;">Amber</button>
+        <button style="background:${v['--coral-dim']}; border:1px solid ${v['--coral']}; color:${v['--coral']}; padding:.35em .8em; border-radius:4px; font-size:.8rem;">Coral</button>
+      </div>
+    </div>
+  `;
+}
+function openThemeEditor(themeKey){
+  const t = listAllThemes().find(x => x.key === themeKey);
+  if (!t) return;
+  editingThemeKey = t.isCustom ? t.key.slice(7) : null;
+  document.getElementById('theme-editor-title').textContent = t.isCustom ? 'Edit theme' : 'Edit theme (saves as a new custom theme)';
+  document.getElementById('theme-editor-name').value = t.isCustom ? t.label : (t.label + ' copy');
+  renderThemeEditorVars(t.vars);
+  showThemeView('editor');
+}
+function openNewThemeEditor(){
+  editingThemeKey = null;
+  document.getElementById('theme-editor-title').textContent = 'New theme';
+  document.getElementById('theme-editor-name').value = 'New theme';
+  renderThemeEditorVars(THEME_PRESETS.midnight.vars);
+  showThemeView('editor');
+}
+function saveThemeEditor(){
+  const name = document.getElementById('theme-editor-name').value.trim() || 'Custom theme';
+  const vars = collectThemeEditorVars();
+  const key = editingThemeKey || ('c' + Date.now());
+  saveCustomTheme(key, name, vars);
+  applyTheme('custom:' + key);
+  showThemeView('list');
+  renderThemeList();
+}
+document.getElementById('theme-new-btn').addEventListener('click', openNewThemeEditor);
+document.getElementById('theme-editor-save-btn').addEventListener('click', saveThemeEditor);
+document.getElementById('theme-editor-cancel-btn').addEventListener('click', () => showThemeView('list'));
+
+// --- Create theme from colors: URL scan or an uploaded brand file, same
+// swatch-picking flow either way (reused from the dashboard's old
+// hamburger-menu "add theme from URL" feature, now living here instead) ---
+let themeExtractColors = [];
+let themeExtractPrimary = null, themeExtractSecondary = null;
+
+function darkenHex(hex, factor){
+  const r = Math.round(parseInt(hex.slice(1, 3), 16) * factor);
+  const g = Math.round(parseInt(hex.slice(3, 5), 16) * factor);
+  const b = Math.round(parseInt(hex.slice(5, 7), 16) * factor);
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+// Only the two accent colors come from the source - background/panel/
+// text stay the same known-readable dark base as Midnight, so an unusual
+// source palette can't produce an unreadable theme.
+function deriveThemeFromAccents(primaryHex, secondaryHex){
+  const base = THEME_PRESETS.midnight.vars;
+  return {
+    '--bg': base['--bg'], '--bg-inset': base['--bg-inset'],
+    '--panel': base['--panel'], '--panel-line': base['--panel-line'],
+    '--text': base['--text'], '--text-dim': base['--text-dim'],
+    '--amber': primaryHex, '--amber-dim': darkenHex(primaryHex, 0.35),
+    '--teal': secondaryHex, '--teal-dim': darkenHex(secondaryHex, 0.35),
+    '--coral': base['--coral'], '--coral-dim': base['--coral-dim'],
+  };
+}
+
+function openThemeExtractView(){
+  document.getElementById('theme-extract-url').value = '';
+  document.getElementById('theme-extract-name').value = '';
+  document.getElementById('theme-extract-status').textContent = '';
+  document.getElementById('theme-extract-status').className = 'status-text';
+  document.getElementById('theme-extract-swatches').innerHTML = '';
+  document.getElementById('theme-extract-picked').style.display = 'none';
+  themeExtractColors = []; themeExtractPrimary = null; themeExtractSecondary = null;
+  showThemeView('extract');
+}
+function updateThemeExtractSelection(){
+  document.querySelectorAll('#theme-extract-swatches .theme-swatch-btn').forEach(btn => {
+    btn.classList.toggle('picked-primary', btn.dataset.hex === themeExtractPrimary);
+    btn.classList.toggle('picked-secondary', btn.dataset.hex === themeExtractSecondary);
+  });
+  const wrap = document.getElementById('theme-extract-picked');
+  wrap.style.display = themeExtractPrimary ? '' : 'none';
+  if (themeExtractPrimary){
+    document.getElementById('theme-extract-primary-swatch').style.background = themeExtractPrimary;
+    document.getElementById('theme-extract-secondary-swatch').style.background = themeExtractSecondary || 'transparent';
+  }
+}
+function showThemeExtractSwatches(colors, statusMsg){
+  themeExtractColors = colors;
+  themeExtractPrimary = null; themeExtractSecondary = null;
+  document.getElementById('theme-extract-status').textContent = statusMsg;
+  document.getElementById('theme-extract-status').className = 'status-text';
+  document.getElementById('theme-extract-picked').style.display = 'none';
+  const el = document.getElementById('theme-extract-swatches');
+  el.innerHTML = colors.map(c => `<button type="button" class="theme-swatch-btn" data-hex="${c}" style="background:${c};" title="${c}"></button>`).join('');
+  el.querySelectorAll('.theme-swatch-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const hex = btn.dataset.hex;
+      if (hex === themeExtractPrimary) themeExtractPrimary = null;
+      else if (hex === themeExtractSecondary) themeExtractSecondary = null;
+      else if (!themeExtractPrimary) themeExtractPrimary = hex;
+      else if (!themeExtractSecondary) themeExtractSecondary = hex;
+      else { themeExtractPrimary = hex; themeExtractSecondary = null; }
+      updateThemeExtractSelection();
+    });
+  });
+  updateThemeExtractSelection();
+}
+async function fetchThemeFromUrl(){
+  const url = document.getElementById('theme-extract-url').value.trim();
+  if (!url) return;
+  const status = document.getElementById('theme-extract-status');
+  status.textContent = 'Fetching…'; status.className = 'status-text';
+  try {
+    const res = await fetch('/api/theme/from-url', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: /^https?:\/\//i.test(url) ? url : 'https://' + url }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'failed to analyze that URL');
+    if (!data.colors?.length){
+      status.textContent = 'No distinct colors found on that page - try another URL.';
+      status.className = 'status-text error';
+      document.getElementById('theme-extract-swatches').innerHTML = '';
+      return;
+    }
+    showThemeExtractSwatches(data.colors, `Found ${data.colors.length} color(s) - click one for Primary, another for Secondary:`);
+  } catch (e){
+    status.textContent = 'Failed: ' + (e.message || 'unknown error');
+    status.className = 'status-text error';
+  }
+}
+async function importThemeFromFile(file){
+  const status = document.getElementById('theme-extract-status');
+  status.textContent = 'Reading file…'; status.className = 'status-text';
+  try {
+    const text = await file.text();
+    const res = await fetch('/api/theme/from-text', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'failed to read that file');
+    if (!data.colors?.length){
+      status.textContent = `No colors found in ${file.name}.`;
+      status.className = 'status-text error';
+      document.getElementById('theme-extract-swatches').innerHTML = '';
+      return;
+    }
+    showThemeExtractSwatches(data.colors, `Found ${data.colors.length} color(s) in ${file.name} - click one for Primary, another for Secondary:`);
+  } catch (e){
+    status.textContent = 'Failed: ' + (e.message || 'unknown error');
+    status.className = 'status-text error';
+  }
+}
+function saveExtractedTheme(){
+  if (!themeExtractPrimary) return;
+  const secondary = themeExtractSecondary || themeExtractPrimary;
+  const name = document.getElementById('theme-extract-name').value.trim() || 'Custom theme';
+  const key = 'c' + Date.now();
+  saveCustomTheme(key, name, deriveThemeFromAccents(themeExtractPrimary, secondary));
+  applyTheme('custom:' + key);
+  showThemeView('list');
+  renderThemeList();
+}
+
+document.getElementById('theme-extract-open-btn').addEventListener('click', openThemeExtractView);
+document.getElementById('theme-extract-cancel-btn').addEventListener('click', () => showThemeView('list'));
+document.getElementById('theme-extract-url-btn').addEventListener('click', fetchThemeFromUrl);
+document.getElementById('theme-extract-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){ e.preventDefault(); fetchThemeFromUrl(); }
+});
+document.getElementById('theme-extract-md-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) importThemeFromFile(file);
+});
+document.getElementById('theme-extract-save-btn').addEventListener('click', saveExtractedTheme);
+
+// --- Init ---
 restoreTaxFolder();
-loadIgnoreKeywords().then(renderSettingsIgnoreGrid);
+loadIgnoreKeywords().then(renderSettingsIgnoreGrids);
 loadDbSchema();
+renderThemeList();
+showSection(['receipts', 'database', 'theme'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
 </script>
 </body>
 </html>
