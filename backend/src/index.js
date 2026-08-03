@@ -234,7 +234,14 @@ const CONTROLLABLE_DEVICES = {
     onData: { brightness: 255, hs_color: [0, 0] },
   },
   "cover.office_office_blinds": { type: "cover", name: "Office Blinds" },
-  "media_player.office_roku_streambar_pro_office": { type: "media", name: "Office Roku" },
+  // rokuId links this HA entity to its matching roku.js device (see
+  // ROKU_DEVICES in roku.js) - both describe the same physical Roku, one
+  // via the HA integration (quick tile controls: power, prev/play/next,
+  // volume, source), the other via direct ECP (the detail popup + Plex
+  // metadata + real remote, shared with the Home Status Roku list). A
+  // deliberate hand-set link, not a runtime guess, same as this whole
+  // allowlist already is.
+  "media_player.office_roku_streambar_pro_office": { type: "media", name: "Office Roku", rokuId: "office" },
   // Thermostats are handled separately via the Nest SDM API directly - see
   // getNestThermostats()/setNestThermostat() below. The Homey-bridged HA
   // climate entities never showed correct names/data and couldn't actually
@@ -280,6 +287,7 @@ function getControllableDevices(states) {
           state: s.state,
           appName: s.attributes?.app_name ?? s.attributes?.source ?? null,
           sourceList: s.attributes?.source_list ?? [],
+          rokuId: meta.rokuId ?? null,
         };
       }
       return null;

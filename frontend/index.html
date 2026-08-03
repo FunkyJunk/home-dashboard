@@ -553,6 +553,10 @@
   .dpad-btn.dpad-ok{background:var(--teal-dim); border-color:var(--teal); color:var(--teal); font-weight:600;}
   .roku-modal-row{display:flex; gap:.5rem;}
   .roku-modal-row .media-btn{padding:.6em 0;}
+  /* Only the device-detail popup stacks two of these rows (the original
+     single-row remote modal is unaffected by an adjacent-sibling rule) -
+     with no rule here they sat flush against each other with zero gap. */
+  .roku-modal-row + .roku-modal-row{margin-top:.6rem;}
 
   .controls-card{margin-top:1.5rem;}
   .controls-grid{
@@ -2019,7 +2023,7 @@ function renderControls(controls){
               <span class="control-name">${escapeHtml(c.name)}</span>
             </span>
             <span class="control-head-right">
-              <button type="button" class="icon-btn ctl-media-expand" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-app="${escapeHtml(status)}" title="More controls">&hellip;</button>
+              <button type="button" class="icon-btn ctl-media-expand" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-app="${escapeHtml(status)}" data-roku-id="${c.rokuId || ''}" title="More controls">&hellip;</button>
               <label class="toggle">
                 <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
                 <span class="toggle-track"></span>
@@ -2097,7 +2101,15 @@ function renderControls(controls){
     });
   });
   el.querySelectorAll('.ctl-media-expand').forEach(button => {
-    button.addEventListener('click', () => openRokuModal(button.dataset.id, button.dataset.name, button.dataset.app));
+    // A tile with a rokuId is the same physical device as one of the
+    // Home Status Roku list entries - route to that exact same detail
+    // popup (Plex metadata + real ECP remote) instead of the generic
+    // HA-based one, so there's a single interface to maintain for Roku
+    // regardless of which card the user clicked from.
+    button.addEventListener('click', () => {
+      if (button.dataset.rokuId) openRokuDeviceModal(button.dataset.rokuId);
+      else openRokuModal(button.dataset.id, button.dataset.name, button.dataset.app);
+    });
   });
 }
 
