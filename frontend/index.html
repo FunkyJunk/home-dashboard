@@ -339,6 +339,8 @@
 
   .label-crop-modal-inner{max-width:min(90vw, 640px);}
   .label-crop-status{font-size:.9rem; color:var(--text-dim); padding:2rem 0; text-align:center;}
+  .label-crop-preview-wrap{display:flex; flex-direction:column; align-items:center; gap:.75rem; margin-bottom:1.25rem;}
+  .label-crop-preview-wrap canvas{max-width:100%; max-height:50vh; border-radius:4px; border:1px solid var(--panel-line);}
   .label-crop-canvas-wrap{position:relative; display:inline-block; margin-bottom:1.25rem; max-width:100%;}
   .label-crop-canvas-wrap canvas{display:block; max-width:100%; border-radius:4px;}
   .label-crop-box{
@@ -1114,6 +1116,10 @@
         <button class="modal-close" id="label-crop-modal-close">Close</button>
       </div>
       <div class="label-crop-status" id="label-crop-status">Analyzing image&hellip;</div>
+      <div class="label-crop-preview-wrap" id="label-crop-preview-wrap" style="display:none;">
+        <canvas id="label-crop-preview-canvas"></canvas>
+        <button type="button" class="receipt-btn" id="label-crop-show-adjust-btn">Adjust crop&hellip;</button>
+      </div>
       <div class="label-crop-canvas-wrap" id="label-crop-canvas-wrap" style="display:none;">
         <canvas id="label-crop-canvas"></canvas>
         <div class="label-crop-box" id="label-crop-box">
@@ -2331,44 +2337,102 @@ function populateLabelPresetSelect(){
   if (presets.some(p => p.id === prevValue)) sel.value = prevValue;
 }
 
-// Fits the preset's aspect ratio within (and centered on) the AI-suggested
-// box, or centered on the image at 80% scale if there's no suggestion -
-// either way it's just a starting point the user can still drag/resize.
-function computeInitialCropBox(naturalW, naturalH, aspectRatio, aiBox){
-  let boxW, boxH, boxX, boxY;
-  if (aiBox && aiBox.widthPct && aiBox.heightPct){
-    // A too-tight AI box has real consequences (a shipping label with its
-    // barcode cropped off is unscannable and unusable), while a slightly
-    // too-generous one costs nothing - the user can still drag it in. So
-    // pad the AI's box outward by 12% of its own size on every side before
-    // fitting, as a safety margin against underestimating the label's true
-    // extent, confirmed against two real labels where the raw suggestion
-    // cut off the barcode/tracking section entirely.
-    const PAD = 0.12;
-    let aiX = (aiBox.xPct / 100) * naturalW;
-    let aiY = (aiBox.yPct / 100) * naturalH;
-    let aiW = (aiBox.widthPct / 100) * naturalW;
-    let aiH = (aiBox.heightPct / 100) * naturalH;
-    const padX = aiW * PAD, padY = aiH * PAD;
-    aiX = Math.max(0, aiX - padX);
-    aiY = Math.max(0, aiY - padY);
-    aiW = Math.min(naturalW - aiX, aiW + padX * 2);
-    aiH = Math.min(naturalH - aiY, aiH + padY * 2);
+// Pads a pixel box outward by `frac` of its own size on every side,
+// clamped to image bounds. A too-tight box has real consequences (a
+// shipping label with its barcode cropped off is unscannable), while a
+// too-generous one costs nothing since it just gets fit down to the
+// target ratio next - so this always biases toward capturing more.
+function padBoxPixels(box, naturalW, naturalH, frac){
+  const padX = box.width * frac, padY = box.height * frac;
+  const x = Math.max(0, box.x - padX);
+  const y = Math.max(0, box.y - padY);
+  return {
+    x, y,
+    width: Math.min(naturalW - x, box.width + padX * 2),
+    height: Math.min(naturalH - y, box.height + padY * 2),
+  };
+}
 
-    if (aiW / aiH > aspectRatio){ boxH = aiH; boxW = boxH * aspectRatio; }
-    else { boxW = aiW; boxH = boxW / aspectRatio; }
-    boxX = aiX + (aiW - boxW) / 2;
-    boxY = aiY + (aiH - boxH) / 2;
-  } else {
-    const maxW = naturalW * 0.8, maxH = naturalH * 0.8;
-    if (maxW / maxH > aspectRatio){ boxH = maxH; boxW = boxH * aspectRatio; }
-    else { boxW = maxW; boxH = boxW / aspectRatio; }
-    boxX = (naturalW - boxW) / 2;
-    boxY = (naturalH - boxH) / 2;
-  }
+// Fits a target aspect ratio within (and centered on) a pixel box.
+function fitBoxToRatio(box, aspectRatio, naturalW, naturalH){
+  let boxW, boxH;
+  if (box.width / box.height > aspectRatio){ boxH = box.height; boxW = boxH * aspectRatio; }
+  else { boxW = box.width; boxH = boxW / aspectRatio; }
+  let boxX = box.x + (box.width - boxW) / 2;
+  let boxY = box.y + (box.height - boxH) / 2;
   boxX = Math.max(0, Math.min(boxX, naturalW - boxW));
   boxY = Math.max(0, Math.min(boxY, naturalH - boxH));
   return { x: boxX, y: boxY, width: boxW, height: boxH };
+}
+
+// Shipping labels reliably have a solid black printed border around the
+// whole thing - a much more precise, pixel-exact signal than an LLM's own
+// numeric coordinate estimate (which has proven imprecise twice on real
+// labels). Scans row-by-row and column-by-column within a search window
+// around the AI's rough box for the strongest near-solid dark line close
+// to each edge, and returns the rectangle those four lines form. Returns
+// null if no clear border is found (e.g. a label with no printed border
+// at all), so the caller can fall back to the padded AI estimate.
+function detectLabelBorder(img, roughBox){
+  const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
+  const marginX = roughBox.width * 0.25, marginY = roughBox.height * 0.25;
+  const searchX = Math.max(0, roughBox.x - marginX);
+  const searchY = Math.max(0, roughBox.y - marginY);
+  const searchW = Math.min(naturalW - searchX, roughBox.width + marginX * 2);
+  const searchH = Math.min(naturalH - searchY, roughBox.height + marginY * 2);
+  if (searchW < 10 || searchH < 10) return null;
+
+  // Downscale the search region for speed - border detection only needs
+  // enough resolution to find a line, not full print quality - then scale
+  // the found coordinates back up to real pixels at the end.
+  const scale = Math.min(1, 500 / Math.max(searchW, searchH));
+  const sw = Math.max(1, Math.round(searchW * scale));
+  const sh = Math.max(1, Math.round(searchH * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = sw; canvas.height = sh;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, searchX, searchY, searchW, searchH, 0, 0, sw, sh);
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, sw, sh).data;
+  } catch {
+    return null; // e.g. a tainted canvas from a cross-origin image - just skip detection
+  }
+
+  const DARK = 110; // luminance 0-255 below this counts as ink
+  const rowDark = new Array(sh).fill(0);
+  const colDark = new Array(sw).fill(0);
+  for (let y = 0; y < sh; y++){
+    for (let x = 0; x < sw; x++){
+      const i = (y * sw + x) * 4;
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (lum < DARK){ rowDark[y]++; colDark[x]++; }
+    }
+  }
+  for (let y = 0; y < sh; y++) rowDark[y] /= sw;
+  for (let x = 0; x < sw; x++) colDark[x] /= sh;
+
+  const LINE = 0.5; // a real border line spans at least half the width/height
+  function findLine(fracs, from, to, step){
+    for (let i = from; i !== to; i += step){
+      if (fracs[i] >= LINE) return i;
+    }
+    return null;
+  }
+  const top = findLine(rowDark, 0, Math.floor(sh * 0.3), 1);
+  const bottom = findLine(rowDark, sh - 1, Math.floor(sh * 0.7), -1);
+  const left = findLine(colDark, 0, Math.floor(sw * 0.3), 1);
+  const right = findLine(colDark, sw - 1, Math.floor(sw * 0.7), -1);
+  if (top == null || bottom == null || left == null || right == null || bottom <= top || right <= left){
+    return null;
+  }
+
+  return {
+    x: searchX + left / scale,
+    y: searchY + top / scale,
+    width: (right - left) / scale,
+    height: (bottom - top) / scale,
+  };
 }
 
 function updateCropBoxOverlay(){
@@ -2379,9 +2443,9 @@ function updateCropBoxOverlay(){
   box.style.height = (cropBoxState.height * cropDisplayScale) + 'px';
 }
 
-// Draws whatever labelImg currently is (post-rotation) onto the visible
-// canvas - split out from box computation so the rotate button can redraw
-// without recomputing/discarding the crop box logic.
+// Draws whatever labelImg currently is (post-rotation) onto the ADJUST
+// mode's full-image canvas, behind the draggable box - only used once the
+// user opts into manual adjustment.
 function redrawCropCanvas(){
   const canvas = document.getElementById('label-crop-canvas');
   const maxDisplayWidth = 560;
@@ -2391,18 +2455,70 @@ function redrawCropCanvas(){
   canvas.getContext('2d').drawImage(labelImg, 0, 0, canvas.width, canvas.height);
 }
 
+// Draws the FINAL cropped result (per the current cropBoxState) - this is
+// the default view: no box to fiddle with, just the already-auto-cropped
+// label, matching what a fully-automatic tool should feel like.
+function redrawPreviewCanvas(){
+  const canvas = document.getElementById('label-crop-preview-canvas');
+  const maxDisplayWidth = 400;
+  const scale = Math.min(1, maxDisplayWidth / cropBoxState.width);
+  canvas.width = cropBoxState.width * scale;
+  canvas.height = cropBoxState.height * scale;
+  canvas.getContext('2d').drawImage(
+    labelImg,
+    cropBoxState.x, cropBoxState.y, cropBoxState.width, cropBoxState.height,
+    0, 0, canvas.width, canvas.height
+  );
+}
+
+let cropMode = 'preview'; // 'preview' (auto-cropped result, default) or 'adjust' (manual box)
+
+function showCropPreviewMode(){
+  cropMode = 'preview';
+  document.getElementById('label-crop-preview-wrap').style.display = 'flex';
+  document.getElementById('label-crop-canvas-wrap').style.display = 'none';
+  redrawPreviewCanvas();
+}
+function showCropAdjustMode(){
+  cropMode = 'adjust';
+  document.getElementById('label-crop-preview-wrap').style.display = 'none';
+  document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
+  redrawCropCanvas();
+  updateCropBoxOverlay();
+}
+
+// The main auto-crop pipeline: takes the AI's rough box (if any), refines
+// it with real pixel-based border detection, pads as a fallback safety
+// margin if detection doesn't find a clear border, then fits the result to
+// the selected preset's aspect ratio. Runs once right after analysis, and
+// again if the user changes preset/rotation while still in preview mode.
+function computeAutoCropBox(analysis){
+  const preset = getSelectedPreset();
+  const ratio = preset.widthIn / preset.heightIn;
+  const naturalW = labelImg.naturalWidth, naturalH = labelImg.naturalHeight;
+
+  const rotatedAiBox = analysis?.cropBox ? rotateCropBoxPct(analysis.cropBox, imageRotation) : null;
+  const roughBox = rotatedAiBox
+    ? {
+        x: (rotatedAiBox.xPct / 100) * naturalW,
+        y: (rotatedAiBox.yPct / 100) * naturalH,
+        width: (rotatedAiBox.widthPct / 100) * naturalW,
+        height: (rotatedAiBox.heightPct / 100) * naturalH,
+      }
+    : { x: naturalW * 0.1, y: naturalH * 0.1, width: naturalW * 0.8, height: naturalH * 0.8 };
+
+  const detected = detectLabelBorder(labelImg, roughBox);
+  const refinedBox = detected || padBoxPixels(roughBox, naturalW, naturalH, 0.12);
+  return fitBoxToRatio(refinedBox, ratio, naturalW, naturalH);
+}
+
 function renderLabelCropCanvas(analysis){
   document.getElementById('label-crop-status').style.display = 'none';
-  document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
   document.getElementById('label-crop-fields').style.display = 'flex';
   document.getElementById('label-crop-confirm-btn').style.display = '';
 
-  redrawCropCanvas();
-
-  const preset = getSelectedPreset();
-  const rotatedBox = analysis?.cropBox ? rotateCropBoxPct(analysis.cropBox, imageRotation) : null;
-  cropBoxState = computeInitialCropBox(labelImg.naturalWidth, labelImg.naturalHeight, preset.widthIn / preset.heightIn, rotatedBox);
-  updateCropBoxOverlay();
+  cropBoxState = computeAutoCropBox(analysis);
+  showCropPreviewMode();
 
   document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
   document.getElementById('label-crop-recipient').value = analysis?.recipientName || '';
@@ -2412,6 +2528,7 @@ function openLabelCropModal(){
   populateLabelPresetSelect();
   document.getElementById('label-crop-status').style.display = '';
   document.getElementById('label-crop-status').textContent = 'Analyzing image…';
+  document.getElementById('label-crop-preview-wrap').style.display = 'none';
   document.getElementById('label-crop-canvas-wrap').style.display = 'none';
   document.getElementById('label-crop-fields').style.display = 'none';
   document.getElementById('label-crop-confirm-btn').style.display = 'none';
@@ -2425,7 +2542,10 @@ function closeLabelCropModal(){
   labelImg = null;
   imageRotation = 0;
   cropBoxState = null;
+  lastAnalysis = null;
 }
+
+let lastAnalysis = null;
 
 async function startLabelWorkflow(imageDataUrl, mediaType){
   openLabelCropModal();
@@ -2450,6 +2570,7 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
     // with a centered default box, no auto-rotation, and blank marketplace/
     // recipient fields.
   }
+  lastAnalysis = analysis;
 
   imageRotation = [0, 90, 180, 270].includes(analysis?.rotationDegrees) ? analysis.rotationDegrees : 0;
   await applyRotation();
@@ -2513,25 +2634,44 @@ function refitCropBoxToRatio(ratio){
 
 document.getElementById('label-crop-preset').addEventListener('change', () => {
   if (!labelImg) return;
-  const preset = getSelectedPreset();
-  refitCropBoxToRatio(preset.widthIn / preset.heightIn);
+  if (cropMode === 'preview'){
+    // Re-run the full auto-crop pipeline (detection included) at the new
+    // aspect ratio, rather than just re-fitting the old box - a 4x4 crop
+    // and a 4x6 crop of the same label can legitimately need different
+    // framing, not just a rescale of the same rectangle.
+    cropBoxState = computeAutoCropBox(lastAnalysis);
+    redrawPreviewCanvas();
+  } else {
+    const preset = getSelectedPreset();
+    refitCropBoxToRatio(preset.widthIn / preset.heightIn);
+  }
 });
 
 // Rotates the actual image content 90 clockwise each click (cycling
 // 0->90->180->270->0), for whenever the AI's auto-detected orientation was
 // wrong or there was no analysis to go on at all. Since the underlying
 // image dimensions swap on a 90/270 turn, the old crop box's screen
-// position stops meaning anything, so this re-centers a fresh one at the
-// current preset's ratio rather than trying to carry it over.
+// position stops meaning anything, so this recomputes from scratch rather
+// than trying to carry it over.
 document.getElementById('label-crop-rotate-btn').addEventListener('click', async () => {
   if (!originalImg) return;
   imageRotation = (imageRotation + 90) % 360;
   await applyRotation();
-  redrawCropCanvas();
-  const preset = getSelectedPreset();
-  cropBoxState = computeInitialCropBox(labelImg.naturalWidth, labelImg.naturalHeight, preset.widthIn / preset.heightIn, null);
-  updateCropBoxOverlay();
+  if (cropMode === 'preview'){
+    cropBoxState = computeAutoCropBox(lastAnalysis);
+    redrawPreviewCanvas();
+  } else {
+    redrawCropCanvas();
+    const preset = getSelectedPreset();
+    cropBoxState = fitBoxToRatio(
+      { x: labelImg.naturalWidth * 0.1, y: labelImg.naturalHeight * 0.1, width: labelImg.naturalWidth * 0.8, height: labelImg.naturalHeight * 0.8 },
+      preset.widthIn / preset.heightIn, labelImg.naturalWidth, labelImg.naturalHeight
+    );
+    updateCropBoxOverlay();
+  }
 });
+
+document.getElementById('label-crop-show-adjust-btn').addEventListener('click', showCropAdjustMode);
 
 // Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
 // whatever preset is selected - pointer events, matching the same
