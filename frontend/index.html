@@ -2228,15 +2228,48 @@ restoreShippingFolder();
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 
+// Every canvas the label pipeline creates gets drawn onto and then read
+// back as pixels (grayscale analysis, rotation, PDF rendering) - a fresh
+// canvas starts fully transparent, and anywhere the source has no opaque
+// background (a PDF page with no painted background rect, a screenshot
+// with real alpha), that transparency reads back as (0,0,0,0). Grayscale
+// analysis ignores alpha, so that's black - solid "ink" - across whatever
+// region wasn't opaque. Filling white first, before anything is drawn,
+// means transparency composites as white background like it visually
+// should, everywhere a canvas is the first stop for a pasted/rendered image.
+function makeCanvas(w, h){
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+  return { canvas, ctx };
+}
+
 async function renderPdfFirstPageToImageUrl(file){
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const page = await pdf.getPage(1);
-  const viewport = page.getViewport({ scale: 2 }); // 2x for print-quality crops
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  const PDF_POINTS_PER_INCH = 72;
+  let scale = LABEL_DPI / PDF_POINTS_PER_INCH;   // 4.167 at 300 DPI
+  let viewport = page.getViewport({ scale });
+
+  // Cap total pixels so an unexpectedly large page (a poster-sized PDF, an
+  // oversized MediaBox) can't blow up memory - reduce scale to fit within
+  // ~16 megapixels rather than rendering at whatever size the page implies.
+  const MAX_PIXELS = 16_000_000;
+  const rawPixels = viewport.width * viewport.height;
+  let finalScale = scale;
+  if (rawPixels > MAX_PIXELS){
+    finalScale = scale * Math.sqrt(MAX_PIXELS / rawPixels);
+    viewport = page.getViewport({ scale: finalScale });
+  }
+  console.debug('[renderPdfFirstPageToImageUrl]', JSON.stringify({
+    scale: finalScale, width: Math.round(viewport.width), height: Math.round(viewport.height),
+  }));
+
+  const { canvas, ctx } = makeCanvas(viewport.width, viewport.height);
+  await page.render({ canvasContext: ctx, viewport }).promise;
   return canvas.toDataURL('image/png');
 }
 
@@ -2279,10 +2312,7 @@ function getSelectedPreset(){
 function rotateImageToCanvas(img, degrees){
   const swapped = degrees === 90 || degrees === 270;
   const w = img.naturalWidth, h = img.naturalHeight;
-  const canvas = document.createElement('canvas');
-  canvas.width = swapped ? h : w;
-  canvas.height = swapped ? w : h;
-  const ctx = canvas.getContext('2d');
+  const { canvas, ctx } = makeCanvas(swapped ? h : w, swapped ? w : h);
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate(degrees * Math.PI / 180);
   ctx.drawImage(img, -w / 2, -h / 2);
@@ -2321,9 +2351,7 @@ function mmToPx(mm, dpi){ return Math.round(mm / 25.4 * dpi); }
 // the canvas and a flat grayscale luminance array (ITU-R 601) - the common
 // input every detection step below works from.
 function toGrayscale(img, w, h){
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
+  const { canvas, ctx } = makeCanvas(w, h);
   ctx.drawImage(img, 0, 0, w, h);
   const data = ctx.getImageData(0, 0, w, h).data;
   const gray = new Uint8ClampedArray(w * h);
@@ -2382,7 +2410,23 @@ function detectRotationDeg(img){
   const colDensity = colInkDensity(bboxGray, bbox.width, bbox.height, LABEL_DARK);
   const rowBands = rowDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
   const colBands = colDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
-  if (rowBands >= colBands) return 0;
+  if (rowBands >= colBands){
+    // Not sideways, but a passing barcode decode elsewhere doesn't rule out
+    // upside-down - Code128 decodes fine either way. An upright label is
+    // bottom-heavy because the tracking barcode block sits low, so compare
+    // ink density between the two halves of the trimmed content (never the
+    // raw canvas - whitespace padding would dilute both halves toward zero).
+    const rowHalf = Math.floor(bbox.height / 2);
+    let topSum = 0, bottomSum = 0;
+    for (let y = 0; y < bbox.height; y++){
+      if (y < rowHalf) topSum += rowDensity[y]; else bottomSum += rowDensity[y];
+    }
+    const topMean = topSum / rowHalf;
+    const bottomMean = bottomSum / (bbox.height - rowHalf);
+    console.debug('[detectRotationDeg] half-density', JSON.stringify({ topMean, bottomMean }));
+    if (topMean > bottomMean) return 180;
+    return 0;
+  }
 
   const half = Math.floor(bbox.width / 2);
   let leftSum = 0, rightSum = 0;
