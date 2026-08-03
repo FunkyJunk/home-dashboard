@@ -2548,6 +2548,7 @@ function closeLabelCropModal(){
 let lastAnalysis = null;
 
 async function startLabelWorkflow(imageDataUrl, mediaType){
+  const t0 = performance.now();
   openLabelCropModal();
   try {
     originalImg = await loadImage(imageDataUrl);
@@ -2555,6 +2556,7 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
     document.getElementById('label-crop-status').textContent = 'Could not read that image.';
     return;
   }
+  const tImgLoaded = performance.now();
 
   let analysis = null;
   try {
@@ -2570,11 +2572,16 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
     // with a centered default box, no auto-rotation, and blank marketplace/
     // recipient fields.
   }
+  const tAnalyzed = performance.now();
   lastAnalysis = analysis;
 
   imageRotation = [0, 90, 180, 270].includes(analysis?.rotationDegrees) ? analysis.rotationDegrees : 0;
   await applyRotation();
+  const tRotated = performance.now();
   renderLabelCropCanvas(analysis);
+  const tCropped = performance.now();
+
+  console.log(`[shipping-label timing] image load: ${Math.round(tImgLoaded - t0)}ms | analyze (network+server): ${Math.round(tAnalyzed - tImgLoaded)}ms | rotate: ${Math.round(tRotated - tAnalyzed)}ms | detect+crop: ${Math.round(tCropped - tRotated)}ms | TOTAL: ${Math.round(tCropped - t0)}ms`);
 }
 
 // Global paste listener (not scoped to the dropzone) so pasting an image

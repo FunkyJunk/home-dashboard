@@ -67,6 +67,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
   if (!anthropic) {
     throw new Error("Shipping label analysis not configured - set ANTHROPIC_API_KEY");
   }
+  const startedAt = Date.now();
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-5",
     max_tokens: 1536,
@@ -85,6 +86,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
       },
     ],
   });
+  console.log(`[shippingLabels] Anthropic call took ${Date.now() - startedAt}ms (image ~${Math.round(base64Image.length / 1024)}KB base64)`);
   const toolUse = msg.content.find((b) => b.type === "tool_use");
   if (!toolUse) throw new Error("Claude did not return a structured result");
   return toolUse.input;
