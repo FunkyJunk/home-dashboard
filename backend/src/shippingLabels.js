@@ -10,8 +10,14 @@ import Anthropic from "@anthropic-ai/sdk";
 // box + a rotation direction), but that proved unreliable on real photos in
 // several distinct ways - the frontend now derives both deterministically
 // from pixel data instead (ink density, printed frame rules), so this call
-// is pure text extraction. That's exactly the bulk/cheap case receipts.js
-// already uses Haiku for, so this uses the same model.
+// is pure text extraction.
+//
+// Uses Sonnet, not Haiku - a real label showed Haiku confusing the "ship
+// from" sender block with the "ship to" recipient block (returned the
+// sender's business name instead of the actual recipient). Distinguishing
+// which of possibly several address blocks is the recipient - a judgment
+// call, not pure OCR - needs the extra reliability, and label volume is low
+// enough that the per-call cost difference doesn't matter.
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
 const ANALYZE_TOOL = {
@@ -30,7 +36,7 @@ const ANALYZE_TOOL = {
       },
       recipientName: {
         type: ["string", "null"],
-        description: "The name of the person or business the package is addressed to (the 'Ship To' recipient), exactly as printed on the label. Null if not legible.",
+        description: "Every shipping label has (at least) two addresses: a 'Ship From' / 'From' sender address (usually smaller, often a business name and a PO box or warehouse address) and a 'Ship To' / 'To' recipient address (who the package is actually being delivered to - this is the one that matters here). These two addresses can appear anywhere on the label and in either order depending on the carrier/marketplace template, and the label may be sideways or upside down, so don't assume a fixed position - read any 'FROM'/'TO' or 'SHIP FROM'/'SHIP TO' labels printed next to each block if present, and otherwise use judgment (the recipient address is typically paired with its own barcode/QR code distinct from the sender's, and is usually the more visually prominent block). Return the recipient's name exactly as printed - a person's name if there is one, otherwise the recipient business name. Null if not legible or the label only has one address and its role is unclear.",
       },
     },
     required: ["isLabel"],
@@ -42,7 +48,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
     throw new Error("Shipping label analysis not configured - set ANTHROPIC_API_KEY");
   }
   const msg = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-sonnet-5",
     max_tokens: 512,
     tools: [ANALYZE_TOOL],
     tool_choice: { type: "tool", name: "analyze_shipping_label" },
@@ -53,7 +59,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
           {
             type: "text",
-            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Identify whether it's a label, the marketplace/carrier, and the recipient's name.",
+            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Identify whether it's a label, the marketplace/carrier, and specifically the RECIPIENT's name - not the sender - reading whichever address block is actually the 'Ship To' one for this label's own layout.",
           },
         ],
       },
