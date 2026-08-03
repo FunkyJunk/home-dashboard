@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Settings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="theme.js"></script>
+<script src="idb.js"></script>
+<style>
+  :root{
+    --bg: #12161c;
+    --bg-inset: #0d1116;
+    --panel: #1b212b;
+    --panel-line: #2a323f;
+    --text: #ece7db;
+    --text-dim: #8b93a1;
+    --amber: #e8a33d;
+    --amber-dim: #6b5730;
+    --teal: #4fb8ae;
+    --teal-dim: #2c5b56;
+    --coral: #e2574c;
+    --coral-dim: #5a2a26;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--text); font-family:'IBM Plex Sans', sans-serif;
+    min-height:100vh; padding:2.5vw;
+  }
+  .settings-page{max-width:800px; margin:0 auto;}
+  .settings-page-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:2rem;}
+  .settings-page-header h1{font-size:1.4rem; font-weight:600;}
+  .back-link{
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.5em 1em; cursor:pointer; font-family:inherit; font-size:.85rem;
+    text-decoration:none; display:inline-block;
+  }
+  .back-link:hover{border-color:var(--teal); color:var(--teal);}
+
+  .card{background:var(--panel); border:1px solid var(--panel-line); border-radius:6px; padding:1.5rem;}
+  .card + .card{margin-top:1.5rem;}
+  .settings-section-title{font-size:1.05rem; font-weight:600; color:var(--text); margin:0 0 1rem;}
+  .settings-subsection{margin-bottom:1.5rem;}
+  .settings-subsection:last-child{margin-bottom:0;}
+  .settings-subsection-title{
+    font-family:'IBM Plex Mono', monospace; font-size:.75rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.05em; margin:0 0 .6rem;
+  }
+  .settings-hint{font-size:.8rem; color:var(--text-dim); margin:0 0 .75rem; line-height:1.4;}
+  .settings-folder-row{display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;}
+  .receipts-folder-status{font-size:.85rem; color:var(--text-dim);}
+
+  .settings-ignore-grid{display:flex; flex-direction:column; gap:.4rem; margin-bottom:.75rem;}
+  .settings-ignore-row{
+    display:grid; grid-template-columns:1fr auto auto auto; align-items:center; gap:.75rem;
+    padding:.5rem .6rem; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
+  }
+  .settings-ignore-value{font-size:.85rem; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .settings-ignore-type-badge{
+    font-family:'IBM Plex Mono', monospace; font-size:.68rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--panel-line); border-radius:4px; padding:.15rem .4rem;
+  }
+  .settings-mode-toggle{display:flex; gap:.3rem;}
+  .settings-mode-btn{
+    font-size:.72rem; padding:.3rem .55rem; border-radius:5px; border:1px solid var(--panel-line);
+    background:transparent; color:var(--text-dim); cursor:pointer; font-family:inherit;
+  }
+  .settings-mode-btn:hover{border-color:var(--teal);}
+  .settings-mode-btn.active{background:var(--teal-dim); border-color:var(--teal); color:var(--teal); font-weight:600;}
+  .settings-mode-btn.active[data-mode="skip"]{background:var(--coral-dim); border-color:var(--coral); color:var(--coral);}
+  .settings-ignore-add{display:flex; gap:.5rem; flex-wrap:wrap;}
+  .settings-ignore-add input{flex:1; min-width:140px;}
+  .settings-ignore-add select{width:auto;}
+  .settings-ignore-group-title{
+    font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.04em; margin:.75rem 0 .4rem;
+  }
+  .settings-ignore-group-title:first-of-type{margin-top:0;}
+
+  /* Database - a grid of table "cards" (schema + row count), each one a
+     button that loads a capped row preview below. No delete/edit anywhere
+     in this section, by design - it's a read-only introspection tool. */
+  .db-tables-grid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:1rem; margin-bottom:1.25rem;
+  }
+  .db-table-card{
+    display:flex; flex-direction:column; gap:.5rem; text-align:left; cursor:pointer;
+    background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
+    padding:.85rem; font:inherit; color:inherit;
+  }
+  .db-table-card:hover{border-color:var(--teal);}
+  .db-table-card-head{display:flex; justify-content:space-between; align-items:baseline; gap:.5rem;}
+  .db-table-name{font-family:'IBM Plex Mono', monospace; font-size:.85rem; color:var(--text); font-weight:600;}
+  .db-table-row-count{font-size:.72rem; color:var(--text-dim); white-space:nowrap;}
+  .db-table-cols{display:flex; flex-direction:column; gap:.2rem;}
+  .db-col-row{display:flex; justify-content:space-between; gap:.5rem; font-size:.72rem;}
+  .db-col-name{color:var(--text-dim);}
+  .db-col-type{color:var(--text-dim); font-family:'IBM Plex Mono', monospace; text-align:right;}
+  .db-table-preview{
+    border-top:1px solid var(--panel-line); padding-top:1.25rem;
+  }
+  .db-table-preview-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:.75rem;}
+  .db-table-preview-head h3{font-family:'IBM Plex Mono', monospace; font-size:.95rem;}
+  .db-table-preview-note{font-size:.78rem; color:var(--text-dim); margin-bottom:.6rem;}
+  .db-table-scroll{overflow-x:auto; border:1px solid var(--panel-line); border-radius:6px;}
+  .db-data-table{width:100%; border-collapse:collapse; font-size:.78rem; white-space:nowrap;}
+  .db-data-table th, .db-data-table td{
+    padding:.45rem .6rem; text-align:left; border-bottom:1px solid var(--panel-line);
+    max-width:260px; overflow:hidden; text-overflow:ellipsis;
+  }
+  .db-data-table th{
+    font-family:'IBM Plex Mono', monospace; font-size:.68rem; color:var(--text-dim);
+    text-transform:uppercase; letter-spacing:.03em; background:var(--bg-inset);
+  }
+  .db-data-table tr:last-child td{border-bottom:none;}
+
+  .receipts-toolbar-btn{
+    background:var(--panel); border:1px solid var(--panel-line); color:var(--text);
+    border-radius:4px; padding:.5em 1em; cursor:pointer; font-family:inherit; font-size:.85rem;
+  }
+  .receipts-toolbar-btn:hover{border-color:var(--teal);}
+  .receipt-btn{
+    border-radius:4px; padding:.4em .7em; cursor:pointer; font-family:inherit; font-size:.78rem;
+    border:1px solid var(--panel-line); background:var(--panel); color:var(--text);
+  }
+  .receipt-btn.business{border-color:var(--teal); color:var(--teal);}
+  .receipt-btn:hover{filter:brightness(1.2);}
+  .add-task-ctrl{
+    box-sizing:border-box; background:var(--bg-inset);
+    border:1px solid var(--panel-line); border-radius:8px;
+    padding:.55rem .7rem; color:var(--text); font-family:inherit; font-size:.85rem;
+  }
+  .add-task-ctrl:focus{outline:none; border-color:var(--teal);}
+  .keyword-remove{
+    background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:1rem; padding:0 .3rem;
+  }
+  .keyword-remove:hover{color:var(--coral);}
+  .receipts-status{font-size:.8rem; color:var(--text-dim);}
+  .receipts-status.error{color:var(--coral);}
+</style>
+</head>
+<body>
+
+<div class="settings-page">
+  <div class="settings-page-header">
+    <h1>Settings</h1>
+    <a class="back-link" href="index.html">&larr; Back to Dashboard</a>
+  </div>
+
+  <div class="card">
+    <h2 class="settings-section-title">Business Receipts</h2>
+
+    <div class="settings-subsection">
+      <h3 class="settings-subsection-title">Tax folder</h3>
+      <div class="settings-folder-row">
+        <span class="receipts-folder-status" id="settings-folder-status">No folder chosen yet</span>
+        <button type="button" id="settings-pick-folder" class="receipts-toolbar-btn">Choose folder&hellip;</button>
+        <button type="button" id="settings-reconnect-folder" class="receipts-toolbar-btn" style="display:none;">Reconnect</button>
+      </div>
+    </div>
+
+    <div class="settings-subsection">
+      <h3 class="settings-subsection-title">Ignore keywords &amp; domains</h3>
+      <p class="settings-hint">"Highlight" pre-selects the Ignore button for review but still imports the email; "Auto-skip" excludes a match from import entirely.</p>
+
+      <h4 class="settings-ignore-group-title">Keywords</h4>
+      <div class="settings-ignore-grid" id="settings-ignore-keywords-grid"></div>
+
+      <h4 class="settings-ignore-group-title">Domains</h4>
+      <div class="settings-ignore-grid" id="settings-ignore-domains-grid"></div>
+
+      <div class="settings-ignore-add">
+        <input type="text" class="add-task-ctrl" id="settings-ignore-input" placeholder="Add a keyword or domain&hellip;">
+        <select class="add-task-ctrl" id="settings-ignore-type">
+          <option value="keyword">Keyword</option>
+          <option value="domain">Domain</option>
+        </select>
+        <select class="add-task-ctrl" id="settings-ignore-mode">
+          <option value="highlight">Highlight</option>
+          <option value="skip">Auto-skip</option>
+        </select>
+        <button type="button" class="receipt-btn business" id="settings-ignore-add-btn">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="settings-section-title">Database</h2>
+    <p class="settings-hint">Read-only - click a table to preview its rows. No editing here.</p>
+    <div class="db-tables-grid" id="db-tables-grid"></div>
+    <div class="db-table-preview" id="db-table-preview" style="display:none;">
+      <div class="db-table-preview-head">
+        <h3 id="db-table-preview-title"></h3>
+        <button type="button" class="back-link" id="db-table-preview-close">Close preview</button>
+      </div>
+      <div id="db-table-preview-body"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// --- Tax folder (own copy of index.html's state - both pages read/write
+// the same IndexedDB-stored handle via idb.js, just via separate
+// in-memory state per page since there's no shared module system here). ---
+let taxFolderHandle = null;
+let pendingTaxFolderHandle = null;
+
+function updateFolderStatus(){
+  const statusEl = document.getElementById('settings-folder-status');
+  const reconnectBtn = document.getElementById('settings-reconnect-folder');
+  if (taxFolderHandle){
+    statusEl.textContent = 'Folder: ' + taxFolderHandle.name;
+    reconnectBtn.style.display = 'none';
+  } else if (pendingTaxFolderHandle){
+    statusEl.textContent = 'Folder: ' + pendingTaxFolderHandle.name + ' (needs reconnect)';
+    reconnectBtn.style.display = '';
+  } else {
+    statusEl.textContent = 'No folder chosen yet';
+    reconnectBtn.style.display = 'none';
+  }
+}
+
+async function pickTaxFolder(){
+  if (!window.showDirectoryPicker){
+    alert('This feature needs Chrome or Edge (File System Access API not supported here).');
+    return;
+  }
+  try {
+    taxFolderHandle = await window.showDirectoryPicker({ id: 'tax-folder', mode: 'readwrite' });
+    pendingTaxFolderHandle = null;
+    await idbSet('taxFolderHandle', taxFolderHandle);
+    updateFolderStatus();
+  } catch (e){
+    // User cancelled the picker - nothing to do.
+  }
+}
+
+async function restoreTaxFolder(){
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await idbGet('taxFolderHandle');
+    if (!handle) return;
+    if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted'){
+      taxFolderHandle = handle;
+    } else {
+      pendingTaxFolderHandle = handle;
+    }
+  } catch (e){ /* ignore - just means no folder chosen yet */ }
+  updateFolderStatus();
+}
+
+async function reconnectTaxFolder(){
+  if (!pendingTaxFolderHandle) return;
+  try {
+    if ((await pendingTaxFolderHandle.requestPermission({ mode: 'readwrite' })) === 'granted'){
+      taxFolderHandle = pendingTaxFolderHandle;
+      pendingTaxFolderHandle = null;
+      updateFolderStatus();
+    }
+  } catch (e){ /* ignore */ }
+}
+
+// --- Ignore keywords & domains grid ---
+let ignoreKeywords = [];
+let ignoreDomains = [];
+
+async function loadIgnoreKeywords(){
+  try {
+    const res = await fetch('/api/receipts/ignore-keywords');
+    const data = await res.json();
+    ignoreKeywords = data.keywords || [];
+    ignoreDomains = data.domains || [];
+  } catch (e){ /* non-fatal - grid just won't reflect the list */ }
+}
+
+// Each entry is {value, mode} - mode is "highlight" (still imported on
+// the dashboard, Ignore button pre-selected for review) or "skip"
+// (excluded from /scan results entirely, enforced server-side).
+function settingsIgnoreRowHtml(entry, type){
+  const modeButtons = ['highlight', 'skip'].map(m => `
+    <button type="button" class="settings-mode-btn${entry.mode === m ? ' active' : ''}" data-mode="${m}" data-v="${escapeHtml(entry.value)}" data-type="${type}">
+      ${m === 'highlight' ? 'Highlight' : 'Auto-skip'}
+    </button>
+  `).join('');
+  return `
+    <div class="settings-ignore-row">
+      <span class="settings-ignore-value" title="${escapeHtml(entry.value)}">${type === 'domain' ? '@' : ''}${escapeHtml(entry.value)}</span>
+      <span class="settings-ignore-type-badge">${type}</span>
+      <div class="settings-mode-toggle">${modeButtons}</div>
+      <button type="button" class="keyword-remove" data-v="${escapeHtml(entry.value)}" data-type="${type}" title="Remove">&times;</button>
+    </div>
+  `;
+}
+
+function wireIgnoreGrid(grid){
+  grid.querySelectorAll('.settings-mode-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: btn.dataset.mode }),
+      });
+      await loadIgnoreKeywords();
+      renderSettingsIgnoreGrid();
+    });
+  });
+  grid.querySelectorAll('.keyword-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, { method: 'DELETE' });
+      await loadIgnoreKeywords();
+      renderSettingsIgnoreGrid();
+    });
+  });
+}
+
+// Keywords and domains render as two separate grids (same row/toggle/
+// remove markup either way) rather than one interleaved list.
+function renderSettingsIgnoreGrid(){
+  const keywordsGrid = document.getElementById('settings-ignore-keywords-grid');
+  const domainsGrid = document.getElementById('settings-ignore-domains-grid');
+
+  keywordsGrid.innerHTML = ignoreKeywords.length
+    ? ignoreKeywords.map(k => settingsIgnoreRowHtml(k, 'keyword')).join('')
+    : '<span class="receipts-status">No ignore keywords yet.</span>';
+  domainsGrid.innerHTML = ignoreDomains.length
+    ? ignoreDomains.map(d => settingsIgnoreRowHtml(d, 'domain')).join('')
+    : '<span class="receipts-status">No ignore domains yet.</span>';
+
+  wireIgnoreGrid(keywordsGrid);
+  wireIgnoreGrid(domainsGrid);
+}
+
+async function addIgnoreEntry(){
+  const input = document.getElementById('settings-ignore-input');
+  const value = input.value.trim().toLowerCase();
+  if (!value) return;
+  const type = document.getElementById('settings-ignore-type').value;
+  const mode = document.getElementById('settings-ignore-mode').value;
+  await fetch('/api/receipts/ignore-keywords', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(type === 'domain' ? { domains: [value], mode } : { keywords: [value], mode }),
+  });
+  input.value = '';
+  await loadIgnoreKeywords();
+  renderSettingsIgnoreGrid();
+}
+
+document.getElementById('settings-pick-folder').addEventListener('click', pickTaxFolder);
+document.getElementById('settings-reconnect-folder').addEventListener('click', reconnectTaxFolder);
+document.getElementById('settings-ignore-add-btn').addEventListener('click', addIgnoreEntry);
+document.getElementById('settings-ignore-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addIgnoreEntry();
+});
+
+// --- Database (read-only) ---
+// One table box per real table (schema + row count) - clicking one loads
+// a capped row preview below. No create/edit/delete anywhere here.
+function dbTableCardHtml(t){
+  const cols = t.columns.map(c => `
+    <div class="db-col-row">
+      <span class="db-col-name">${escapeHtml(c.name)}</span>
+      <span class="db-col-type">${escapeHtml(c.type || '')}${c.pk ? ' &bull; PK' : ''}</span>
+    </div>
+  `).join('');
+  return `
+    <button type="button" class="db-table-card" data-table="${escapeHtml(t.name)}">
+      <div class="db-table-card-head">
+        <span class="db-table-name">${escapeHtml(t.name)}</span>
+        <span class="db-table-row-count">${t.rowCount} row${t.rowCount === 1 ? '' : 's'}</span>
+      </div>
+      <div class="db-table-cols">${cols}</div>
+    </button>
+  `;
+}
+
+async function loadDbSchema(){
+  const grid = document.getElementById('db-tables-grid');
+  try {
+    const res = await fetch('/api/receipts/db/schema');
+    const data = await res.json();
+    grid.innerHTML = (data.tables || []).map(dbTableCardHtml).join('');
+    grid.querySelectorAll('.db-table-card').forEach(btn => {
+      btn.addEventListener('click', () => openDbTablePreview(btn.dataset.table));
+    });
+  } catch {
+    grid.innerHTML = '<span class="receipts-status error">Could not load the database schema.</span>';
+  }
+}
+
+function dbValueToText(v){
+  if (v == null) return '';
+  return String(v);
+}
+
+function renderDbTableRows(name, data){
+  const body = document.getElementById('db-table-preview-body');
+  if (!data.rows.length){
+    body.innerHTML = '<div class="receipts-status">No rows.</div>';
+    return;
+  }
+  const cols = Object.keys(data.rows[0]);
+  body.innerHTML = `
+    <div class="db-table-preview-note">Showing ${data.rows.length} of ${data.rowCount} row${data.rowCount === 1 ? '' : 's'}</div>
+    <div class="db-table-scroll">
+      <table class="db-data-table">
+        <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${data.rows.map(row => `<tr>${cols.map(c => `<td>${escapeHtml(dbValueToText(row[c]))}</td>`).join('')}</tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function openDbTablePreview(name){
+  document.getElementById('db-table-preview-title').textContent = name;
+  document.getElementById('db-table-preview').style.display = '';
+  document.getElementById('db-table-preview-body').innerHTML = '<div class="receipts-status">Loading&hellip;</div>';
+  try {
+    const res = await fetch(`/api/receipts/db/table/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error('failed to load table');
+    const data = await res.json();
+    renderDbTableRows(name, data);
+  } catch {
+    document.getElementById('db-table-preview-body').innerHTML = '<div class="receipts-status error">Failed to load rows.</div>';
+  }
+}
+
+document.getElementById('db-table-preview-close').addEventListener('click', () => {
+  document.getElementById('db-table-preview').style.display = 'none';
+});
+
+restoreTaxFolder();
+loadIgnoreKeywords().then(renderSettingsIgnoreGrid);
+loadDbSchema();
+</script>
+</body>
+</html>

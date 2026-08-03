@@ -10,6 +10,8 @@
 <script src="xlsx.full.min.js"></script>
 <script src="jspdf.umd.min.js"></script>
 <script src="pdf.min.js"></script>
+<script src="theme.js"></script>
+<script src="idb.js"></script>
 <style>
   :root{
     --bg: #12161c;
@@ -838,6 +840,9 @@
   </button>
   <div class="menu-panel" id="menu-panel">
     <div class="menu-panel-section">
+      <a class="receipts-toolbar-btn" href="settings.html" style="width:100%; display:block; text-align:center; text-decoration:none; box-sizing:border-box;">Settings</a>
+    </div>
+    <div class="menu-panel-section">
       <h3>Theme</h3>
       <select class="theme-select" id="theme-select"></select>
     </div>
@@ -929,7 +934,6 @@
         <button type="button" id="receipts-scan" class="receipts-toolbar-btn primary">Scan month</button>
         <button type="button" id="receipts-rescan" class="receipts-toolbar-btn" style="display:none;">Force rescan</button>
         <button type="button" id="receipts-download-spreadsheet" class="receipts-toolbar-btn">Download spreadsheet&hellip;</button>
-        <button type="button" id="receipts-manage-keywords" class="receipts-toolbar-btn">Manage ignore keywords&hellip;</button>
         <span class="receipts-status" id="receipts-status"></span>
       </div>
       <div class="receipts-tabs" id="receipts-tabs">
@@ -1014,20 +1018,6 @@
           <button class="modal-close" id="receipt-detail-modal-close">Close</button>
         </div>
         <div id="receipt-detail-body"></div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="keywords-modal">
-      <div class="modal-inner keywords-modal-inner">
-        <div class="modal-head">
-          <span>Ignore keywords</span>
-          <button class="modal-close" id="keywords-modal-close">Close</button>
-        </div>
-        <div class="ignore-modal-words" id="keywords-modal-list"></div>
-        <div class="keywords-modal-add">
-          <input type="text" class="receipt-input keywords-modal-input" id="keywords-modal-input" placeholder="Add a keyword&hellip;">
-          <button type="button" class="receipt-btn business" id="keywords-modal-add-btn">Add</button>
-        </div>
       </div>
     </div>
 
@@ -4007,32 +3997,12 @@ let selectedIds = new Set();
 // save is still a business expense, just with a prorated amount.
 const TAB_STATUS_QUERY = { pending: 'pending', business: 'business,split', personal: 'personal', ignore: 'ignore' };
 
-function openHandleDb(){
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('home-dashboard', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('handles');
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbGet(key){
-  const db = await openHandleDb();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction('handles', 'readonly').objectStore('handles').get(key);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbSet(key, value){
-  const db = await openHandleDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('handles', 'readwrite');
-    tx.objectStore('handles').put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
+// openHandleDb/idbGet/idbSet now live in idb.js (shared with settings.html).
 
+// Drives the receipts toolbar's folder controls only - settings.html has
+// its own copy of this over its own taxFolderHandle/pendingTaxFolderHandle
+// state (both pages read/write the same underlying IndexedDB-stored
+// handle, just via separate in-memory state per page).
 function updateFolderStatus(){
   const statusEl = document.getElementById('receipts-folder-status');
   const reconnectBtn = document.getElementById('receipts-reconnect-folder');
@@ -4255,9 +4225,10 @@ function closeReceiptImageModal(){
 
 // ---------------------------------------------------------------------
 // Ignore list - for shipping-notification noise ("shipped", "delivered",
-// etc.) that isn't really a receipt at all. Persisted server-side so it
-// also excludes matching emails from future Gmail scans, not just the
-// current view.
+// etc.) that isn't really a receipt at all. Persisted server-side; a
+// "skip"-mode entry (set in Settings) additionally excludes matching
+// emails from future Gmail scans entirely, not just the current view -
+// "highlight" mode (the default) only flags the Ignore button here.
 // ---------------------------------------------------------------------
 
 let ignoreKeywords = [];
@@ -4270,6 +4241,13 @@ const IGNORE_STOPWORDS = new Set([
   'number', 'item', 'items', 'thank', 'thanks', 'now', 'new', 'out',
 ]);
 
+// Each entry is {value, mode} - mode is "highlight" (still imported,
+// Ignore button pre-selected for review - the original and still-default
+// behavior) or "skip" (excluded from /scan results entirely, enforced
+// server-side; see receipts.js). candidateMatchesIgnore below reflects
+// EITHER mode, since a "skip" match that somehow still reaches the
+// client (a candidate scanned before the rule existed, say) should still
+// highlight, not silently look unremarkable.
 async function loadIgnoreKeywords(){
   try {
     const res = await fetch('/api/receipts/ignore-keywords');
@@ -4281,7 +4259,7 @@ async function loadIgnoreKeywords(){
 
 function extractSubjectWords(subject){
   const words = (subject || '').toLowerCase().match(/[a-z]{3,}/g) || [];
-  const known = new Set(ignoreKeywords.map(k => k.toLowerCase()));
+  const known = new Set(ignoreKeywords.map(k => k.value.toLowerCase()));
   // Words already in the ignore list are dropped - re-adding one is a
   // no-op server-side anyway, and showing it as a pickable option here
   // would just be confusing clutter.
@@ -4296,7 +4274,7 @@ function extractSenderDomain(from){
 function candidateMatchesIgnore(c){
   const subject = (c.subject || '').toLowerCase();
   const domain = extractSenderDomain(c.from);
-  return ignoreKeywords.some(k => subject.includes(k)) || (domain && ignoreDomains.includes(domain));
+  return ignoreKeywords.some(k => subject.includes(k.value)) || (domain && ignoreDomains.some(d => d.value === domain));
 }
 
 // Positions the modal's card near whatever was clicked (the Ignore
@@ -4342,7 +4320,7 @@ function openIgnoreModal(idx, anchorRect){
 
   const domain = extractSenderDomain(candidate.from);
   const domainEl = document.getElementById('ignore-modal-domain');
-  domainEl.innerHTML = (domain && !ignoreDomains.includes(domain))
+  domainEl.innerHTML = (domain && !ignoreDomains.some(d => d.value === domain))
     ? `<label class="ignore-keyword-chip"><input type="checkbox" id="ignore-modal-domain-cb" value="${escapeHtml(domain)}"> Ignore all emails from @${escapeHtml(domain)}</label>`
     : '';
 
@@ -4396,42 +4374,10 @@ async function confirmIgnore(){
   loadStatusCounts(currentMonth);
 }
 
-function renderKeywordsModal(){
-  const list = document.getElementById('keywords-modal-list');
-  const wordChips = ignoreKeywords.map(k => `<span class="ignore-keyword-chip">${escapeHtml(k)}<button type="button" class="keyword-remove" data-v="${escapeHtml(k)}" data-type="keyword" title="Remove">&times;</button></span>`);
-  const domainChips = ignoreDomains.map(d => `<span class="ignore-keyword-chip">@${escapeHtml(d)}<button type="button" class="keyword-remove" data-v="${escapeHtml(d)}" data-type="domain" title="Remove">&times;</button></span>`);
-  list.innerHTML = (wordChips.length || domainChips.length)
-    ? wordChips.concat(domainChips).join('')
-    : '<span class="receipts-status">No ignore keywords yet.</span>';
-  list.querySelectorAll('.keyword-remove').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await fetch(`/api/receipts/ignore-keywords/${encodeURIComponent(btn.dataset.v)}?type=${btn.dataset.type}`, { method: 'DELETE' });
-      await loadIgnoreKeywords();
-      renderKeywordsModal();
-      renderReceiptsGrid();
-    });
-  });
-}
-function openKeywordsModal(){
-  renderKeywordsModal();
-  document.getElementById('keywords-modal').classList.add('open');
-}
-function closeKeywordsModal(){
-  document.getElementById('keywords-modal').classList.remove('open');
-}
-async function addKeywordManually(){
-  const input = document.getElementById('keywords-modal-input');
-  const value = input.value.trim().toLowerCase();
-  if (!value) return;
-  await fetch('/api/receipts/ignore-keywords', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keywords: [value] }),
-  });
-  input.value = '';
-  await loadIgnoreKeywords();
-  renderKeywordsModal();
-  renderReceiptsGrid();
-}
+// Ignore-keyword/domain management (the grid, add/patch/remove) now
+// lives entirely on settings.html - index.html only needs read access
+// (loadIgnoreKeywords/candidateMatchesIgnore/extractSubjectWords above,
+// and the per-email quick-add ignore-modal) to highlight matches here.
 
 // ---------------------------------------------------------------------
 // Receipt detail modal - the full, non-truncated view of a receipt
@@ -4978,15 +4924,8 @@ document.getElementById('bulk-business').addEventListener('click', () => bulkRes
 document.getElementById('bulk-personal').addEventListener('click', () => bulkResolve('personal'));
 document.getElementById('bulk-ignore').addEventListener('click', () => bulkResolve('ignore'));
 document.getElementById('receipts-download-spreadsheet').addEventListener('click', downloadSpreadsheet);
-document.getElementById('receipts-manage-keywords').addEventListener('click', openKeywordsModal);
-document.getElementById('keywords-modal-close').addEventListener('click', closeKeywordsModal);
-document.getElementById('keywords-modal').addEventListener('click', (e) => {
-  if (e.target.id === 'keywords-modal') closeKeywordsModal();
-});
-document.getElementById('keywords-modal-add-btn').addEventListener('click', addKeywordManually);
-document.getElementById('keywords-modal-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addKeywordManually();
-});
+// Settings is a real page (settings.html) now, not a popup - the
+// hamburger menu's "Settings" is a plain <a href>, no click handler needed.
 restoreTaxFolder();
 (async function initReceipts(){
   await loadIgnoreKeywords();
@@ -5003,44 +4942,10 @@ restoreTaxFolder();
 // rule regardless of specificity.
 // ---------------------------------------------------------------------
 
-const THEME_PRESETS = {
-  midnight: {
-    label: 'Midnight',
-    vars: { '--bg':'#12161c', '--bg-inset':'#0d1116', '--panel':'#1b212b', '--panel-line':'#2a323f', '--text':'#ece7db', '--text-dim':'#8b93a1', '--amber':'#e8a33d', '--amber-dim':'#6b5730', '--teal':'#4fb8ae', '--teal-dim':'#2c5b56', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
-  },
-  slate: {
-    label: 'Slate',
-    vars: { '--bg':'#15181d', '--bg-inset':'#0e1013', '--panel':'#1e2228', '--panel-line':'#323841', '--text':'#e8eaed', '--text-dim':'#8a929c', '--amber':'#5b9bf0', '--amber-dim':'#274873', '--teal':'#9d8cf0', '--teal-dim':'#3c3468', '--coral':'#f0615b', '--coral-dim':'#5c2a28' },
-  },
-  forest: {
-    label: 'Forest',
-    vars: { '--bg':'#12190f', '--bg-inset':'#0c120a', '--panel':'#1b2818', '--panel-line':'#2e4029', '--text':'#eef0e4', '--text-dim':'#8fa085', '--amber':'#c9a53d', '--amber-dim':'#5c4d22', '--teal':'#5fbf8a', '--teal-dim':'#28513a', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
-  },
-  sunset: {
-    label: 'Sunset',
-    vars: { '--bg':'#1b1219', '--bg-inset':'#140c12', '--panel':'#2a1c26', '--panel-line':'#402e3b', '--text':'#f2e6e9', '--text-dim':'#a08b95', '--amber':'#f0813d', '--amber-dim':'#6b3c1f', '--teal':'#e85f9a', '--teal-dim':'#5c2947', '--coral':'#ef4e4e', '--coral-dim':'#5c2626' },
-  },
-  ocean: {
-    label: 'Ocean',
-    vars: { '--bg':'#0d1a1f', '--bg-inset':'#081215', '--panel':'#132830', '--panel-line':'#204048', '--text':'#e3f2f0', '--text-dim':'#7fa3a8', '--amber':'#3dc6e8', '--amber-dim':'#1e5666', '--teal':'#4f8ab8', '--teal-dim':'#264a63', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
-  },
-  mono: {
-    label: 'Mono',
-    vars: { '--bg':'#15161a', '--bg-inset':'#0f1013', '--panel':'#1e2024', '--panel-line':'#33363c', '--text':'#eceef0', '--text-dim':'#8a8d93', '--amber':'#c8ccd2', '--amber-dim':'#4a4d54', '--teal':'#9aa0a8', '--teal-dim':'#383c42', '--coral':'#e2574c', '--coral-dim':'#5a2a26' },
-  },
-};
+// THEME_PRESETS/THEME_KEY/CUSTOM_THEMES_KEY/applyThemeVars/loadCustomThemes/
+// applyTheme now live in theme.js (shared with settings.html) - only the
+// index.html-only pieces (the picker UI, add-from-URL) stay here.
 
-const THEME_KEY = 'dashboard-theme';
-const CUSTOM_THEMES_KEY = 'dashboard-custom-themes';
-
-function applyThemeVars(vars){
-  const root = document.documentElement.style;
-  for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
-}
-
-function loadCustomThemes(){
-  try { return JSON.parse(localStorage.getItem(CUSTOM_THEMES_KEY) || '{}'); } catch { return {}; }
-}
 function saveCustomThemes(themes){
   localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes));
 }
@@ -5055,20 +4960,7 @@ function populateThemeSelect(){
   ].join('');
 }
 
-function applyTheme(themeKey){
-  let vars = null;
-  if (themeKey.startsWith('custom:')){
-    const t = loadCustomThemes()[themeKey.slice(7)];
-    if (t) vars = t.vars;
-  } else if (THEME_PRESETS[themeKey]){
-    vars = THEME_PRESETS[themeKey].vars;
-  }
-  if (!vars){ themeKey = 'midnight'; vars = THEME_PRESETS.midnight.vars; }
-  applyThemeVars(vars);
-  localStorage.setItem(THEME_KEY, themeKey);
-  const sel = document.getElementById('theme-select');
-  if (sel) sel.value = themeKey;
-}
+// applyTheme itself is in theme.js.
 
 function initTheme(){
   populateThemeSelect();

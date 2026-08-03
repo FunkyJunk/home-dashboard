@@ -82,6 +82,19 @@ db.exec(`
   }
 }
 
+// mode distinguishes a rule that just highlights the Ignore button for
+// manual review ("highlight", the original and still-default behavior)
+// from one that's excluded from /scan results entirely ("skip") - see
+// the scan handler below. A plain ADD COLUMN suffices here since it's a
+// new column with a constant default, not a PK change like the migration
+// above.
+{
+  const ikColumns = db.prepare("PRAGMA table_info(ignore_keywords)").all().map((c) => c.name);
+  if (!ikColumns.includes("mode")) {
+    db.exec(`ALTER TABLE ignore_keywords ADD COLUMN mode TEXT NOT NULL DEFAULT 'highlight'`);
+  }
+}
+
 // One-time migration from the old flat-file state (pre-database version of
 // this feature) so receipts already marked business/personal don't
 // reappear once their month gets scanned under the new system.
@@ -129,6 +142,11 @@ function monthRange(month) {
 function buildQuery(after, before) {
   const exclusions = RECEIPT_QUERY_EXCLUSIONS.map((t) => `-${t}`).join(" ");
   return `after:${after} before:${before} (${RECEIPT_QUERY_TERMS.join(" OR ")}) ${exclusions}`;
+}
+
+function extractSenderDomain(from) {
+  const m = (from || "").match(/@([\w.-]+)/);
+  return m ? m[1].toLowerCase() : null;
 }
 
 function decodeBase64Url(data) {
@@ -443,15 +461,18 @@ export function createReceiptsRouter({ oauth2Client }) {
   });
 
   // The ignore list is user-curated: picked from a subject's words (or a
-  // sender's domain) via the "Ignore" button's popup. Used both to
-  // highlight matching candidates client-side and to exclude future
-  // Gmail scans (see buildQuery).
-  const selectIgnoreItems = db.prepare("SELECT value, type FROM ignore_keywords ORDER BY added_at DESC");
+  // sender's domain) via the "Ignore" button's popup, or added directly
+  // in Settings. mode is exposed per-entry so Settings can show/toggle
+  // it - "highlight" just flags a matching candidate's Ignore button for
+  // manual review (the original, still-default behavior); "skip"
+  // additionally excludes it from /scan results entirely.
+  const selectIgnoreItems = db.prepare("SELECT value, type, mode FROM ignore_keywords ORDER BY added_at DESC");
   function currentIgnoreLists() {
     const rows = selectIgnoreItems.all();
+    const toEntry = (r) => ({ value: r.value, mode: r.mode });
     return {
-      keywords: rows.filter((r) => r.type !== "domain").map((r) => r.value),
-      domains: rows.filter((r) => r.type === "domain").map((r) => r.value),
+      keywords: rows.filter((r) => r.type !== "domain").map(toEntry),
+      domains: rows.filter((r) => r.type === "domain").map(toEntry),
     };
   }
 
@@ -462,19 +483,27 @@ export function createReceiptsRouter({ oauth2Client }) {
   router.post("/ignore-keywords", (req, res) => {
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : [];
     const domains = Array.isArray(req.body?.domains) ? req.body.domains : [];
-    const insert = db.prepare("INSERT OR IGNORE INTO ignore_keywords (value, type, added_at) VALUES (?, ?, ?)");
+    const mode = req.body?.mode === "skip" ? "skip" : "highlight";
+    const insert = db.prepare("INSERT OR IGNORE INTO ignore_keywords (value, type, mode, added_at) VALUES (?, ?, ?, ?)");
     const now = new Date().toISOString();
     const tx = db.transaction((words, doms) => {
       for (const w of words) {
         const value = String(w || "").trim().toLowerCase();
-        if (value) insert.run(value, "keyword", now);
+        if (value) insert.run(value, "keyword", mode, now);
       }
       for (const d of doms) {
         const value = String(d || "").trim().toLowerCase();
-        if (value) insert.run(value, "domain", now);
+        if (value) insert.run(value, "domain", mode, now);
       }
     });
     tx(keywords, domains);
+    res.json(currentIgnoreLists());
+  });
+
+  router.patch("/ignore-keywords/:value", (req, res) => {
+    const type = req.query.type === "domain" ? "domain" : "keyword";
+    const mode = req.body?.mode === "skip" ? "skip" : "highlight";
+    db.prepare("UPDATE ignore_keywords SET mode = ? WHERE value = ? AND type = ?").run(mode, req.params.value.toLowerCase(), type);
     res.json(currentIgnoreLists());
   });
 
@@ -482,6 +511,53 @@ export function createReceiptsRouter({ oauth2Client }) {
     const type = req.query.type === "domain" ? "domain" : "keyword";
     db.prepare("DELETE FROM ignore_keywords WHERE value = ? AND type = ?").run(req.params.value.toLowerCase(), type);
     res.json({ ok: true });
+  });
+
+  // Read-only DB introspection for the Settings > Database page - schema
+  // (column list + row count) and a capped row preview, never a write.
+  // Table names can't be parameterized in SQL, so every query below
+  // interpolates one only after checking it against this fixed allowlist -
+  // never anything from the request directly.
+  const KNOWN_TABLES = ["scanned_months", "candidates", "legacy_resolved", "ignore_keywords"];
+
+  router.get("/db/schema", (req, res) => {
+    const tables = KNOWN_TABLES.map((name) => {
+      const columns = db.prepare(`PRAGMA table_info(${name})`).all().map((c) => ({
+        name: c.name,
+        type: c.type,
+        notnull: !!c.notnull,
+        pk: !!c.pk,
+      }));
+      const { count } = db.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get();
+      return { name, columns, rowCount: count };
+    });
+    res.json({ tables });
+  });
+
+  const DB_MAX_ROW_LIMIT = 200;
+  const DB_DEFAULT_ROW_LIMIT = 50;
+  // candidates.body_html alone can run to ~300KB (see the migration
+  // comment above) - this is a quick preview, not an export, so long text
+  // values are cut down to something a browser table can render instantly.
+  const DB_TEXT_TRUNCATE_LENGTH = 300;
+
+  router.get("/db/table/:name", (req, res) => {
+    const name = req.params.name;
+    if (!KNOWN_TABLES.includes(name)) return res.status(404).json({ error: "unknown table" });
+    const limit = Math.min(DB_MAX_ROW_LIMIT, Math.max(1, parseInt(req.query.limit, 10) || DB_DEFAULT_ROW_LIMIT));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const rows = db.prepare(`SELECT * FROM ${name} LIMIT ? OFFSET ?`).all(limit, offset);
+    const { count } = db.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get();
+    const truncated = rows.map((row) => {
+      const out = {};
+      for (const [k, v] of Object.entries(row)) {
+        out[k] = typeof v === "string" && v.length > DB_TEXT_TRUNCATE_LENGTH
+          ? v.slice(0, DB_TEXT_TRUNCATE_LENGTH) + `… (${v.length} chars total)`
+          : v;
+      }
+      return out;
+    });
+    res.json({ rows: truncated, rowCount: count, limit, offset });
   });
 
   // Pure DB read - never touches Gmail. This is what the grid loads from
@@ -622,6 +698,20 @@ export function createReceiptsRouter({ oauth2Client }) {
       });
 
       const fulfilled = results.filter((r) => r.status === "fulfilled" && r.value !== null).map((r) => r.value);
+
+      // "skip"-mode ignore rules exclude a match from ever landing in
+      // Pending at all, rather than just highlighting its Ignore button
+      // (that's what "highlight" mode still does, unchanged) - resolved
+      // fresh per scan since the list can change between scans.
+      const { keywords: ignoreKeywords, domains: ignoreDomains } = currentIgnoreLists();
+      const skipKeywords = ignoreKeywords.filter((k) => k.mode === "skip").map((k) => k.value);
+      const skipDomains = ignoreDomains.filter((d) => d.mode === "skip").map((d) => d.value);
+      function matchesSkipRule(c) {
+        const subject = (c.subject || "").toLowerCase();
+        const domain = extractSenderDomain(c.from);
+        return skipKeywords.some((k) => subject.includes(k)) || (domain && skipDomains.includes(domain));
+      }
+
       const tx = db.transaction((rows) => {
         for (const c of rows) {
           const legacy = getLegacyResolved.get(c.id);
@@ -641,7 +731,7 @@ export function createReceiptsRouter({ oauth2Client }) {
             remote_images: JSON.stringify(c.remoteImageUrls),
             body_text: c.bodyText,
             body_html: c.bodyHtml,
-            status: legacy ? legacy.decision : "pending",
+            status: legacy ? legacy.decision : (matchesSkipRule(c) ? "ignore" : "pending"),
           });
         }
         upsertScannedMonth.run(month, new Date().toISOString(), messages.length);
