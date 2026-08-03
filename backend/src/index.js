@@ -548,12 +548,74 @@ async function setNestThermostat(deviceName, { temperature, hvacMode }) {
   throw new Error("invalid request");
 }
 
+// Which integration owns an entity (Sonos vs Roku vs Alexa vs a plain
+// Chromecast, etc.) isn't in /api/states at all - HA only exposes that in
+// the entity registry, which itself is WebSocket-only (no REST endpoint).
+// Rarely changes, so it's cached rather than opening a fresh HA WebSocket
+// connection on every 60s dashboard refresh.
+let entityPlatformCache = null;
+let entityPlatformCacheAt = 0;
+const ENTITY_PLATFORM_TTL_MS = 10 * 60 * 1000;
+
+function fetchEntityRegistryPlatforms() {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(HA_WS_URL);
+    const msgId = 1;
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("entity registry fetch timed out"));
+    }, 8000);
+    const finish = (fn) => { clearTimeout(timeout); try { ws.close(); } catch {} fn(); };
+    ws.on("message", (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.type === "auth_required") {
+        ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
+      } else if (msg.type === "auth_ok") {
+        ws.send(JSON.stringify({ id: msgId, type: "config/entity_registry/list" }));
+      } else if (msg.type === "auth_invalid") {
+        finish(() => reject(new Error("Home Assistant WebSocket auth failed")));
+      } else if (msg.id === msgId && msg.type === "result") {
+        finish(() => {
+          if (!msg.success) { reject(new Error("entity_registry/list failed")); return; }
+          const map = {};
+          for (const entry of msg.result) if (entry.platform) map[entry.entity_id] = entry.platform;
+          resolve(map);
+        });
+      }
+    });
+    ws.on("error", (e) => { clearTimeout(timeout); reject(e); });
+  });
+}
+
+async function getEntityPlatformMap() {
+  if (entityPlatformCache && Date.now() - entityPlatformCacheAt < ENTITY_PLATFORM_TTL_MS) return entityPlatformCache;
+  entityPlatformCache = await fetchEntityRegistryPlatforms();
+  entityPlatformCacheAt = Date.now();
+  return entityPlatformCache;
+}
+
 async function getHomeAssistantStates() {
   const r = await fetch(`${HA_URL}/api/states`, {
     headers: { Authorization: `Bearer ${HA_TOKEN}` },
   });
   if (!r.ok) throw new Error(`Home Assistant fetch failed: ${r.status}`);
-  return r.json();
+  const states = await r.json();
+
+  // Best-effort only - a registry lookup failure (permissions, a slow HA
+  // instance, whatever) should never take down the states the rest of the
+  // dashboard actually depends on, just leave entities without a platform.
+  try {
+    const platforms = await getEntityPlatformMap();
+    for (const s of states) {
+      const platform = platforms[s.entity_id];
+      if (platform) s.attributes = { ...s.attributes, platform };
+    }
+  } catch (e) {
+    console.error("[home-assistant] entity registry platform lookup failed:", e.message);
+  }
+
+  return states;
 }
 
 // Ring entities carry this attribution regardless of local naming, so cameras
