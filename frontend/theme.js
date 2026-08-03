@@ -48,13 +48,27 @@ const THEME_VAR_KEYS = [
   { key: '--coral-dim', label: 'Coral accent (dim)' },
 ];
 
+// Non-color var, so it isn't in THEME_VAR_KEYS (the color-editor loop) -
+// its own slider control in the theme editor instead. Listed here with a
+// fallback because most saved themes (all 6 built-ins, any custom theme
+// made before this existed) simply don't have this key at all.
+const THEME_RADIUS_KEY = '--radius-scale';
+const THEME_RADIUS_DEFAULT = '1';
+
 const THEME_KEY = 'dashboard-theme';
 const CUSTOM_THEMES_KEY = 'dashboard-custom-themes';
 const HIDDEN_THEMES_KEY = 'dashboard-hidden-themes';
 
+// Every apply sets EVERY known var explicitly (falling back to the
+// default for anything the target theme doesn't specify) rather than
+// only setting whatever keys happen to be in `vars` - otherwise a value
+// from a previous theme (e.g. an edited radius-scale) would silently
+// leak into the next theme applied, since a missing key just leaves
+// :root's existing inline override sitting there untouched.
 function applyThemeVars(vars){
   const root = document.documentElement.style;
-  for (const [k, v] of Object.entries(vars)) root.setProperty(k, v);
+  for (const { key } of THEME_VAR_KEYS) root.setProperty(key, vars[key] || THEME_PRESETS.midnight.vars[key]);
+  root.setProperty(THEME_RADIUS_KEY, vars[THEME_RADIUS_KEY] || THEME_RADIUS_DEFAULT);
 }
 
 function loadCustomThemes(){

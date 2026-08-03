@@ -29,13 +29,13 @@
   }
   .back-link{
     background:var(--bg-inset); border:1px solid var(--panel-line); color:var(--text);
-    border-radius:4px; padding:.5em .8em; cursor:pointer; font-family:inherit; font-size:.82rem;
+    border-radius:calc(var(--radius-scale, 1) * 4px); padding:.5em .8em; cursor:pointer; font-family:inherit; font-size:.82rem;
     text-decoration:none; display:block; text-align:center;
   }
   .back-link:hover{border-color:var(--teal); color:var(--teal);}
   .settings-nav{display:flex; flex-direction:column; gap:.25rem;}
   .settings-nav-item{
-    text-align:left; background:none; border:none; color:var(--text-dim); padding:.6rem .75rem; border-radius:6px;
+    text-align:left; background:none; border:none; color:var(--text-dim); padding:.6rem .75rem; border-radius:calc(var(--radius-scale, 1) * 6px);
     font-family:inherit; font-size:.88rem; cursor:pointer;
   }
   .settings-nav-item:hover{background:var(--bg-inset); color:var(--text);}
@@ -59,18 +59,18 @@
     background:var(--c-bg); color:var(--c-text);
   }
   .settings-panel-title{font-size:1.3rem; font-weight:600; margin-bottom:1.5rem;}
-  .settings-block{background:var(--c-panel); border:1px solid var(--c-border); border-radius:6px; padding:1.25rem; margin-bottom:1.5rem;}
+  .settings-block{background:var(--c-panel); border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 6px); padding:1.25rem; margin-bottom:1.5rem;}
   .settings-block-title{font-size:.95rem; font-weight:600; margin-bottom:.75rem;}
   .settings-block-hint{font-size:.8rem; color:var(--c-text-dim); margin-bottom:.75rem; line-height:1.4;}
   .settings-row{display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;}
 
   .plain-input, .plain-select{
-    font-family:inherit; font-size:.85rem; border-radius:4px; border:1px solid var(--c-border);
+    font-family:inherit; font-size:.85rem; border-radius:calc(var(--radius-scale, 1) * 4px); border:1px solid var(--c-border);
     background:var(--c-bg); color:var(--c-text); padding:.45em .6em;
   }
   .plain-input:focus, .plain-select:focus{outline:none; border-color:var(--c-accent);}
   .plain-btn{
-    font-family:inherit; font-size:.85rem; border-radius:4px; border:1px solid var(--c-border);
+    font-family:inherit; font-size:.85rem; border-radius:calc(var(--radius-scale, 1) * 4px); border:1px solid var(--c-border);
     background:var(--c-panel); color:var(--c-text); padding:.45em .9em; cursor:pointer;
   }
   .plain-btn:hover{border-color:var(--c-accent); color:var(--c-accent);}
@@ -84,7 +84,7 @@
 
   .mode-toggle{display:inline-flex; gap:.25rem;}
   .mode-btn{
-    font-size:.72rem; padding:.25em .55em; border-radius:4px; border:1px solid var(--c-border);
+    font-size:.72rem; padding:.25em .55em; border-radius:calc(var(--radius-scale, 1) * 4px); border:1px solid var(--c-border);
     background:transparent; color:var(--c-text-dim); cursor:pointer; font-family:inherit;
   }
   .mode-btn:hover{border-color:var(--c-accent);}
@@ -103,7 +103,7 @@
 
   /* --- Database: Explorer-style two-pane layout - tables on the left
      like a folder tree, the selected table's rows on the right. --- */
-  .explorer{display:flex; border:1px solid var(--c-border); border-radius:6px; overflow:hidden; height:65vh;}
+  .explorer{display:flex; border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 6px); overflow:hidden; height:65vh;}
   .explorer-sidebar{width:220px; flex-shrink:0; background:var(--c-panel); border-right:1px solid var(--c-border); overflow-y:auto;}
   .explorer-item{
     display:flex; justify-content:space-between; gap:.5rem; padding:.6rem .8rem; cursor:pointer;
@@ -120,28 +120,34 @@
   .theme-list{display:flex; flex-direction:column; gap:.5rem; margin-bottom:1rem;}
   .theme-list-row{
     display:flex; align-items:center; gap:.75rem; padding:.6rem .8rem; background:var(--c-bg);
-    border:1px solid var(--c-border); border-radius:6px; flex-wrap:wrap;
+    border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 6px); flex-wrap:wrap;
   }
   .theme-swatch-strip{display:flex; gap:2px; flex-shrink:0;}
-  .theme-swatch-chip{width:16px; height:16px; border-radius:3px; border:1px solid rgba(128,128,128,.35);}
+  .theme-swatch-chip{width:16px; height:16px; border-radius:calc(var(--radius-scale, 1) * 3px); border:1px solid rgba(128,128,128,.35);}
   .theme-list-label{flex:1; font-size:.85rem; font-weight:600; min-width:80px;}
-  .theme-badge{font-size:.66rem; color:var(--c-text-dim); border:1px solid var(--c-border); border-radius:4px; padding:.1em .4em;}
+  .theme-badge{font-size:.66rem; color:var(--c-text-dim); border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 4px); padding:.1em .4em;}
   .theme-hide-toggle{display:flex; align-items:center; gap:.3rem; font-size:.78rem; color:var(--c-text-dim); cursor:pointer;}
 
   .theme-editor-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:.6rem; margin:1rem 0;}
   .theme-editor-var-row{display:flex; align-items:center; gap:.5rem;}
-  .theme-editor-color{width:32px; height:32px; padding:0; border:1px solid var(--c-border); border-radius:4px; cursor:pointer; background:none; flex-shrink:0;}
+  .theme-editor-color{width:32px; height:32px; padding:0; border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 4px); cursor:pointer; background:none; flex-shrink:0;}
   .theme-editor-hex{width:85px; font-family:'IBM Plex Mono', monospace; font-size:.78rem; flex-shrink:0;}
   .theme-editor-var-label{font-size:.78rem; color:var(--c-text-dim);}
   .theme-editor-preview{margin:1rem 0;}
 
   .theme-extract-swatches{display:flex; flex-wrap:wrap; gap:.5rem; margin:.75rem 0;}
-  .theme-swatch-btn{width:34px; height:34px; border-radius:6px; cursor:pointer; border:2px solid var(--c-border);}
+  .theme-swatch-btn{width:34px; height:34px; border-radius:calc(var(--radius-scale, 1) * 6px); cursor:pointer; border:2px solid var(--c-border);}
   .theme-swatch-btn:hover{border-color:var(--c-text-dim);}
   .theme-swatch-btn.picked-primary{border-color:var(--c-accent);}
   .theme-swatch-btn.picked-secondary{border-color:var(--c-danger);}
   .theme-extract-picked-row{display:flex; align-items:center; gap:.5rem; margin:.5rem 0; font-size:.8rem; color:var(--c-text-dim);}
-  .theme-swatch{width:22px; height:22px; border-radius:4px; border:1px solid var(--c-border); display:inline-block;}
+  .theme-swatch{width:22px; height:22px; border-radius:calc(var(--radius-scale, 1) * 4px); border:1px solid var(--c-border); display:inline-block;}
+  .theme-extract-paste-zone{
+    flex:1; min-width:200px; min-height:1.4em; border:1px dashed var(--c-border); border-radius:calc(var(--radius-scale, 1) * 4px);
+    padding:.5em .7em; font-size:.85rem; color:var(--c-text-dim); outline:none; cursor:text;
+  }
+  .theme-extract-paste-zone:focus, .theme-extract-paste-zone.dragging{border-color:var(--c-accent); color:var(--c-text);}
+  .theme-extract-paste-zone:empty::before{content:attr(data-placeholder);}
 </style>
 </head>
 <body>
@@ -258,6 +264,11 @@
             <input type="text" class="plain-input" id="theme-editor-name" placeholder="Theme name" style="flex:1; min-width:200px;">
           </div>
           <div class="theme-editor-grid" id="theme-editor-vars"></div>
+          <div class="settings-row" style="margin:1rem 0;">
+            <span class="theme-editor-var-label" style="min-width:110px;">Corner roundness</span>
+            <input type="range" id="theme-editor-radius" min="0" max="2" step="0.1" value="1" style="flex:1; max-width:220px;">
+            <span class="status-text" id="theme-editor-radius-value">1.0&times;</span>
+          </div>
           <div class="theme-editor-preview" id="theme-editor-preview"></div>
           <div class="settings-row">
             <button type="button" class="plain-btn primary" id="theme-editor-save-btn">Save</button>
@@ -269,11 +280,14 @@
       <div id="theme-extract-view" style="display:none;">
         <div class="settings-block">
           <div class="settings-block-title">Create theme from colors</div>
-          <p class="settings-block-hint">Pull accent colors from a website, or import a brand style guide (.md/.txt) - either way, pick one color for Primary and another for Secondary below.</p>
+          <p class="settings-block-hint">Pull accent colors from a website, a brand style guide (.md/.txt), or a pasted/dragged image (a logo, a screenshot of a brand page, anything) - either way, pick one color for Primary and another for Secondary below.</p>
           <div class="settings-row">
             <input type="text" class="plain-input" id="theme-extract-url" placeholder="https://example.com" style="flex:1; min-width:200px;">
             <button type="button" class="plain-btn" id="theme-extract-url-btn">Fetch from URL</button>
             <label class="plain-btn file-btn">Import brand file&hellip;<input type="file" id="theme-extract-md-input" accept=".md,.txt,text/markdown,text/plain"></label>
+          </div>
+          <div class="settings-row" style="margin-top:.6rem;">
+            <div class="theme-extract-paste-zone" id="theme-extract-paste-zone" contenteditable="true" data-placeholder="Or paste/drag an image here&hellip;"></div>
           </div>
           <div class="status-text" id="theme-extract-status" style="margin-top:.5rem;"></div>
           <div class="theme-extract-swatches" id="theme-extract-swatches"></div>
@@ -630,27 +644,50 @@ function renderThemeEditorVars(vars){
       updateThemeEditorPreview();
     });
   });
+  // Most themes being edited (all 6 built-ins, any custom theme made
+  // before roundness existed) simply have no --radius-scale key at all -
+  // default to '1' (today's look) rather than leaving the slider at
+  // whatever the previously-edited theme left it at.
+  const radiusScale = vars[THEME_RADIUS_KEY] || THEME_RADIUS_DEFAULT;
+  document.getElementById('theme-editor-radius').value = radiusScale;
+  document.getElementById('theme-editor-radius-value').textContent = parseFloat(radiusScale).toFixed(1) + '×';
   updateThemeEditorPreview();
 }
 function collectThemeEditorVars(){
   const vars = {};
   document.querySelectorAll('#theme-editor-vars .theme-editor-hex').forEach(inp => { vars[inp.dataset.var] = inp.value; });
+  vars[THEME_RADIUS_KEY] = document.getElementById('theme-editor-radius').value;
   return vars;
 }
+// Renders literal computed px values here rather than the CSS
+// var(--radius-scale) the rest of the app uses - that variable reflects
+// whichever theme is currently APPLIED to the page, not the draft value
+// on the slider below, so the preview would otherwise ignore the slider
+// entirely until the theme was actually saved.
 function updateThemeEditorPreview(){
   const v = collectThemeEditorVars();
+  // NOT `|| 1` - 0 (fully sharp corners) is a legitimate, falsy value that
+  // `||` would silently override back to the default every time.
+  const rawScale = parseFloat(document.getElementById('theme-editor-radius').value);
+  const scale = Number.isNaN(rawScale) ? 1 : rawScale;
+  const rCard = (scale * 6).toFixed(1) + 'px';
+  const rBtn = (scale * 4).toFixed(1) + 'px';
   document.getElementById('theme-editor-preview').innerHTML = `
-    <div style="background:${v['--bg']}; border:1px solid ${v['--panel-line']}; border-radius:6px; padding:1rem;">
-      <div style="background:${v['--panel']}; border:1px solid ${v['--panel-line']}; border-radius:6px; padding:.85rem;">
+    <div style="background:${v['--bg']}; border:1px solid ${v['--panel-line']}; border-radius:${rCard}; padding:1rem;">
+      <div style="background:${v['--panel']}; border:1px solid ${v['--panel-line']}; border-radius:${rCard}; padding:.85rem;">
         <div style="color:${v['--text']}; font-weight:600; margin-bottom:.3rem;">Sample card</div>
         <div style="color:${v['--text-dim']}; font-size:.85rem; margin-bottom:.6rem;">Dim supporting text</div>
-        <button style="background:${v['--teal-dim']}; border:1px solid ${v['--teal']}; color:${v['--teal']}; padding:.35em .8em; border-radius:4px; font-size:.8rem; margin-right:.4rem;">Teal</button>
-        <button style="background:${v['--amber-dim']}; border:1px solid ${v['--amber']}; color:${v['--amber']}; padding:.35em .8em; border-radius:4px; font-size:.8rem; margin-right:.4rem;">Amber</button>
-        <button style="background:${v['--coral-dim']}; border:1px solid ${v['--coral']}; color:${v['--coral']}; padding:.35em .8em; border-radius:4px; font-size:.8rem;">Coral</button>
+        <button style="background:${v['--teal-dim']}; border:1px solid ${v['--teal']}; color:${v['--teal']}; padding:.35em .8em; border-radius:${rBtn}; font-size:.8rem; margin-right:.4rem;">Teal</button>
+        <button style="background:${v['--amber-dim']}; border:1px solid ${v['--amber']}; color:${v['--amber']}; padding:.35em .8em; border-radius:${rBtn}; font-size:.8rem; margin-right:.4rem;">Amber</button>
+        <button style="background:${v['--coral-dim']}; border:1px solid ${v['--coral']}; color:${v['--coral']}; padding:.35em .8em; border-radius:${rBtn}; font-size:.8rem;">Coral</button>
       </div>
     </div>
   `;
 }
+document.getElementById('theme-editor-radius').addEventListener('input', (e) => {
+  document.getElementById('theme-editor-radius-value').textContent = parseFloat(e.target.value).toFixed(1) + '×';
+  updateThemeEditorPreview();
+});
 function openThemeEditor(themeKey){
   const t = listAllThemes().find(x => x.key === themeKey);
   if (!t) return;
@@ -797,6 +834,74 @@ async function importThemeFromFile(file){
     status.className = 'status-text error';
   }
 }
+// A pasted/dragged image has no text to scan for hex codes (unlike the
+// URL/file paths above), so this reads its actual pixels instead - same
+// spirit as the backend's extractColors (near-gray filtered, ranked by
+// frequency, capped at 8) just working on a canvas instead of a string.
+function loadImageFromBlob(blob){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+function isNearGrayRgb(r, g, b){
+  return Math.max(r, g, b) - Math.min(r, g, b) < 24;
+}
+function rgbToHex(r, g, b){
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+function extractColorsFromImage(img){
+  // Downscaling first keeps this instant even on a large screenshot -
+  // color sampling doesn't need full resolution.
+  const maxDim = 120;
+  const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); // transparent areas shouldn't read as black
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+
+  // Quantizing groups anti-aliased/compression-noise pixels that would
+  // otherwise all count as separate colors, which is what actually makes
+  // frequency ranking useful here.
+  const BUCKET = 24;
+  const counts = new Map();
+  for (let i = 0; i < data.length; i += 4){
+    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+    if (a < 200 || isNearGrayRgb(r, g, b)) continue;
+    const key = [r, g, b].map(v => Math.round(v / BUCKET) * BUCKET).join(',');
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => rgbToHex(...key.split(',').map(Number)))
+    .slice(0, 8);
+}
+async function importThemeFromImage(blob){
+  const status = document.getElementById('theme-extract-status');
+  status.textContent = 'Analyzing image…'; status.className = 'status-text';
+  try {
+    const img = await loadImageFromBlob(blob);
+    const colors = extractColorsFromImage(img);
+    if (!colors.length){
+      status.textContent = 'No distinct colors found in that image - try another.';
+      status.className = 'status-text error';
+      document.getElementById('theme-extract-swatches').innerHTML = '';
+      return;
+    }
+    showThemeExtractSwatches(colors, `Found ${colors.length} color(s) in the image - click one for Primary, another for Secondary:`);
+  } catch (e){
+    status.textContent = 'Failed to read that image.';
+    status.className = 'status-text error';
+  }
+}
+
 function saveExtractedTheme(){
   if (!themeExtractPrimary) return;
   const secondary = themeExtractSecondary || themeExtractPrimary;
@@ -819,6 +924,31 @@ document.getElementById('theme-extract-md-input').addEventListener('change', (e)
   if (file) importThemeFromFile(file);
 });
 document.getElementById('theme-extract-save-btn').addEventListener('click', saveExtractedTheme);
+
+// Paste/drag an image straight in - contenteditable purely so the
+// browser's own right-click menu offers "Paste" (a plain div never gets
+// that option), same reasoning as the dashboard's Scratch Pad dropzone.
+// Never lets pasted text/HTML actually land in its DOM.
+const themeExtractPasteZone = document.getElementById('theme-extract-paste-zone');
+themeExtractPasteZone.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items || [];
+  for (const item of items){
+    if (item.type.startsWith('image/')){
+      e.preventDefault();
+      await importThemeFromImage(item.getAsFile());
+      return;
+    }
+  }
+  e.preventDefault();
+});
+themeExtractPasteZone.addEventListener('dragover', (e) => { e.preventDefault(); themeExtractPasteZone.classList.add('dragging'); });
+themeExtractPasteZone.addEventListener('dragleave', () => themeExtractPasteZone.classList.remove('dragging'));
+themeExtractPasteZone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  themeExtractPasteZone.classList.remove('dragging');
+  const file = e.dataTransfer.files?.[0];
+  if (file && file.type.startsWith('image/')) await importThemeFromImage(file);
+});
 
 // --- Init ---
 restoreTaxFolder();
