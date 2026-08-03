@@ -2580,15 +2580,51 @@ function detectFrameRect(gray, w, h, roughBbox){
     if (colBandDensity(p0, p1, y, y + height - 1) < ISOLATED_DENSITY){ right = width - 1 - i; break; }
   }
 
-  if (top == null || bottom == null || left == null || right == null || bottom <= top || right <= left) return null;
+  if (top != null && bottom != null && left != null && right != null && bottom > top && right > left){
+    // Only trust this as a full enclosing frame if it covers nearly the
+    // whole rough bbox - a border found well inside a smaller region isn't
+    // "everything is inside this frame", it's some other, unrelated line.
+    const COVERAGE = 0.85;
+    const frame = { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
+    console.debug('[detectFrameRect] strict pass ratio', JSON.stringify({ ratio: frame.width / frame.height }));
+    if (frame.width >= width * COVERAGE && frame.height >= height * COVERAGE) return frame;
+  }
 
-  // Only trust this as a full enclosing frame if it covers nearly the
-  // whole rough bbox - a border found well inside a smaller region isn't
-  // "everything is inside this frame", it's some other, unrelated line.
-  const COVERAGE = 0.85;
-  const frame = { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
-  if (frame.width < width * COVERAGE || frame.height < height * COVERAGE) return null;
-  return frame;
+  // Strict pass found nothing - LABEL_DARK=128 is too strict to register a
+  // faint or dashed cut line. Retry with a loose cutoff and a plain 30%
+  // row/column density test (no isolation probing), matching the reference
+  // Python module's find_frame().
+  const LOOSE_DARK = 200;
+  const FRAME_DENSITY = 0.30;
+  function rowDensityLoose(ry){
+    let dark = 0;
+    for (let cx = x; cx < x + width; cx++) if (gray[ry * w + cx] < LOOSE_DARK) dark++;
+    return dark / width;
+  }
+  function colDensityLoose(cx){
+    let dark = 0;
+    for (let ry = y; ry < y + height; ry++) if (gray[ry * w + cx] < LOOSE_DARK) dark++;
+    return dark / height;
+  }
+
+  let looseTop = null, looseBottom = null, looseLeft = null, looseRight = null;
+  for (let ry = y; ry < y + height; ry++){ if (rowDensityLoose(ry) > FRAME_DENSITY){ looseTop = ry; break; } }
+  for (let ry = y + height - 1; ry >= y; ry--){ if (rowDensityLoose(ry) > FRAME_DENSITY){ looseBottom = ry; break; } }
+  for (let cx = x; cx < x + width; cx++){ if (colDensityLoose(cx) > FRAME_DENSITY){ looseLeft = cx; break; } }
+  for (let cx = x + width - 1; cx >= x; cx--){ if (colDensityLoose(cx) > FRAME_DENSITY){ looseRight = cx; break; } }
+
+  if (looseTop == null || looseBottom == null || looseLeft == null || looseRight == null || looseBottom <= looseTop || looseRight <= looseLeft) return null;
+
+  const looseWidth = looseRight - looseLeft + 1, looseHeight = looseBottom - looseTop + 1;
+  const looseRatio = looseWidth / looseHeight;
+  console.debug('[detectFrameRect] loose pass ratio', JSON.stringify({ ratio: looseRatio }));
+  // Reject anything that isn't plausibly an upright 4x6-ish label - a 4x6
+  // page is 0.667; measured real frames: UPS dashed cut box 0.649, USPS
+  // solid box 0.749. Without this gate a busy page can hand back a
+  // garbage rectangle with nothing to flag it - let isolateLabelBbox's
+  // dominant-block fallback handle it instead.
+  if (looseRatio < 0.50 || looseRatio > 0.85) return null;
+  return { x: looseLeft, y: looseTop, width: looseWidth, height: looseHeight };
 }
 
 function isolateLabelBbox(gray, w, h){
@@ -2647,7 +2683,7 @@ async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
 
   const W = Math.round(preset.widthIn * LABEL_DPI), H = Math.round(preset.heightIn * LABEL_DPI);
   const marginPx = mmToPx(LABEL_MARGIN_MM, LABEL_DPI);
-  const scale = (W - 2 * marginPx) / bbox.width;
+  const scale = Math.min((W - 2 * marginPx) / bbox.width, (H - 2 * marginPx) / bbox.height);
   const scaledW = Math.max(1, Math.round(bbox.width * scale));
   const scaledH = Math.max(1, Math.round(bbox.height * scale));
   const scaledCanvas = document.createElement('canvas');
@@ -2674,8 +2710,17 @@ async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
   const finalCtx = finalCanvas.getContext('2d');
   finalCtx.fillStyle = '#fff';
   finalCtx.fillRect(0, 0, W, H);
-  const y = marginPx - Math.round(topRule * scale);
-  finalCtx.drawImage(scaledCanvas, marginPx, y);
+  const x = marginPx + Math.round((W - 2 * marginPx - scaledW) / 2);
+  let y = marginPx - Math.round(topRule * scale);
+  if (y < marginPx){
+    console.debug('[normalizeLabelToCanvas] top-rule anchor placed content off-canvas, falling back to vertical centering', JSON.stringify({ topRule, scale, y }));
+    y = Math.round((H - scaledH) / 2);
+  }
+  console.log('[normalizeLabelToCanvas debug]', JSON.stringify({
+    topRule, scale, y,
+    frameDetected: !!detectFrameRect(gray, w, h, contentBbox(gray, w, h, LABEL_WHITE_CUTOFF)),
+  }));
+  finalCtx.drawImage(scaledCanvas, x, y);
 
   return { canvas: finalCanvas, scale, upscaled: scale > 1 };
 }
