@@ -2273,26 +2273,54 @@ function sanitizeFilenamePart(s){
   return String(s || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').replace(/\s+/g, '-').slice(0, 60) || 'Unknown';
 }
 
+// originalImg is the pristine loaded/rendered image, never mutated; labelImg
+// is the currently-rotated version actually shown and cropped - always
+// rederived fresh from originalImg by the *total* desired angle rather than
+// rotating incrementally, so repeated rotation never compounds quality loss.
+let originalImg = null;
 let labelImg = null;
+let imageRotation = 0; // 0/90/180/270, clockwise
 let cropBoxState = null;
 let cropDisplayScale = 1;
-// Per-session only (reset on every new paste/drop) - rotating never
-// touches the preset's own stored width/height, just swaps which way
-// they're applied for this one crop, since most labels turn out to be
-// landscape when cropped out of a wider screenshot or PDF page even
-// though the preset itself is defined portrait (or vice versa).
-let cropRotated = false;
 
 function getSelectedPreset(){
   const presets = loadLabelPresets();
   const sel = document.getElementById('label-crop-preset');
   return presets.find(p => p.id === sel.value) || presets[0];
 }
-function getEffectiveDimensions(){
-  const preset = getSelectedPreset();
-  return cropRotated
-    ? { widthIn: preset.heightIn, heightIn: preset.widthIn }
-    : { widthIn: preset.widthIn, heightIn: preset.heightIn };
+
+// Rotates a whole image clockwise by 0/90/180/270 onto a new canvas (90/270
+// swap the resulting width/height, matching how physically rotating a photo
+// works) - used to auto-correct labels that come in sideways or upside down.
+function rotateImageToCanvas(img, degrees){
+  const swapped = degrees === 90 || degrees === 270;
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = swapped ? h : w;
+  canvas.height = swapped ? w : h;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(degrees * Math.PI / 180);
+  ctx.drawImage(img, -w / 2, -h / 2);
+  return canvas;
+}
+
+// Carries a percentage-based crop box (measured against the ORIGINAL,
+// unrotated image) through the same clockwise rotation, so the AI's
+// suggested label location still lines up after the image itself is
+// straightened out.
+function rotateCropBoxPct(box, degrees){
+  const { xPct: x, yPct: y, widthPct: w, heightPct: h } = box;
+  switch (((degrees % 360) + 360) % 360){
+    case 90: return { xPct: 100 - (y + h), yPct: x, widthPct: h, heightPct: w };
+    case 180: return { xPct: 100 - (x + w), yPct: 100 - (y + h), widthPct: w, heightPct: h };
+    case 270: return { xPct: y, yPct: 100 - (x + w), widthPct: h, heightPct: w };
+    default: return box;
+  }
+}
+
+async function applyRotation(){
+  labelImg = imageRotation === 0 ? originalImg : await loadImage(rotateImageToCanvas(originalImg, imageRotation).toDataURL('image/png'));
 }
 
 function populateLabelPresetSelect(){
@@ -2337,34 +2365,29 @@ function updateCropBoxOverlay(){
   box.style.height = (cropBoxState.height * cropDisplayScale) + 'px';
 }
 
-// If the AI's suggested box is clearly closer to landscape than the
-// preset's own portrait ratio (or vice versa), start already rotated to
-// match it - this is just the *default*, the rotate button still overrides
-// it either way.
-function chooseInitialOrientation(aiBox, presetRatio){
-  if (!aiBox || !aiBox.widthPct || !aiBox.heightPct) return false;
-  const aiRatio = aiBox.widthPct / aiBox.heightPct;
-  const rotatedRatio = 1 / presetRatio;
-  return Math.abs(aiRatio - rotatedRatio) < Math.abs(aiRatio - presetRatio);
+// Draws whatever labelImg currently is (post-rotation) onto the visible
+// canvas - split out from box computation so the rotate button can redraw
+// without recomputing/discarding the crop box logic.
+function redrawCropCanvas(){
+  const canvas = document.getElementById('label-crop-canvas');
+  const maxDisplayWidth = 560;
+  cropDisplayScale = Math.min(1, maxDisplayWidth / labelImg.naturalWidth);
+  canvas.width = labelImg.naturalWidth * cropDisplayScale;
+  canvas.height = labelImg.naturalHeight * cropDisplayScale;
+  canvas.getContext('2d').drawImage(labelImg, 0, 0, canvas.width, canvas.height);
 }
 
-function renderLabelCropCanvas(img, analysis){
+function renderLabelCropCanvas(analysis){
   document.getElementById('label-crop-status').style.display = 'none';
   document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
   document.getElementById('label-crop-fields').style.display = 'flex';
   document.getElementById('label-crop-confirm-btn').style.display = '';
 
-  const canvas = document.getElementById('label-crop-canvas');
-  const maxDisplayWidth = 560;
-  cropDisplayScale = Math.min(1, maxDisplayWidth / img.naturalWidth);
-  canvas.width = img.naturalWidth * cropDisplayScale;
-  canvas.height = img.naturalHeight * cropDisplayScale;
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  redrawCropCanvas();
 
   const preset = getSelectedPreset();
-  cropRotated = chooseInitialOrientation(analysis?.cropBox, preset.widthIn / preset.heightIn);
-  const dims = getEffectiveDimensions();
-  cropBoxState = computeInitialCropBox(img.naturalWidth, img.naturalHeight, dims.widthIn / dims.heightIn, analysis?.cropBox);
+  const rotatedBox = analysis?.cropBox ? rotateCropBoxPct(analysis.cropBox, imageRotation) : null;
+  cropBoxState = computeInitialCropBox(labelImg.naturalWidth, labelImg.naturalHeight, preset.widthIn / preset.heightIn, rotatedBox);
   updateCropBoxOverlay();
 
   document.getElementById('label-crop-marketplace').value = analysis?.marketplace || '';
@@ -2384,15 +2407,16 @@ function openLabelCropModal(){
 }
 function closeLabelCropModal(){
   document.getElementById('label-crop-modal').classList.remove('open');
+  originalImg = null;
   labelImg = null;
+  imageRotation = 0;
   cropBoxState = null;
-  cropRotated = false;
 }
 
 async function startLabelWorkflow(imageDataUrl, mediaType){
   openLabelCropModal();
   try {
-    labelImg = await loadImage(imageDataUrl);
+    originalImg = await loadImage(imageDataUrl);
   } catch {
     document.getElementById('label-crop-status').textContent = 'Could not read that image.';
     return;
@@ -2409,10 +2433,13 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
     if (res.ok) analysis = await res.json();
   } catch {
     // Analysis is best-effort - the crop tool still works without it, just
-    // with a centered default box and blank marketplace/recipient fields.
+    // with a centered default box, no auto-rotation, and blank marketplace/
+    // recipient fields.
   }
 
-  renderLabelCropCanvas(labelImg, analysis);
+  imageRotation = [0, 90, 180, 270].includes(analysis?.rotationDegrees) ? analysis.rotationDegrees : 0;
+  await applyRotation();
+  renderLabelCropCanvas(analysis);
 }
 
 // Global paste listener (not scoped to the dropzone) so pasting an image
@@ -2472,15 +2499,24 @@ function refitCropBoxToRatio(ratio){
 
 document.getElementById('label-crop-preset').addEventListener('change', () => {
   if (!labelImg) return;
-  const dims = getEffectiveDimensions();
-  refitCropBoxToRatio(dims.widthIn / dims.heightIn);
+  const preset = getSelectedPreset();
+  refitCropBoxToRatio(preset.widthIn / preset.heightIn);
 });
 
-document.getElementById('label-crop-rotate-btn').addEventListener('click', () => {
-  if (!labelImg) return;
-  cropRotated = !cropRotated;
-  const dims = getEffectiveDimensions();
-  refitCropBoxToRatio(dims.widthIn / dims.heightIn);
+// Rotates the actual image content 90 clockwise each click (cycling
+// 0->90->180->270->0), for whenever the AI's auto-detected orientation was
+// wrong or there was no analysis to go on at all. Since the underlying
+// image dimensions swap on a 90/270 turn, the old crop box's screen
+// position stops meaning anything, so this re-centers a fresh one at the
+// current preset's ratio rather than trying to carry it over.
+document.getElementById('label-crop-rotate-btn').addEventListener('click', async () => {
+  if (!originalImg) return;
+  imageRotation = (imageRotation + 90) % 360;
+  await applyRotation();
+  redrawCropCanvas();
+  const preset = getSelectedPreset();
+  cropBoxState = computeInitialCropBox(labelImg.naturalWidth, labelImg.naturalHeight, preset.widthIn / preset.heightIn, null);
+  updateCropBoxOverlay();
 });
 
 // Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
@@ -2556,7 +2592,7 @@ async function confirmLabelCrop(){
   statusEl.className = 'receipts-status';
 
   try {
-    const dims = getEffectiveDimensions();
+    const preset = getSelectedPreset();
     const marketplace = document.getElementById('label-crop-marketplace').value.trim() || 'Other';
     const recipient = document.getElementById('label-crop-recipient').value.trim() || 'Unknown';
 
@@ -2571,8 +2607,8 @@ async function confirmLabelCrop(){
     const croppedDataUrl = cropCanvas.toDataURL('image/png');
 
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'in', format: [dims.widthIn, dims.heightIn] });
-    doc.addImage(croppedDataUrl, 'PNG', 0, 0, dims.widthIn, dims.heightIn);
+    const doc = new jsPDF({ unit: 'in', format: [preset.widthIn, preset.heightIn] });
+    doc.addImage(croppedDataUrl, 'PNG', 0, 0, preset.widthIn, preset.heightIn);
     const pdfBlob = doc.output('blob');
 
     const haveFolder = await ensureShippingFolder();
@@ -2592,7 +2628,7 @@ async function confirmLabelCrop(){
       statusEl.className = 'receipts-status error';
     }
 
-    printLabelImage(croppedDataUrl, dims);
+    printLabelImage(croppedDataUrl, preset);
     closeLabelCropModal();
   } catch (e){
     statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');

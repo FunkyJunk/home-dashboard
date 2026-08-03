@@ -28,13 +28,17 @@ const ANALYZE_TOOL = {
       },
       cropBox: {
         type: ["object", "null"],
-        description: "The bounding box of just the printed label itself (its border or cut lines), as percentages of the FULL image's width/height (each 0-100, xPct/yPct is the top-left corner). Null if the label already appears to fill the entire image edge-to-edge.",
+        description: "The bounding box of just the printed label itself (its border or cut lines), as percentages of the FULL image's width/height (each 0-100, xPct/yPct is the top-left corner). Measured in the image's ORIGINAL orientation, before any rotation. Null if the label already appears to fill the entire image edge-to-edge.",
         properties: {
           xPct: { type: "number" },
           yPct: { type: "number" },
           widthPct: { type: "number" },
           heightPct: { type: "number" },
         },
+      },
+      rotationDegrees: {
+        type: ["integer", "null"],
+        description: "The CLOCKWISE rotation in degrees (must be 0, 90, 180, or 270) needed to make the label's text and barcode read normally upright (top-to-bottom, left-to-right, not sideways or upside down). 0 if it's already upright. Null if this can't be determined.",
       },
     },
     required: ["isLabel"],
@@ -57,7 +61,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
           {
             type: "text",
-            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.). Identify the marketplace/carrier, the recipient's name, and the bounding box of just the label itself.",
+            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Identify the marketplace/carrier, the recipient's name, the bounding box of just the label itself (measured in the image's current/original orientation), and the clockwise rotation needed to make it read upright.",
           },
         ],
       },
