@@ -48,12 +48,30 @@ const THEME_VAR_KEYS = [
   { key: '--coral-dim', label: 'Coral accent (dim)' },
 ];
 
-// Non-color var, so it isn't in THEME_VAR_KEYS (the color-editor loop) -
-// its own slider control in the theme editor instead. Listed here with a
-// fallback because most saved themes (all 6 built-ins, any custom theme
-// made before this existed) simply don't have this key at all.
+// Non-color vars, so none of these are in THEME_VAR_KEYS (the color-
+// editor loop) - each gets its own control in the theme editor instead.
+// Listed here with a fallback because most saved themes (all 6
+// built-ins, any custom theme made before these existed) simply don't
+// have these keys at all.
 const THEME_RADIUS_KEY = '--radius-scale';
 const THEME_RADIUS_DEFAULT = '1';
+const THEME_CLOCK_KEY = '--clock-type';
+const THEME_CLOCK_DEFAULT = 'flap';
+const THEME_DATE_KEY = '--date-format';
+const THEME_DATE_DEFAULT = 'long';
+
+const THEME_CLOCK_TYPES = [
+  { value: 'flap', label: 'Flap (boxed digits)' },
+  { value: 'digital', label: 'Digital (plain text)' },
+  { value: 'analog', label: 'Analog' },
+  { value: 'minimal', label: 'Minimal (24h, no box)' },
+];
+const THEME_DATE_FORMATS = [
+  { value: 'long', label: 'Monday, January 5' },
+  { value: 'short', label: 'Mon, Jan 5' },
+  { value: 'numeric', label: '01/05/2026' },
+  { value: 'iso', label: '2026-01-05' },
+];
 
 const THEME_KEY = 'dashboard-theme';
 const CUSTOM_THEMES_KEY = 'dashboard-custom-themes';
@@ -62,13 +80,83 @@ const HIDDEN_THEMES_KEY = 'dashboard-hidden-themes';
 // Every apply sets EVERY known var explicitly (falling back to the
 // default for anything the target theme doesn't specify) rather than
 // only setting whatever keys happen to be in `vars` - otherwise a value
-// from a previous theme (e.g. an edited radius-scale) would silently
-// leak into the next theme applied, since a missing key just leaves
-// :root's existing inline override sitting there untouched.
+// from a previous theme (e.g. an edited radius-scale or clock type) would
+// silently leak into the next theme applied, since a missing key just
+// leaves :root's existing inline override sitting there untouched.
 function applyThemeVars(vars){
   const root = document.documentElement.style;
   for (const { key } of THEME_VAR_KEYS) root.setProperty(key, vars[key] || THEME_PRESETS.midnight.vars[key]);
   root.setProperty(THEME_RADIUS_KEY, vars[THEME_RADIUS_KEY] || THEME_RADIUS_DEFAULT);
+  root.setProperty(THEME_CLOCK_KEY, vars[THEME_CLOCK_KEY] || THEME_CLOCK_DEFAULT);
+  root.setProperty(THEME_DATE_KEY, vars[THEME_DATE_KEY] || THEME_DATE_DEFAULT);
+}
+
+// Shared clock/date rendering - used both by the live dashboard clock
+// (index.html, on its own 15s timer) and the Settings > Theme editor's
+// live preview, so both always agree on what a given clock type/date
+// format actually looks like instead of two hand-kept copies drifting.
+function renderClockInto(el, clockType, now){
+  now = now || new Date();
+  if (clockType === 'digital') renderDigitalClockInto(el, now);
+  else if (clockType === 'analog') renderAnalogClockInto(el, now);
+  else if (clockType === 'minimal') renderMinimalClockInto(el, now);
+  else renderFlapClockInto(el, now);
+}
+function renderFlapClockInto(el, now){
+  el.className = 'flap-group';
+  const h = String(now.getHours() % 12 || 12).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
+  el.innerHTML = '';
+  (h + m).split('').forEach(d => {
+    const f = document.createElement('div');
+    f.className = 'flap';
+    f.textContent = d;
+    el.appendChild(f);
+  });
+  const ampmEl = document.createElement('div');
+  ampmEl.className = 'flap';
+  ampmEl.style.fontSize = '1.1rem';
+  ampmEl.style.color = 'var(--text-dim)';
+  ampmEl.textContent = ampm;
+  el.appendChild(ampmEl);
+}
+function renderDigitalClockInto(el, now){
+  el.className = 'clock-digital';
+  const h = String(now.getHours() % 12 || 12);
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
+  el.innerHTML = `${h}:${m}<span class="clock-digital-ampm">${ampm}</span>`;
+}
+function renderMinimalClockInto(el, now){
+  el.className = 'clock-minimal';
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  el.textContent = `${h}:${m}`;
+}
+function renderAnalogClockInto(el, now){
+  el.className = 'clock-analog';
+  const hours = now.getHours() % 12, minutes = now.getMinutes();
+  const minuteDeg = minutes * 6;
+  const hourDeg = hours * 30 + minutes * 0.5;
+  const ticks = Array.from({ length: 12 }, (_, i) =>
+    `<line x1="50" y1="8" x2="50" y2="14" transform="rotate(${i * 30} 50 50)" stroke="var(--text-dim)" stroke-width="2"/>`
+  ).join('');
+  el.innerHTML = `
+    <svg viewBox="0 0 100 100" width="100" height="100">
+      <circle cx="50" cy="50" r="46" fill="var(--bg-inset)" stroke="var(--panel-line)" stroke-width="2"/>
+      ${ticks}
+      <line x1="50" y1="50" x2="50" y2="26" transform="rotate(${hourDeg} 50 50)" stroke="var(--amber)" stroke-width="4" stroke-linecap="round"/>
+      <line x1="50" y1="50" x2="50" y2="16" transform="rotate(${minuteDeg} 50 50)" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="3" fill="var(--amber)"/>
+    </svg>
+  `;
+}
+function formatDashboardDate(now, format){
+  if (format === 'short') return now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  if (format === 'numeric') return now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  if (format === 'iso') return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }); // 'long', the default
 }
 
 function loadCustomThemes(){

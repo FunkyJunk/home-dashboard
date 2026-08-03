@@ -124,6 +124,16 @@
     min-width:1.2em;
     text-align:center;
   }
+  .clock-digital{
+    font-family:'IBM Plex Mono', monospace; font-weight:600;
+    font-size:clamp(2.2rem, 5vw, 3.6rem); color:var(--amber); line-height:1;
+  }
+  .clock-digital-ampm{font-size:1.1rem; color:var(--text-dim); margin-left:.3rem;}
+  .clock-minimal{
+    font-family:'IBM Plex Mono', monospace; font-weight:500;
+    font-size:1.8rem; color:var(--text-dim); letter-spacing:.05em;
+  }
+  .clock-analog svg{display:block;}
   .date-block{
     font-family:'IBM Plex Mono', monospace;
     font-size:.95rem;
@@ -1251,30 +1261,16 @@ const WMO = {
   95:'Thunderstorms'
 };
 
+// Clock type/date format are theme-driven (see theme.js's
+// renderClockInto/formatDashboardDate, shared with the Settings > Theme
+// editor's live preview) - read here as plain CSS custom properties
+// rather than duplicating the render logic in this file too.
 function renderClock(){
   const now = new Date();
-  const h = String(now.getHours() % 12 || 12).padStart(2,'0');
-  const m = String(now.getMinutes()).padStart(2,'0');
-  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
-  const digits = (h + m).split('');
-  const el = document.getElementById('clock');
-  el.innerHTML = '';
-  digits.forEach(d => {
-    const f = document.createElement('div');
-    f.className = 'flap';
-    f.textContent = d;
-    el.appendChild(f);
-  });
-  const ampmEl = document.createElement('div');
-  ampmEl.className = 'flap';
-  ampmEl.style.fontSize = '1.1rem';
-  ampmEl.style.color = 'var(--text-dim)';
-  ampmEl.textContent = ampm;
-  el.appendChild(ampmEl);
-
-  document.getElementById('date').textContent = now.toLocaleDateString('en-US', {
-    weekday:'long', month:'long', day:'numeric'
-  });
+  const clockType = getComputedStyle(document.documentElement).getPropertyValue(THEME_CLOCK_KEY).trim() || THEME_CLOCK_DEFAULT;
+  renderClockInto(document.getElementById('clock'), clockType, now);
+  const dateFormat = getComputedStyle(document.documentElement).getPropertyValue(THEME_DATE_KEY).trim() || THEME_DATE_DEFAULT;
+  document.getElementById('date').textContent = formatDashboardDate(now, dateFormat);
 }
 
 function eventDate(iso){
