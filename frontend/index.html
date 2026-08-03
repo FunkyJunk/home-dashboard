@@ -2414,6 +2414,35 @@ function findRuleRows(gray, w, bbox){
   return rows;
 }
 
+// Once rotated upright, the tracking barcode sometimes lands as its own
+// narrower side column next to the main info box rather than a full-width
+// band below it - their edges don't line up, so no row is ever solidly
+// dark corner-to-corner across the WHOLE trimmed content, even on a
+// perfectly legitimate label. Splits the trimmed bbox into contiguous
+// column "blocks" wherever a near-blank vertical gap separates two
+// side-by-side regions, so rule-detection can be scoped to just the
+// widest block (the main box) instead of demanding alignment across all
+// of them. The full bbox - barcode column included - is still what gets
+// scaled and composed onto the final page; only the RULE SEARCH narrows.
+function splitContentBlocks(gray, w, bbox){
+  const GAP_DENSITY = 0.02; // a column counts as "blank" below this ink fraction
+  const colDensity = new Float64Array(bbox.width);
+  for (let dx = 0; dx < bbox.width; dx++){
+    let dark = 0;
+    const x = bbox.x + dx;
+    for (let y = bbox.y; y < bbox.y + bbox.height; y++) if (gray[y * w + x] < LABEL_DARK) dark++;
+    colDensity[dx] = dark / bbox.height;
+  }
+  const blocks = [];
+  let blockStart = null;
+  for (let dx = 0; dx <= bbox.width; dx++){
+    const blank = dx === bbox.width || colDensity[dx] <= GAP_DENSITY;
+    if (!blank && blockStart === null) blockStart = dx;
+    else if (blank && blockStart !== null){ blocks.push({ x: blockStart, width: dx - blockStart }); blockStart = null; }
+  }
+  return blocks;
+}
+
 // The full pipeline: rotate upright, trim to printed content, scale to the
 // preset's width (driven by the printed frame, not the raw bbox), snap back
 // to pure black/white so barcode edges survive resampling, then paste onto
@@ -2430,7 +2459,9 @@ async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
   const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
   if (!bbox) throw new Error('image appears blank');
 
-  const ruleRows = findRuleRows(gray, w, bbox);
+  const blocks = splitContentBlocks(gray, w, bbox);
+  const mainBlock = blocks.length ? blocks.reduce((a, b) => (b.width > a.width ? b : a)) : { x: 0, width: bbox.width };
+  const ruleRows = findRuleRows(gray, w, { x: bbox.x + mainBlock.x, y: bbox.y, width: mainBlock.width, height: bbox.height });
   if (!ruleRows.length) throw new Error('no full-width rules found - is this a label?');
   const topRule = ruleRows[0];
 
