@@ -40,7 +40,7 @@ const ANALYZE_TOOL = {
       // accuracy on this kind of task.
       labelDescription: {
         type: "string",
-        description: "Describe what you actually see, in this order: (1) where the label's outer border/cut-line is relative to the rest of the image - does it touch any edge of the image, or is there space around it on any side; (2) the label's own internal layout top-to-bottom - e.g. postage/address block, then barcode, then tracking number text, then any QR code; (3) which direction the text currently reads - normally upright, sideways (rotated 90 either way), or upside down. Base every field below on this description.",
+        description: "Describe what you actually see, in this order: (1) where the label's own bordered 'main shipping info' box is relative to the rest of the image - the printed rectangle enclosing the postage stamp/logo and the ship-from/ship-to addresses; (2) the label's full internal layout top-to-bottom, including whatever sits below that bordered box - typically a barcode, tracking number text, and a QR code; (3) look specifically at the address text inside the ship-to block and determine which way it currently reads - normally upright, sideways (rotated 90 either way), or upside down. Base every field below on this description.",
       },
       marketplace: {
         type: ["string", "null"],
@@ -66,7 +66,7 @@ const ANALYZE_TOOL = {
       },
       cropBox: {
         type: ["object", "null"],
-        description: "Based on parts (1) and (2) of labelDescription: the bounding box of the COMPLETE printable label, from its outer border/cut-line at the top all the way down to its outer border/cut-line at the bottom - as percentages of the FULL image's width/height (each 0-100, xPct/yPct is the top-left corner). This MUST include every part of the label described in part (2): the postage/address block AND the barcode AND the tracking number text AND any QR code - all stacked vertically as ONE continuous printable label, never just the address portion on its own. When at all unsure, make the box LARGER (closer to the full image bounds from part (1)) rather than risk cutting anything off. Measured in the image's ORIGINAL orientation, before any rotation. Null if the label already fills the entire image edge-to-edge.",
+        description: "Based on part (1) of labelDescription: the bounding box of JUST the bordered 'main shipping info' box - the printed rectangle that has its own solid border/cut-line on all four sides and encloses the postage stamp/logo plus the ship-from/ship-to addresses. Give the box's own top, left, and right edges as tightly as you can read them. Do NOT include the barcode, tracking-number text, or QR code below this box - those sit outside this border and are handled separately in code. As percentages of the FULL image's width/height (each 0-100, xPct/yPct is the top-left corner). heightPct should describe only this bordered box's own height (top border to bottom border), not the space below it. Measured in the image's ORIGINAL orientation, before any rotation. Null if this bordered box can't be distinguished from the rest of the label.",
         properties: {
           xPct: { type: "number" },
           yPct: { type: "number" },
@@ -96,7 +96,7 @@ export async function analyzeShippingLabel(base64Image, mediaType) {
           { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
           {
             type: "text",
-            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Describe what you see first, then identify the marketplace/carrier, the recipient's name, which edge of the image the label's top is pointing toward, and the complete crop box.",
+            text: "This image may contain a shipping label, possibly alongside other content (a screenshot, a packing slip, etc.), and it may be sideways or upside down. Describe what you see first, then identify the marketplace/carrier, the recipient's name, which edge of the image the label's top is pointing toward (based on the ship-to address text's reading direction), and the bounding box of just the bordered main shipping info box (excluding the barcode/QR section below it).",
           },
         ],
       },

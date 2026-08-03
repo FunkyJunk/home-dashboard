@@ -2505,11 +2505,35 @@ function computeAutoCropBox(analysis){
         width: (rotatedAiBox.widthPct / 100) * naturalW,
         height: (rotatedAiBox.heightPct / 100) * naturalH,
       }
-    : { x: naturalW * 0.1, y: naturalH * 0.1, width: naturalW * 0.8, height: naturalH * 0.8 };
+    : { x: naturalW * 0.15, y: naturalH * 0.08, width: naturalW * 0.7, height: naturalH * 0.35 };
 
-  const detected = detectLabelBorder(labelImg, roughBox);
-  const refinedBox = detected || padBoxPixels(roughBox, naturalW, naturalH, 0.12);
-  return fitBoxToRatio(refinedBox, ratio, naturalW, naturalH);
+  // detectLabelBorder is scoped here to the smaller bordered "main info" box
+  // (postage/logo + addresses), not the full label - it's agnostic to what
+  // size box it's asked to refine, it just scans an expanded window around
+  // whatever rough box it's given.
+  const infoBox = detectLabelBorder(labelImg, roughBox) || padBoxPixels(roughBox, naturalW, naturalH, 0.08);
+
+  // Anchor the crop to the detected info box's own top/left/right edges
+  // (with a small centered margin) rather than trying to also detect the
+  // barcode/QR section below it separately - standard label proportions
+  // mean that extending down from this box's top, at the preset's fixed
+  // aspect ratio using this box's own width, naturally reaches past the
+  // barcode and tracking QR code underneath.
+  const margin = infoBox.width * 0.03;
+  let left = Math.max(0, infoBox.x - margin);
+  let right = Math.min(naturalW, infoBox.x + infoBox.width + margin);
+  let top = Math.max(0, infoBox.y - margin);
+  let width = right - left;
+  let height = width / ratio;
+
+  if (top + height > naturalH){
+    height = naturalH - top;
+    const clampedWidth = height * ratio;
+    left = left + (width - clampedWidth) / 2;
+    width = clampedWidth;
+  }
+
+  return { x: left, y: top, width, height };
 }
 
 function renderLabelCropCanvas(analysis){
