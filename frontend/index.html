@@ -488,8 +488,10 @@
   .roku-progress-fill{height:100%; background:var(--teal); border-radius:2px;}
 
   .home-roku-modal-inner{max-width:min(90vw, 640px);}
-  .roku-device-modal-inner{max-width:min(90vw, 480px);}
-  .roku-detail-grid{display:flex; gap:1.25rem;}
+  .roku-device-modal-inner{max-width:min(90vw, 640px);}
+  .roku-detail-layout{display:flex; gap:1.5rem; align-items:flex-start; flex-wrap:wrap;}
+  .roku-detail-controls{width:260px; flex-shrink:0;}
+  .roku-detail-grid{display:flex; gap:1.25rem; flex:1; min-width:160px;}
   .roku-detail-poster{
     width:140px; flex-shrink:0; aspect-ratio:2/3; object-fit:cover;
     border-radius:6px; background:var(--bg-inset); border:1px solid var(--panel-line);
@@ -557,6 +559,40 @@
      single-row remote modal is unaffected by an adjacent-sibling rule) -
      with no rule here they sat flush against each other with zero gap. */
   .roku-modal-row + .roku-modal-row{margin-top:.6rem;}
+
+  /* Fused cross d-pad for the Roku detail popup only - deliberately its
+     own class set rather than reusing .dpad/.dpad-btn/.dpad-ok, which the
+     original single-row remote modal (#roku-modal, HA-controlled, used
+     for non-Roku media tiles) still relies on unchanged. Built from two
+     overlapping rounded rects (a real shape, not an illusion) rather than
+     five separate squares, closer to a real remote's d-pad. */
+  .roku-cross{position:relative; width:180px; height:180px; margin:0 auto .9rem;}
+  .roku-cross-bar-v{
+    position:absolute; left:50%; top:0; transform:translateX(-50%);
+    width:60px; height:180px; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:16px;
+  }
+  .roku-cross-bar-h{
+    position:absolute; top:50%; left:0; transform:translateY(-50%);
+    width:180px; height:60px; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:16px;
+  }
+  .roku-cross-arm{
+    position:absolute; width:44px; height:44px; background:transparent; border:none;
+    color:var(--text); font-size:1.1rem; cursor:pointer;
+  }
+  .roku-cross-arm:hover{color:var(--teal);}
+  .roku-cross-arm-up{left:50%; top:6px; transform:translateX(-50%);}
+  .roku-cross-arm-down{left:50%; bottom:6px; transform:translateX(-50%);}
+  .roku-cross-arm-left{top:50%; left:6px; transform:translateY(-50%);}
+  .roku-cross-arm-right{top:50%; right:6px; transform:translateY(-50%);}
+  .roku-cross-ok{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:76px; height:76px; border-radius:50%; cursor:pointer;
+    background:var(--teal-dim); border:2px solid var(--teal); color:var(--teal); font-weight:600; font-size:.95rem;
+  }
+
+  .roku-power-btn.roku-power-on{background:var(--teal-dim); border-color:var(--teal); color:var(--teal);}
+  .roku-power-btn.roku-power-off{background:var(--coral-dim); border-color:var(--coral); color:var(--coral);}
+  .roku-apps-select{margin-top:.6rem;}
 
   .controls-card{margin-top:1.5rem;}
   .controls-grid{
@@ -2015,6 +2051,13 @@ function renderControls(controls){
     }
     if (c.type === 'media'){
       const status = c.appName ? c.appName : (c.state === 'off' ? 'Off' : 'Idle');
+      // c.poweredOn comes from roku.js's own device-info query (real power
+      // state) when this tile is rokuId-linked - HA's media_player state
+      // for a Roku doesn't reliably reflect actual power state (confirmed:
+      // showed "on" while genuinely off), so prefer poweredOn whenever
+      // it's available and only fall back to the HA-state heuristic when
+      // it isn't (a non-Roku media tile has no roku.js counterpart at all).
+      const isOn = c.poweredOn != null ? c.poweredOn : c.state !== 'off';
       return `
         <div class="control-tile" data-tile-id="${c.id}">
           <div class="control-head">
@@ -2025,7 +2068,7 @@ function renderControls(controls){
             <span class="control-head-right">
               <button type="button" class="icon-btn ctl-media-expand" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-app="${escapeHtml(status)}" data-roku-id="${c.rokuId || ''}" title="More controls">&hellip;</button>
               <label class="toggle">
-                <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${c.state !== 'off' ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+                <input type="checkbox" class="ctl-media-power" data-id="${c.id}" ${isOn ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
                 <span class="toggle-track"></span>
               </label>
             </span>
@@ -2256,21 +2299,40 @@ async function sendRokuDeviceKey(id, key){
     // best-effort, same as setControl - next status poll reflects reality either way
   }
 }
-function rokuControlsHtml(id){
+// Volume/mute/power confirmed working via ECP on both a Roku Ultra and a
+// Streambar Pro (real device tests), so offered regardless of model.
+// Power is read from d.poweredOn (roku.js's own device-info query, not
+// HA's media_player state - see getControllableDevices) so the button's
+// color reflects the device's actual state rather than assuming "on";
+// the PowerOff key reliably turns a device off but is NOT guaranteed to
+// wake one back up from deep sleep (that needs Wake-on-LAN, which this
+// doesn't implement) - still wired since it's the only power key Roku
+// documents, just don't expect it to always turn a sleeping device on.
+//
+// Search/Guide/mic/keyboard/private-listening from a real Roku remote
+// are deliberately absent - none has a working ECP command behind it
+// (confirmed: the old ECP search endpoint 404s on Roku OS 12+).
+function rokuControlsHtml(d){
+  const powerClass = d.poweredOn === true ? 'roku-power-on' : d.poweredOn === false ? 'roku-power-off' : '';
   return `
-    <div class="dpad">
-      <button type="button" class="dpad-btn" data-roku-key="Up">&#9650;</button>
-      <div class="dpad-row">
-        <button type="button" class="dpad-btn" data-roku-key="Left">&#9664;</button>
-        <button type="button" class="dpad-btn dpad-ok" data-roku-key="Select">OK</button>
-        <button type="button" class="dpad-btn" data-roku-key="Right">&#9654;</button>
-      </div>
-      <button type="button" class="dpad-btn" data-roku-key="Down">&#9660;</button>
-    </div>
     <div class="roku-modal-row">
       <button type="button" class="media-btn" data-roku-key="Back">Back</button>
       <button type="button" class="media-btn" data-roku-key="Home">Home</button>
-      <button type="button" class="media-btn" data-roku-key="InstantReplay">Replay</button>
+      <button type="button" class="media-btn roku-power-btn ${powerClass}" data-roku-key="PowerOff">Power</button>
+    </div>
+    <div class="roku-cross">
+      <div class="roku-cross-bar-v"></div>
+      <div class="roku-cross-bar-h"></div>
+      <button type="button" class="roku-cross-arm roku-cross-arm-up" data-roku-key="Up">&#9650;</button>
+      <button type="button" class="roku-cross-arm roku-cross-arm-down" data-roku-key="Down">&#9660;</button>
+      <button type="button" class="roku-cross-arm roku-cross-arm-left" data-roku-key="Left">&#9664;</button>
+      <button type="button" class="roku-cross-arm roku-cross-arm-right" data-roku-key="Right">&#9654;</button>
+      <button type="button" class="roku-cross-ok" data-roku-key="Select">OK</button>
+    </div>
+    <div class="roku-modal-row">
+      <button type="button" class="media-btn" data-roku-key="InstantReplay" title="Replay">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1.1em; height:1.1em;"><path d="M2 12a10 10 0 1 1 3 7.1"></path><polyline points="2 20 2 12 10 12"></polyline></svg>
+      </button>
       <button type="button" class="media-btn" data-roku-key="Info">Info</button>
     </div>
     <div class="roku-modal-row">
@@ -2278,53 +2340,101 @@ function rokuControlsHtml(id){
       <button type="button" class="media-btn" data-roku-key="Play">Play/Pause</button>
       <button type="button" class="media-btn" data-roku-key="Fwd">Fwd</button>
     </div>
+    <div class="roku-modal-row">
+      <button type="button" class="media-btn" data-roku-key="VolumeMute">Mute</button>
+      <button type="button" class="media-btn" data-roku-key="VolumeDown">Vol &minus;</button>
+      <button type="button" class="media-btn" data-roku-key="VolumeUp">Vol +</button>
+    </div>
+    <select class="add-task-ctrl roku-apps-select" data-id="${escapeHtml(d.id)}">
+      <option value="">Loading apps&hellip;</option>
+    </select>
   `;
 }
 
+// Populates the apps <select> after the fact (device-info doesn't include
+// the app list - a separate ECP query) - takes the element directly
+// rather than re-querying by id, so a stale response from a since-closed
+// or since-reopened-on-a-different-device modal just writes into a
+// detached, invisible node instead of corrupting whatever's now showing.
+async function populateRokuApps(selectEl, id){
+  try {
+    const res = await fetch(`/api/roku/${encodeURIComponent(id)}/apps`);
+    if (!res.ok) throw new Error('failed to load apps');
+    const apps = await res.json();
+    selectEl.innerHTML = `<option value="">Launch app&hellip;</option>` +
+      apps.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
+  } catch {
+    selectEl.innerHTML = `<option value="">Apps unavailable</option>`;
+    return;
+  }
+  selectEl.addEventListener('change', async () => {
+    if (!selectEl.value) return;
+    try {
+      await fetch(`/api/roku/${encodeURIComponent(id)}/launch/${encodeURIComponent(selectEl.value)}`, { method: 'POST' });
+    } catch {
+      // best-effort, same as every other Roku control here
+    }
+  });
+}
+
+function rokuMetadataHtml(p){
+  const pct = p.durationMs ? Math.min(100, Math.round((p.viewOffsetMs / p.durationMs) * 100)) : 0;
+  const poster = p.thumbPath
+    ? `<img class="roku-detail-poster" src="/api/plex/image?path=${encodeURIComponent(p.thumbPath)}" alt="">`
+    : '';
+  const subtitle = [p.year, p.contentRating].filter(Boolean).join(' · ');
+  const endTime = new Date(p.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `
+    <div class="roku-detail-grid">
+      ${poster}
+      <div class="roku-detail-info">
+        <div class="roku-detail-title">${escapeHtml(plexTitleLabel(p))}</div>
+        ${subtitle ? `<div class="roku-detail-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+        <div class="roku-progress"><div class="roku-progress-fill" style="width:${pct}%"></div></div>
+        <div class="roku-detail-times">
+          <span><strong>${formatDuration(p.viewOffsetMs)}</strong> watched</span>
+          <span><strong>${formatDuration(p.remainingMs)}</strong> left</span>
+          <span>Ends around <strong>${escapeHtml(endTime)}</strong></span>
+        </div>
+        ${p.summary ? `<div class="roku-detail-summary">${escapeHtml(p.summary)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// Rich Plex metadata (poster/progress/summary) sits to the right of the
+// controls when available; otherwise the controls stand alone with just
+// a one-line status above them - there's nothing to reserve space for.
 function openRokuDeviceModal(id){
   const d = currentRokuDevices.find(x => x.id === id);
   if (!d) return;
   document.getElementById('roku-device-modal-name').textContent = d.name;
   const body = document.getElementById('roku-device-modal-body');
 
-  if (d.plex){
-    const p = d.plex;
-    const pct = p.durationMs ? Math.min(100, Math.round((p.viewOffsetMs / p.durationMs) * 100)) : 0;
-    const poster = p.thumbPath
-      ? `<img class="roku-detail-poster" src="/api/plex/image?path=${encodeURIComponent(p.thumbPath)}" alt="">`
-      : '';
-    const subtitle = [p.year, p.contentRating].filter(Boolean).join(' · ');
-    const endTime = new Date(p.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    body.innerHTML = `
-      <div class="roku-detail-grid">
-        ${poster}
-        <div class="roku-detail-info">
-          <div class="roku-detail-title">${escapeHtml(plexTitleLabel(p))}</div>
-          ${subtitle ? `<div class="roku-detail-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-          <div class="roku-progress"><div class="roku-progress-fill" style="width:${pct}%"></div></div>
-          <div class="roku-detail-times">
-            <span><strong>${formatDuration(p.viewOffsetMs)}</strong> watched</span>
-            <span><strong>${formatDuration(p.remainingMs)}</strong> left</span>
-            <span>Ends around <strong>${escapeHtml(endTime)}</strong></span>
-          </div>
-          ${p.summary ? `<div class="roku-detail-summary">${escapeHtml(p.summary)}</div>` : ''}
-        </div>
-      </div>
-    `;
-  } else if (!d.online){
+  if (!d.online){
     body.innerHTML = `<div class="roku-detail-idle">This device isn't responding right now.</div>`;
-  } else if (d.idle){
-    body.innerHTML = `<div class="roku-detail-idle">Idle${d.screensaver ? ` &middot; ${escapeHtml(d.screensaver)} screensaver` : ''}</div>`;
-  } else {
-    body.innerHTML = `<div class="roku-detail-idle">Playing <strong>${escapeHtml(d.appName)}</strong></div>`;
+    document.getElementById('roku-device-modal').classList.add('open');
+    return;
   }
 
-  // Controls only make sense against a device that's actually reachable -
-  // an offline device has nowhere to send a keypress to.
-  if (d.online) body.innerHTML += rokuControlsHtml(d.id);
+  const statusHtml = d.plex ? '' : `<div class="roku-detail-idle">${
+    d.idle ? `Idle${d.screensaver ? ` &middot; ${escapeHtml(d.screensaver)} screensaver` : ''}` : `Playing <strong>${escapeHtml(d.appName)}</strong>`
+  }</div>`;
+
+  body.innerHTML = `
+    <div class="roku-detail-layout">
+      <div class="roku-detail-controls">
+        ${statusHtml}
+        ${rokuControlsHtml(d)}
+      </div>
+      ${d.plex ? rokuMetadataHtml(d.plex) : ''}
+    </div>
+  `;
   body.querySelectorAll('[data-roku-key]').forEach(btn => {
     btn.addEventListener('click', () => sendRokuDeviceKey(d.id, btn.dataset.rokuKey));
   });
+  const appsSelect = body.querySelector('.roku-apps-select');
+  if (appsSelect) populateRokuApps(appsSelect, d.id);
 
   document.getElementById('roku-device-modal').classList.add('open');
 }

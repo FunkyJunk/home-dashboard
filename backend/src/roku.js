@@ -67,6 +67,11 @@ async function getDeviceStatus(device) {
     const appName = appMatch ? decodeXmlEntities(appMatch[1].trim()) : null;
     const isHome = !appName || appName === "Roku" || appName === "Roku Dynamic Menu";
     const screensaver = xmlTag(appXml, "screensaver");
+    // Confirmed present (via a real device-info query) on both a Roku
+    // Ultra (plain streaming box) and a Streambar Pro, not just Roku TVs -
+    // "PowerOn" is the only value seen live so far; treat anything else
+    // reported as off/standby rather than assuming a fixed value set.
+    const powerMode = xmlTag(infoXml, "power-mode");
 
     return {
       id: device.id,
@@ -78,6 +83,7 @@ async function getDeviceStatus(device) {
       appName: isHome ? null : appName,
       screensaver: isHome ? screensaver : null,
       plex: null,
+      poweredOn: powerMode ? powerMode === "PowerOn" : null,
     };
   } catch {
     return {
@@ -90,8 +96,15 @@ async function getDeviceStatus(device) {
       appName: null,
       screensaver: null,
       plex: null,
+      poweredOn: null,
     };
   }
+}
+
+function findDevice(id) {
+  const device = ROKU_DEVICES.find((d) => d.id === id);
+  if (!device) throw new Error(`unknown Roku device: ${id}`);
+  return device;
 }
 
 // Roku's ECP remote-control commands are just an unauthenticated POST to
@@ -100,8 +113,7 @@ async function getDeviceStatus(device) {
 // source of truth for id -> ip, same as status polling above, so a device
 // added there is immediately controllable too.
 export async function sendRokuKey(id, key) {
-  const device = ROKU_DEVICES.find((d) => d.id === id);
-  if (!device) throw new Error(`unknown Roku device: ${id}`);
+  const device = findDevice(id);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ECP_TIMEOUT_MS);
   try {
@@ -110,6 +122,40 @@ export async function sendRokuKey(id, key) {
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`ECP keypress ${key} returned ${res.status}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// /query/apps - confirmed live against a real device: returns every
+// installed channel (Netflix, Plex, screensavers, even "Bluetooth Audio")
+// as <app id="..." type="appl" version="...">Name</app>. Screensavers and
+// non-"appl" entries are filtered out - they show up in the same list but
+// aren't something a user would ever want to "launch".
+export async function getRokuApps(id) {
+  const device = findDevice(id);
+  const xml = await ecpFetch(device.ip, "/query/apps");
+  const apps = [];
+  const re = /<app id="([^"]+)" type="([^"]+)"[^>]*>([^<]*)<\/app>/g;
+  let m;
+  while ((m = re.exec(xml))) {
+    if (m[2] !== "appl") continue;
+    apps.push({ id: m[1], name: decodeXmlEntities(m[3].trim()) });
+  }
+  return apps;
+}
+
+// /launch/{appId} - confirmed live (launched YouTube on a real device).
+export async function launchRokuApp(id, appId) {
+  const device = findDevice(id);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ECP_TIMEOUT_MS);
+  try {
+    const res = await fetch(`http://${device.ip}:8060/launch/${encodeURIComponent(appId)}`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`ECP launch ${appId} returned ${res.status}`);
   } finally {
     clearTimeout(timeout);
   }

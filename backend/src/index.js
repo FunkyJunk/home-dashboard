@@ -5,7 +5,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
 import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
-import { getAllRokuStatuses, sendRokuKey } from "./roku.js";
+import { getAllRokuStatuses, sendRokuKey, getRokuApps, launchRokuApp } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
@@ -51,6 +51,7 @@ app.get("/api/dashboard", async (_req, res) => {
 
   const haStates = homeAssistant.status === "fulfilled" ? homeAssistant.value : null;
   const nestThermostats = nest.status === "fulfilled" ? nest.value : [];
+  const rokuStatuses = roku.status === "fulfilled" ? roku.value : [];
 
   res.json({
     weather: weather.status === "fulfilled" ? weather.value : null,
@@ -58,9 +59,9 @@ app.get("/api/dashboard", async (_req, res) => {
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
     tasks: tasks.status === "fulfilled" ? tasks.value : [],
-    roku: roku.status === "fulfilled" ? roku.value : [],
+    roku: rokuStatuses,
     controls: [
-      ...(haStates ? getControllableDevices(haStates) : []),
+      ...(haStates ? getControllableDevices(haStates, rokuStatuses) : []),
       ...nestThermostats,
     ],
     errors: [weather, cal, homeAssistant, nest, tasks, roku]
@@ -156,6 +157,23 @@ app.post("/api/roku/:id/key/:key", async (req, res) => {
   }
 });
 
+app.get("/api/roku/:id/apps", async (req, res) => {
+  try {
+    res.json(await getRokuApps(req.params.id));
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to load Roku apps" });
+  }
+});
+
+app.post("/api/roku/:id/launch/:appId", async (req, res) => {
+  try {
+    await launchRokuApp(req.params.id, req.params.appId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to launch Roku app" });
+  }
+});
+
 app.get("/api/tasks/lists", async (req, res) => {
   try {
     res.json(await getReminderLists());
@@ -248,7 +266,7 @@ const CONTROLLABLE_DEVICES = {
   // write a setpoint (Homey API permissions), so they're not listed here.
 };
 
-function getControllableDevices(states) {
+function getControllableDevices(states, rokuStatuses = []) {
   return Object.entries(CONTROLLABLE_DEVICES)
     .map(([entityId, meta]) => {
       const s = states.find((e) => e.entity_id === entityId);
@@ -279,6 +297,11 @@ function getControllableDevices(states) {
         };
       }
       if (meta.type === "media") {
+        // HA's media_player state for this Roku doesn't reliably reflect
+        // real power state (confirmed: showed "on" while the device was
+        // actually off) - a rokuId-linked tile gets its power state from
+        // roku.js's direct device-info query instead, which is accurate.
+        const rokuDevice = meta.rokuId ? rokuStatuses.find((r) => r.id === meta.rokuId) : null;
         return {
           id: entityId,
           type: "media",
@@ -288,6 +311,7 @@ function getControllableDevices(states) {
           appName: s.attributes?.app_name ?? s.attributes?.source ?? null,
           sourceList: s.attributes?.source_list ?? [],
           rokuId: meta.rokuId ?? null,
+          poweredOn: rokuDevice ? rokuDevice.poweredOn : null,
         };
       }
       return null;
