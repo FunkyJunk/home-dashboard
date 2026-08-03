@@ -2608,6 +2608,14 @@ async function startLabelWorkflow(imageDataUrl, mediaType){
   renderLabelCropCanvas(analysis);
   const tCropped = performance.now();
 
+  console.log('[shipping-label debug]', JSON.stringify({
+    analysis,
+    imageRotation,
+    naturalW: labelImg.naturalWidth,
+    naturalH: labelImg.naturalHeight,
+    cropBoxState,
+  }));
+
   console.log(`[shipping-label timing] image load: ${Math.round(tImgLoaded - t0)}ms | analyze (network+server): ${Math.round(tAnalyzed - tImgLoaded)}ms | rotate: ${Math.round(tRotated - tAnalyzed)}ms | detect+crop: ${Math.round(tCropped - tRotated)}ms | TOTAL: ${Math.round(tCropped - t0)}ms`);
 }
 
