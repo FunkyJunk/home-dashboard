@@ -1129,6 +1129,7 @@
           <div class="label-crop-handle" data-handle="se"></div>
         </div>
       </div>
+      <button type="button" class="receipt-btn" id="label-crop-save-preview-btn" style="display:none; margin-bottom:1.25rem;">Save preview</button>
       <div class="label-crop-fields" id="label-crop-fields" style="display:none;">
         <div class="add-task-row">
           <div class="add-task-field">
@@ -2477,12 +2478,14 @@ function showCropPreviewMode(){
   cropMode = 'preview';
   document.getElementById('label-crop-preview-wrap').style.display = 'flex';
   document.getElementById('label-crop-canvas-wrap').style.display = 'none';
+  document.getElementById('label-crop-save-preview-btn').style.display = 'none';
   redrawPreviewCanvas();
 }
 function showCropAdjustMode(){
   cropMode = 'adjust';
   document.getElementById('label-crop-preview-wrap').style.display = 'none';
   document.getElementById('label-crop-canvas-wrap').style.display = 'inline-block';
+  document.getElementById('label-crop-save-preview-btn').style.display = '';
   redrawCropCanvas();
   updateCropBoxOverlay();
 }
@@ -2703,6 +2706,7 @@ document.getElementById('label-crop-rotate-btn').addEventListener('click', async
 });
 
 document.getElementById('label-crop-show-adjust-btn').addEventListener('click', showCropAdjustMode);
+document.getElementById('label-crop-save-preview-btn').addEventListener('click', showCropPreviewMode);
 
 // Drag-to-move / drag-corner-to-resize the crop box, aspect ratio locked to
 // whatever preset is selected - pointer events, matching the same
