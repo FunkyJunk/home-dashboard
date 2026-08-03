@@ -467,30 +467,25 @@
     display:grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap:1.25rem;
-    align-items:start;
   }
+  /* No align-items override - default grid stretch makes every tile in a
+     row match the row's tallest, which combined with every tile now
+     rendering the identical set of rows (see rokuTileHtml) keeps cards a
+     uniform size regardless of which optional fields a device actually has. */
   .roku-tile{
-    display:flex; flex-direction:column; gap:.5rem; cursor:pointer;
+    display:flex; flex-direction:column; gap:.35rem; cursor:pointer;
     background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:6px;
     padding:.75rem; text-align:left; font:inherit; color:inherit;
   }
   .roku-tile:hover{border-color:var(--teal);}
   .roku-tile.offline{opacity:.45;}
-  .roku-tile-poster{
-    width:100%; aspect-ratio:2/3; object-fit:cover;
-    border-radius:4px; background:var(--panel); border:1px solid var(--panel-line);
-  }
   .roku-tile-name{font-size:.85rem; color:var(--text); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .roku-tile-model{font-size:.7rem; color:var(--text-dim);}
-  .roku-tile-title{
-    font-size:.78rem; color:var(--text); overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; margin-top:-.2rem;
-  }
+  .roku-tile-row{font-size:.75rem; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .roku-tile-field{color:var(--text-dim); display:inline-block; width:3.6em;}
   .roku-progress{
     width:100%; height:4px; background:var(--panel); border-radius:2px; overflow:hidden;
   }
   .roku-progress-fill{height:100%; background:var(--teal); border-radius:2px;}
-  .roku-tile-caption{font-size:.68rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace;}
 
   .home-roku-modal-inner{max-width:min(90vw, 640px);}
   .roku-device-modal-inner{max-width:min(90vw, 480px);}
@@ -2182,32 +2177,24 @@ function plexTitleLabel(p){
   return p.title;
 }
 
+// No poster art here (that's still shown in the device detail popup) -
+// every tile renders the same fixed set of rows regardless of what data
+// a given device actually has, specifically so cards stay a uniform size
+// in the grid instead of an idle device's short card sitting next to a
+// Plex device's much taller poster-and-progress-bar one.
 function rokuTileHtml(d){
-  if (d.plex){
-    const pct = d.plex.durationMs ? Math.min(100, Math.round((d.plex.viewOffsetMs / d.plex.durationMs) * 100)) : 0;
-    const poster = d.plex.thumbPath
-      ? `<img class="roku-tile-poster" src="/api/plex/image?path=${encodeURIComponent(d.plex.thumbPath)}" alt="" loading="lazy">`
-      : `<div class="roku-tile-poster"></div>`;
-    return `
-      <button type="button" class="roku-tile" data-id="${escapeHtml(d.id)}">
-        ${poster}
-        <div class="roku-tile-name">${escapeHtml(d.name)}</div>
-        <div class="roku-tile-title">${escapeHtml(plexTitleLabel(d.plex))}</div>
-        <div class="roku-progress"><div class="roku-progress-fill" style="width:${pct}%"></div></div>
-        <div class="roku-tile-caption">${formatDuration(d.plex.viewOffsetMs)} watched &middot; ${formatDuration(d.plex.remainingMs)} left</div>
-      </button>
-    `;
-  }
   let statusHtml;
   if (!d.online) statusHtml = `<span class="pill">Offline</span>`;
   else if (d.idle) statusHtml = `<span class="pill calm">Idle</span>`;
-  else statusHtml = `<span class="pill">${escapeHtml(d.appName)}</span>`;
+  else statusHtml = `<span class="pill">Active</span>`;
 
   return `
     <button type="button" class="roku-tile${d.online ? '' : ' offline'}" data-id="${escapeHtml(d.id)}">
       <div class="roku-tile-name">${escapeHtml(d.name)}</div>
-      ${d.model ? `<div class="roku-tile-model">${escapeHtml(d.model)}</div>` : ''}
-      ${statusHtml}
+      <div class="roku-tile-row"><span class="roku-tile-field">Type</span> ${d.model ? escapeHtml(d.model) : '&mdash;'}</div>
+      <div class="roku-tile-row"><span class="roku-tile-field">App</span> ${d.appName ? escapeHtml(d.appName) : '&mdash;'}</div>
+      <div class="roku-tile-row"><span class="roku-tile-field">Playing</span> ${d.plex ? escapeHtml(plexTitleLabel(d.plex)) : '&mdash;'}</div>
+      <div class="roku-tile-row"><span class="roku-tile-field">Status</span> ${statusHtml}</div>
     </button>
   `;
 }
@@ -2228,7 +2215,13 @@ function openHomeRokuModal(){
   const el = document.getElementById('home-roku-modal-list');
   el.innerHTML = currentRokuDevices.length ? homeRokuListHtml() : '<div class="empty">No Roku devices found.</div>';
   el.querySelectorAll('.roku-tile').forEach(btn => {
-    btn.addEventListener('click', () => openRokuDeviceModal(btn.dataset.id));
+    // Both modals share the same overlay z-index, so with the list modal
+    // still open the detail modal - opened later, but earlier in DOM
+    // order - painted BEHIND it instead of on top. Close the list first.
+    btn.addEventListener('click', () => {
+      closeHomeRokuModal();
+      openRokuDeviceModal(btn.dataset.id);
+    });
   });
   document.getElementById('home-roku-modal').classList.add('open');
 }
