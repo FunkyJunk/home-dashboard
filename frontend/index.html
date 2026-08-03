@@ -2337,10 +2337,24 @@ function populateLabelPresetSelect(){
 function computeInitialCropBox(naturalW, naturalH, aspectRatio, aiBox){
   let boxW, boxH, boxX, boxY;
   if (aiBox && aiBox.widthPct && aiBox.heightPct){
-    const aiX = (aiBox.xPct / 100) * naturalW;
-    const aiY = (aiBox.yPct / 100) * naturalH;
-    const aiW = (aiBox.widthPct / 100) * naturalW;
-    const aiH = (aiBox.heightPct / 100) * naturalH;
+    // A too-tight AI box has real consequences (a shipping label with its
+    // barcode cropped off is unscannable and unusable), while a slightly
+    // too-generous one costs nothing - the user can still drag it in. So
+    // pad the AI's box outward by 12% of its own size on every side before
+    // fitting, as a safety margin against underestimating the label's true
+    // extent, confirmed against two real labels where the raw suggestion
+    // cut off the barcode/tracking section entirely.
+    const PAD = 0.12;
+    let aiX = (aiBox.xPct / 100) * naturalW;
+    let aiY = (aiBox.yPct / 100) * naturalH;
+    let aiW = (aiBox.widthPct / 100) * naturalW;
+    let aiH = (aiBox.heightPct / 100) * naturalH;
+    const padX = aiW * PAD, padY = aiH * PAD;
+    aiX = Math.max(0, aiX - padX);
+    aiY = Math.max(0, aiY - padY);
+    aiW = Math.min(naturalW - aiX, aiW + padX * 2);
+    aiH = Math.min(naturalH - aiY, aiH + padY * 2);
+
     if (aiW / aiH > aspectRatio){ boxH = aiH; boxW = boxH * aspectRatio; }
     else { boxW = aiW; boxH = boxW / aspectRatio; }
     boxX = aiX + (aiW - boxW) / 2;
