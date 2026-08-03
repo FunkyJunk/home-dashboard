@@ -2365,12 +2365,12 @@ function detectRotationDeg(img){
 
   // Band-counting has to happen within the printed content itself, not the
   // full pasted image - pasted images vary in size and margin every time,
-  // and any white border around the label (even a little) dilutes a
-  // genuine full-span divider line below the density threshold once it's
-  // measured against the whole image's larger extent rather than just the
-  // label's own width/height. A real label showed both counts coming back
-  // as zero because of exactly this - trimming first fixes it.
-  const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF) || { x: 0, y: 0, width: w, height: h };
+  // and any white border (or a stray page caption creating a blank gap)
+  // dilutes a genuine full-span divider line below the density threshold
+  // once it's measured against a larger extent than just the label's own
+  // width/height. A real label showed both counts coming back as zero
+  // because of exactly this - isolating the label first fixes it.
+  const bbox = isolateLabelBbox(gray, w, h) || { x: 0, y: 0, width: w, height: h };
   const bboxGray = new Uint8ClampedArray(bbox.width * bbox.height);
   for (let dy = 0; dy < bbox.height; dy++){
     for (let dx = 0; dx < bbox.width; dx++){
@@ -2397,11 +2397,13 @@ function detectRotationDeg(img){
 
 // Bounding box of every non-white pixel - trims away the blank margin a
 // screenshot or PDF export tends to have around the actual printed label.
-function contentBbox(gray, w, h, whiteCutoff){
+function contentBbox(gray, w, h, whiteCutoff, region){
+  const x0 = region ? region.x : 0, y0 = region ? region.y : 0;
+  const x1 = region ? region.x + region.width : w, y1 = region ? region.y + region.height : h;
   let minX = w, minY = h, maxX = -1, maxY = -1;
-  for (let y = 0; y < h; y++){
+  for (let y = y0; y < y1; y++){
     const rowStart = y * w;
-    for (let x = 0; x < w; x++){
+    for (let x = x0; x < x1; x++){
       if (gray[rowStart + x] < whiteCutoff){
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -2459,6 +2461,75 @@ function splitContentBlocks(gray, w, bbox){
   return blocks;
 }
 
+// Row-axis analog of splitContentBlocks - isolates the actual label from
+// stray content ABOVE or BELOW it in the pasted image, e.g. a page caption
+// sitting below an Amazon return label's dashed cut line (the dashed
+// border is itself just ink like anything else, so a plain non-white
+// bounding box would otherwise sweep that caption into the crop too).
+function splitContentBlocksRows(gray, w, bbox){
+  const GAP_DENSITY = 0.02;
+  // Ignore incidental single/few-row gaps (e.g. the whitespace between an
+  // ascender and the next line of unstructured text) - only a genuinely
+  // sizeable blank run should count as a real boundary between the label
+  // and something else entirely.
+  const MIN_GAP = Math.max(8, Math.round(bbox.height * 0.02));
+  const rowDensity = new Float64Array(bbox.height);
+  for (let dy = 0; dy < bbox.height; dy++){
+    let dark = 0;
+    const rowStart = (bbox.y + dy) * w;
+    for (let dx = 0; dx < bbox.width; dx++) if (gray[rowStart + bbox.x + dx] < LABEL_DARK) dark++;
+    rowDensity[dy] = dark / bbox.width;
+  }
+
+  const blank = new Array(bbox.height);
+  for (let dy = 0; dy < bbox.height; dy++) blank[dy] = rowDensity[dy] <= GAP_DENSITY;
+  let i = 0;
+  while (i < bbox.height){
+    if (blank[i]){
+      let j = i;
+      while (j < bbox.height && blank[j]) j++;
+      if (j - i < MIN_GAP) for (let k = i; k < j; k++) blank[k] = false;
+      i = j;
+    } else i++;
+  }
+
+  const blocks = [];
+  let blockStart = null;
+  for (let dy = 0; dy <= bbox.height; dy++){
+    const isBlank = dy === bbox.height || blank[dy];
+    if (!isBlank && blockStart === null) blockStart = dy;
+    else if (isBlank && blockStart !== null){ blocks.push({ y: blockStart, height: dy - blockStart }); blockStart = null; }
+  }
+  return blocks;
+}
+
+// Finds the actual label's content bounds within a pasted image, isolating
+// it from stray content above/below (e.g. a page caption sitting below an
+// Amazon return label's dashed cut line) by keeping only the tallest
+// contiguous row block and re-tightening the horizontal bounds within just
+// that range. Shared by rotation detection and the normalize pipeline so
+// both agree on where the label actually is, not just one of them.
+function isolateLabelBbox(gray, w, h){
+  const roughBbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
+  if (!roughBbox) return null;
+  const rowBlocks = splitContentBlocksRows(gray, w, roughBbox);
+  if (rowBlocks.length <= 1) return roughBbox;
+
+  // A real label commonly has several well-spaced internal sections
+  // (address blocks, a banner, the barcode) with genuine blank rows
+  // between them - that's normal and must NOT get pruned down to just one
+  // section. Only exclude smaller fragments (e.g. a page caption sitting
+  // below an Amazon return label's dashed cut line, entirely outside it)
+  // when a single block clearly dominates the content; otherwise trust the
+  // full rough bbox rather than risk cutting real label content away.
+  const largest = rowBlocks.reduce((a, b) => (b.height > a.height ? b : a));
+  const DOMINANCE_FRACTION = 0.5;
+  if (largest.height < roughBbox.height * DOMINANCE_FRACTION) return roughBbox;
+
+  const rowRange = { x: roughBbox.x, y: roughBbox.y + largest.y, width: roughBbox.width, height: largest.height };
+  return contentBbox(gray, w, h, LABEL_WHITE_CUTOFF, rowRange) || rowRange;
+}
+
 // The full pipeline: rotate upright, trim to printed content, scale to the
 // preset's width (driven by the printed frame, not the raw bbox), snap back
 // to pure black/white so barcode edges survive resampling, then paste onto
@@ -2472,7 +2543,7 @@ async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
   const w = rotatedImg.naturalWidth, h = rotatedImg.naturalHeight;
   const { canvas: rotatedCanvas, gray } = toGrayscale(rotatedImg, w, h);
 
-  const bbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
+  const bbox = isolateLabelBbox(gray, w, h);
   if (!bbox) throw new Error('image appears blank');
 
   const blocks = splitContentBlocks(gray, w, bbox);
