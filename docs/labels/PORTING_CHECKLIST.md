@@ -1,17 +1,51 @@
 # Port the decisions, not the code
 
-## STATUS (updated 2026-08-03, after fixes committed in 8c408ac)
+## STATUS (updated 2026-08-04 — pipeline REWRITTEN, see next section)
 
 | # | Decision | State | Notes |
 |---|---|---|---|
-| 1 | Re-threshold after resample | **Done** | Was already implemented, luminance-weighted. Better than the reference. |
-| 2 | Upside-down detection | **OPEN. Next up.** | `detectRotationDeg` still returns 0 the moment it decides "not sideways". |
-| 3 | Cut line vs solid border | **Skipped, deliberately** | Both margins are 2.0 mm on this printer, so the branch would be dead code. Revisit only if a printer that can reach the edge arrives. |
-| 4 | Reject page chrome | **Done, differently than written** | Kept the existing strict pass as primary and *added* a loose second pass (cutoff 200, 30% density) that runs only when strict returns null. Aspect gate 0.50-0.85 applied to the loose pass. Do not replace the strict method. |
-| 5 | Scale on one axis | **Done** | `Math.min` over both axes. Was width-only. |
-| 6 | Printer profile | **Documentation only** | Margin 2.0 mm applied. Offsets +0.45/+0.20 mm measured but not wired in; gain is under 0.5 mm. CLAUDE.md corrected to say so. |
-| 7 | Browser print at true size | **Done** | Was already implemented and exceeded; always emits a jsPDF at exact page size. |
+| 1 | Re-threshold after resample | **Done** | Luminance-weighted, cutoff 160. Carried through the rewrite unchanged. |
+| 2 | Upside-down detection | **Done** | `detectLabelOrientation`: aspect answers "sideways?", barcode-band position answers "which way?", each with a cross-check. Verified across 4 orientations x 3 label types. |
+| 3 | Cut line vs solid border | **Done** | Now a live branch, not dead code: dashed cut lines are cropped INSIDE so they do not print, solid frames are kept. Told apart by edge coverage (0.63 vs 1.00). |
+| 4 | Reject page chrome | **Done, rewritten** | Endpoint-alignment border detection replaced the strict/loose density passes and the 0.50-0.85 aspect gate. Rejection now requires a border; see the "borderless" note in CLAUDE.md for why nothing is discarded without one. |
+| 5 | Scale on one axis | **Done** | `Math.min` over both axes. |
+| 6 | Printer profile | **Changed** | `LABEL_MARGIN_MM` is now **0** (edge-to-edge requested and approved 2026-08-04), overriding the measured 2.0 mm feed-drift allowance. Offsets +0.45/+0.20 mm still not wired in. |
+| 7 | Browser print at true size | **Done** | Always emits a jsPDF at exact page size. |
 | 8 | Verification gate | **Deferred** | Own branch. Advisory by default; block only on a decode that contradicts an expected tracking number. |
+
+## 2026-08-04 rewrite
+
+The pipeline was rebuilt end to end. Removed: `detectRotationDeg`,
+`detectFrameRect`, `isolateLabelBbox`, `findRuleRows`, `splitContentBlocks`,
+`rowInkDensity`, `colInkDensity`, `LABEL_RULE_DENSITY`, and the top-rule anchor.
+Added: `findBorderRect`, `insetPastCutLines`, `findLabelRegion`,
+`longestRunInterval`, `orientationProfiles`, `barcodeBandCentre`,
+`detectLabelOrientation`.
+
+Why the old rotation test was unreliable: it compared the count of rows vs
+columns exceeding 80% ink to decide "sideways". A label with a solid rectangular
+frame contributes full-width rows *and* full-height columns in equal measure, so
+on any framed label the test was close to a coin flip.
+
+Verified on three real label layouts (USPS solid frame, UPS/Amazon dashed cut
+line with page-text artifacts, USPS frame wrapping the address block only with
+the tracking barcode outside it) at all four orientations — 12/12, every case
+with both orientation cross-checks agreeing, plus a real carrier PDF at four
+orientations. Assertions covered: cut line absent from output (all four edges 0
+ink), no label data lost, artifacts rejected, and re-detection of each output
+reporting "already upright".
+
+Bug found only by testing the shipped code rather than the harness copy:
+`rotateImageToCanvas` read `img.naturalWidth` only, but the new pipeline crops
+before rotating and so passes a canvas — 0x0 canvas, `drawImage` throw, every
+label. See CLAUDE.md.
+
+Known residual risk, accepted: a frame enclosing ~90% of a label could still be
+trusted and drop content below it. A guard was written and removed — the
+screenshot-with-captions case measures 0.1475 outside-to-inside ink, which
+leaves no usable threshold, because page captions just outside a cut line are
+structurally indistinguishable from a label band just outside a frame. Untested:
+photographs (skew/perspective/shadow) and non-4x6 stock.
 
 ### The bug this actually found
 

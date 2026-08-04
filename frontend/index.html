@@ -2684,9 +2684,12 @@ function getSelectedPreset(){
 // Rotates a whole image clockwise by 0/90/180/270 onto a new canvas (90/270
 // swap the resulting width/height, matching how physically rotating a photo
 // works) - used to auto-correct labels that come in sideways or upside down.
+// Accepts an <img> OR a canvas: the pipeline crops before rotating, so what
+// arrives here is usually the cropped canvas, and a canvas has no
+// naturalWidth - reading only that yielded a 0x0 result and a drawImage throw.
 function rotateImageToCanvas(img, degrees){
   const swapped = degrees === 90 || degrees === 270;
-  const w = img.naturalWidth, h = img.naturalHeight;
+  const w = img.naturalWidth ?? img.width, h = img.naturalHeight ?? img.height;
   const { canvas, ctx } = makeCanvas(swapped ? h : w, swapped ? w : h);
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate(degrees * Math.PI / 180);
@@ -2702,21 +2705,22 @@ function populateLabelPresetSelect(){
   if (presets.some(p => p.id === prevValue)) sel.value = prevValue;
 }
 
-// Pads a pixel box outward by `frac` of its own size on every side,
-// clamped to image bounds. A too-tight box has real consequences (a
-// shipping label with its barcode cropped off is unscannable), while a
-// too-generous one costs nothing since it just gets fit down to the
-// target ratio next - so this always biases toward capturing more.
-// Deterministic label normalization, ported from a Python reference script
-// (label_4x6.py) - replaces asking a vision model to guess a rotation angle
-// and crop rectangle, which repeatedly proved unreliable on real photos,
-// with pixel-level rules instead: a shipping label always has a solid
-// printed frame and a dense barcode block, and those are far more precise,
-// reproducible signals than an LLM's own coordinate estimate.
+// Deterministic label normalization: rotation and crop come from pixel rules,
+// never from asking a vision model to guess an angle and a crop rectangle,
+// which repeatedly proved unreliable. Two structures carry all the signal a
+// label needs - its printed border (solid frame or dashed cut line) says where
+// the label ENDS, and its 1D tracking barcode says which way is DOWN.
+//
+// A too-tight crop has real consequences (a barcode cropped off is
+// unscannable), so every ambiguous call here is resolved toward keeping more.
 const LABEL_DPI = 300;
-const LABEL_MARGIN_MM = 2.0;     // safe area for label-feed drift
-const LABEL_DARK = 128;          // ink cutoff (0-255) for structural detection
-const LABEL_RULE_DENSITY = 0.80; // row/col counts as a full-width rule above this ink fraction
+// 0 = fill the label stock edge to edge, as requested. Note the trade-off: a
+// 2.0mm safe area was previously MEASURED on this printer for label-feed drift
+// (see docs/labels), and cropping to the ink bbox also removes whatever quiet
+// zone the carrier designed in. Raise this if bars start clipping at an edge.
+const LABEL_MARGIN_MM = 0;
+const LABEL_DARK = 128;          // ink cutoff (0-255) for barcode/text structure
+const LABEL_INK_CUTOFF = 215;    // looser ink cutoff, so faint/dashed rules register
 const LABEL_REBINARIZE = 160;    // post-resample cutoff, biased toward ink so thin bars survive
 const LABEL_WHITE_CUTOFF = 250;  // trim bbox: anything darker than this counts as printed content
 
@@ -2736,82 +2740,118 @@ function toGrayscale(img, w, h){
   return { canvas, gray };
 }
 
-function rowInkDensity(gray, w, h, darkCutoff){
-  const density = new Float64Array(h);
-  for (let y = 0; y < h; y++){
-    let dark = 0;
-    const rowStart = y * w;
-    for (let x = 0; x < w; x++) if (gray[rowStart + x] < darkCutoff) dark++;
-    density[y] = dark / w;
-  }
-  return density;
-}
-function colInkDensity(gray, w, h, darkCutoff){
-  const density = new Float64Array(w);
-  for (let x = 0; x < w; x++){
-    let dark = 0;
-    for (let y = 0; y < h; y++) if (gray[y * w + x] < darkCutoff) dark++;
-    density[x] = dark / h;
-  }
-  return density;
-}
-
-// A correctly-oriented label has many heavily-inked ROWS (frame rules, the
-// banner bar, the tracking barcode) and few heavily-inked columns; if
-// columns win instead, the label is sideways. To pick a direction, the
-// tracking barcode block is always the densest region on the label and
-// always belongs at the bottom, so whichever half of the image has denser
-// ink overall is that "bottom" half.
-function detectRotationDeg(img){
-  const w = img.naturalWidth, h = img.naturalHeight;
-  const { gray } = toGrayscale(img, w, h);
-
-  // Band-counting has to happen within the printed content itself, not the
-  // full pasted image - pasted images vary in size and margin every time,
-  // and any white border (or a stray page caption creating a blank gap)
-  // dilutes a genuine full-span divider line below the density threshold
-  // once it's measured against a larger extent than just the label's own
-  // width/height. A real label showed both counts coming back as zero
-  // because of exactly this - isolating the label first fixes it.
-  const bbox = isolateLabelBbox(gray, w, h) || { x: 0, y: 0, width: w, height: h };
-  const bboxGray = new Uint8ClampedArray(bbox.width * bbox.height);
-  for (let dy = 0; dy < bbox.height; dy++){
-    for (let dx = 0; dx < bbox.width; dx++){
-      bboxGray[dy * bbox.width + dx] = gray[(bbox.y + dy) * w + (bbox.x + dx)];
+// Per-row and per-column black/white transition counts and ink coverage over a
+// region. Transition counts are what identify a 1D barcode: crossing bars
+// perpendicular to their direction yields dozens of transitions per line, while
+// scanning ALONG them yields about one. Text is far lower and roughly
+// symmetric, so the asymmetry between these two sums is essentially the
+// barcode's own signature and tells us which way the bars run.
+function orientationProfiles(gray, w, region){
+  const { x, y, width, height } = region;
+  const rowTrans = new Float64Array(height), colTrans = new Float64Array(width);
+  const rowInk = new Float64Array(height), colInk = new Float64Array(width);
+  for (let dy = 0; dy < height; dy++){
+    const rowStart = (y + dy) * w;
+    let prev = 0, t = 0, ink = 0;
+    for (let dx = 0; dx < width; dx++){
+      const cur = gray[rowStart + x + dx] < LABEL_DARK ? 1 : 0;
+      if (cur && !prev) t++;
+      if (cur) ink++;
+      prev = cur;
     }
+    rowTrans[dy] = t; rowInk[dy] = ink / width;
   }
-
-  const rowDensity = rowInkDensity(bboxGray, bbox.width, bbox.height, LABEL_DARK);
-  const colDensity = colInkDensity(bboxGray, bbox.width, bbox.height, LABEL_DARK);
-  const rowBands = rowDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
-  const colBands = colDensity.reduce((n, d) => n + (d > LABEL_RULE_DENSITY ? 1 : 0), 0);
-  if (rowBands >= colBands){
-    // Not sideways, but a passing barcode decode elsewhere doesn't rule out
-    // upside-down - Code128 decodes fine either way. An upright label is
-    // bottom-heavy because the tracking barcode block sits low, so compare
-    // ink density between the two halves of the trimmed content (never the
-    // raw canvas - whitespace padding would dilute both halves toward zero).
-    const rowHalf = Math.floor(bbox.height / 2);
-    let topSum = 0, bottomSum = 0;
-    for (let y = 0; y < bbox.height; y++){
-      if (y < rowHalf) topSum += rowDensity[y]; else bottomSum += rowDensity[y];
+  for (let dx = 0; dx < width; dx++){
+    let prev = 0, t = 0, ink = 0;
+    for (let dy = 0; dy < height; dy++){
+      const cur = gray[(y + dy) * w + x + dx] < LABEL_DARK ? 1 : 0;
+      if (cur && !prev) t++;
+      if (cur) ink++;
+      prev = cur;
     }
-    const topMean = topSum / rowHalf;
-    const bottomMean = bottomSum / (bbox.height - rowHalf);
-    console.debug('[detectRotationDeg] half-density', JSON.stringify({ topMean, bottomMean }));
-    if (topMean > bottomMean) return 180;
-    return 0;
+    colTrans[dx] = t; colInk[dx] = ink / height;
+  }
+  return { rowTrans, colTrans, rowInk, colInk };
+}
+
+// Centre (0..1) of the highest-transition window - the tracking barcode block.
+// A sliding window rather than a single peak line, so one stray dense row can't
+// win, and so the answer is the block's position rather than a single edge.
+function barcodeBandCentre(trans, span){
+  const win = Math.max(3, Math.round(span * 0.04));
+  let best = -1, bestAt = 0, running = 0;
+  for (let i = 0; i < span; i++){
+    running += trans[i];
+    if (i >= win) running -= trans[i - win];
+    if (i >= win - 1 && running > best){ best = running; bestAt = i - win + 1; }
+  }
+  return { centre: (bestAt + win / 2) / span, score: best / win };
+}
+function halfMean(arr, span){
+  const half = Math.floor(span / 2);
+  let a = 0, b = 0;
+  for (let i = 0; i < span; i++){ if (i < half) a += arr[i]; else b += arr[i]; }
+  return { first: a / half, second: b / (span - half) };
+}
+
+// Returns the CLOCKWISE rotation needed to bring a label upright, using two
+// independent questions answered by two independent mechanisms:
+//
+//   1. Is it sideways at all? Geometry - the region's aspect ratio.
+//   2. Which way round? Content - where the tracking barcode block sits,
+//      because it always belongs at the BOTTOM of an upright label.
+//
+// Each question additionally carries its own cross-check (bar direction for the
+// first, ink weight for the second) which is reported so a disagreement is
+// visible rather than silent. A barcode decoding successfully proves nothing
+// here: Code128 decodes upside down just as happily.
+const ASPECT_SIDEWAYS = 1.25, ASPECT_UPRIGHT = 0.80;
+function detectLabelOrientation(gray, w, h, region){
+  const p = orientationProfiles(gray, w, region);
+  const aspect = region.width / region.height;
+  let rowTransSum = 0, colTransSum = 0;
+  for (const v of p.rowTrans) rowTransSum += v;
+  for (const v of p.colTrans) colTransSum += v;
+
+  // Aspect decides only when DECISIVELY oblong. A cropped 4x6 should read 0.667
+  // upright or 1.5 sideways, but a real label's ink bbox drifts well off that
+  // (measured across real labels: 0.71, 1.31, 1.47, 1.53) because printed
+  // content does not fill the stock edge to edge. Inside the ambiguous middle
+  // band, bar direction decides instead - its margin has been at least 2x on
+  // every label measured, which makes it the safer signal exactly where aspect
+  // gets shaky.
+  let sideways, sidewaysBasis;
+  if (aspect > ASPECT_SIDEWAYS){ sideways = true; sidewaysBasis = 'aspect'; }
+  else if (aspect < ASPECT_UPRIGHT){ sideways = false; sidewaysBasis = 'aspect'; }
+  else { sideways = colTransSum > rowTransSum; sidewaysBasis = 'transitions'; }
+  const axisChecksAgree = sideways === (colTransSum > rowTransSum);
+
+  let deg, band, inkHalves, checksAgree;
+  if (sideways){
+    // Bottom-at-right needs 90 CW; bottom-at-left needs 270 CW.
+    band = barcodeBandCentre(p.colTrans, region.width);
+    inkHalves = halfMean(p.colInk, region.width);
+    const barcodeRight = band.centre > 0.5;
+    checksAgree = barcodeRight === (inkHalves.second > inkHalves.first);
+    deg = barcodeRight ? 90 : 270;
+  } else {
+    band = barcodeBandCentre(p.rowTrans, region.height);
+    inkHalves = halfMean(p.rowInk, region.height);
+    const barcodeBottom = band.centre > 0.5;
+    checksAgree = barcodeBottom === (inkHalves.second > inkHalves.first);
+    deg = barcodeBottom ? 0 : 180;
   }
 
-  const half = Math.floor(bbox.width / 2);
-  let leftSum = 0, rightSum = 0;
-  for (let x = 0; x < bbox.width; x++){
-    if (x < half) leftSum += colDensity[x]; else rightSum += colDensity[x];
-  }
-  // Barcode on the left means the label's bottom is on the left, so
-  // rotating 270 clockwise brings the top back to the top; barcode on the
-  // right needs only a 90 clockwise correction.
-  return leftSum > rightSum ? 270 : 90;
+  const debug = {
+    aspect: +aspect.toFixed(3), sideways, sidewaysBasis, axisChecksAgree,
+    rowTransSum, colTransSum,
+    bandCentre: +band.centre.toFixed(3), bandScore: +band.score.toFixed(1),
+    inkFirst: +inkHalves.first.toFixed(4), inkSecond: +inkHalves.second.toFixed(4),
+    checksAgree, deg,
+  };
+  if (!axisChecksAgree || !checksAgree) console.warn('[detectLabelOrientation] checks disagree', JSON.stringify(debug));
+  else console.debug('[detectLabelOrientation]', JSON.stringify(debug));
+  return { deg, debug };
 }
 
 // Bounding box of every non-white pixel - trims away the blank margin a
@@ -2835,52 +2875,185 @@ function contentBbox(gray, w, h, whiteCutoff, region){
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
 }
 
-// Row indices (relative to the trimmed content's own top) where the ink
-// spans the full width - the label's printed frame rules. Anchoring the
-// final composition to these instead of the raw bounding box matters
-// because stray marks below the frame (a loose QR code under the tracking
-// barcode) sit outside it and would otherwise skew a plain bbox measurement.
-function findRuleRows(gray, w, bbox){
-  const rows = [];
-  for (let y = bbox.y; y < bbox.y + bbox.height; y++){
-    let dark = 0;
+// Longest contiguous ink run along a line, tolerating gaps up to maxGap so a
+// DASHED border (a UPS/Amazon "cut here" box) reads as one long run rather than
+// dozens of separate dashes. Returns the interval, not just the length, because
+// the endpoints are what identify a border - see findBorderRect.
+function longestRunInterval(isInk, n, maxGap){
+  let best = 0, bestStart = -1, bestEnd = -1, runStart = -1, lastInk = -1;
+  const close = () => {
+    if (runStart >= 0 && lastInk - runStart + 1 > best){
+      best = lastInk - runStart + 1; bestStart = runStart; bestEnd = lastInk;
+    }
+  };
+  for (let i = 0; i < n; i++){
+    if (!isInk(i)) continue;
+    if (runStart < 0) runStart = i;
+    else if (i - lastInk - 1 > maxGap){ close(); runStart = i; }
+    lastInk = i;
+  }
+  close();
+  return { len: best, start: bestStart, end: bestEnd };
+}
+
+// Finds the label's printed rectangular border - solid (USPS) or dashed
+// (UPS/Amazon cut line). This is the ONLY trustworthy evidence of where a label
+// ends, so it is also what makes it safe to discard surrounding page content in
+// a pasted screenshot.
+//
+// Run LENGTH alone cannot identify a border edge: a long sentence of page text
+// ("Place this barcode and item description inside your return package...")
+// produces a run as long as the label is wide, and a length-only test mistook it
+// for the bottom border and cropped 58px of page text into the label.
+//
+// What separates a border edge from a long line of text is ALIGNMENT - the four
+// edges of a rectangle share endpoints. So the horizontal extent is established
+// from COLUMNS first, which is the trustworthy axis because page text lines are
+// only ~10px tall and so never produce a long column run. A row then counts as a
+// border edge only if its run starts AND ends at the same x as those columns,
+// within tolerance and without overrunning them (which also rejects a
+// full-page-width rule). The bounds are re-derived in the other direction as a
+// self-consistency check, and finally validated against the target print aspect.
+//
+// Returning null is safe and expected: the caller falls back to keeping
+// everything. That is what happens on a USPS label whose frame wraps only the
+// address block, leaving the tracking barcode outside it - the barcode band's
+// columns widen the column span so no row aligns, the frame is rejected, and the
+// barcode is preserved instead of being cropped away.
+const BORDER_CANDIDATE = 0.85;
+const BORDER_ALIGN_TOL = 0.03;   // fraction of the span each end may be off by
+const BORDER_MIN_COVER = 0.70;   // a border edge must span most of the rect
+const BORDER_ASPECT_TOL = 0.25;
+function findBorderRect(gray, w, h, preset){
+  const maxGapX = Math.max(4, Math.round(w * 0.012));
+  const maxGapY = Math.max(4, Math.round(h * 0.012));
+  const rows = new Array(h), cols = new Array(w);
+  for (let y = 0; y < h; y++){
     const rowStart = y * w;
-    for (let x = bbox.x; x < bbox.x + bbox.width; x++) if (gray[rowStart + x] < LABEL_DARK) dark++;
-    if (dark / bbox.width > LABEL_RULE_DENSITY) rows.push(y - bbox.y);
+    rows[y] = longestRunInterval(i => gray[rowStart + i] < LABEL_INK_CUTOFF, w, maxGapX);
   }
-  return rows;
+  for (let x = 0; x < w; x++){
+    cols[x] = longestRunInterval(i => gray[i * w + x] < LABEL_INK_CUTOFF, h, maxGapY);
+  }
+
+  let maxCol = 0;
+  for (const c of cols) if (c.len > maxCol) maxCol = c.len;
+  if (!maxCol) return null;
+  let left = -1, right = -1;
+  for (let x = 0; x < w; x++) if (cols[x].len >= maxCol * BORDER_CANDIDATE){ if (left < 0) left = x; right = x; }
+  if (left < 0 || right <= left) return null;
+
+  const spanX = right - left + 1;
+  const tolX = Math.max(3, Math.round(spanX * BORDER_ALIGN_TOL));
+  let top = -1, bottom = -1;
+  for (let y = 0; y < h; y++){
+    const r = rows[y];
+    if (r.len < spanX * BORDER_MIN_COVER) continue;
+    if (Math.abs(r.start - left) > tolX || Math.abs(r.end - right) > tolX) continue;
+    if (top < 0) top = y;
+    bottom = y;
+  }
+  if (top < 0 || bottom <= top) return null;
+
+  const spanY = bottom - top + 1;
+  const tolY = Math.max(3, Math.round(spanY * BORDER_ALIGN_TOL));
+  let left2 = -1, right2 = -1;
+  for (let x = 0; x < w; x++){
+    const c = cols[x];
+    if (c.len < spanY * BORDER_MIN_COVER) continue;
+    if (Math.abs(c.start - top) > tolY || Math.abs(c.end - bottom) > tolY) continue;
+    if (left2 < 0) left2 = x;
+    right2 = x;
+  }
+  if (left2 >= 0 && right2 > left2){ left = left2; right = right2; }
+
+  const rect = { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  const aspect = rect.width / rect.height;
+  const near = (a, target) => Math.abs(a - target) / target <= BORDER_ASPECT_TOL;
+  if (!near(aspect, preset.widthIn / preset.heightIn) && !near(aspect, preset.heightIn / preset.widthIn)){
+    console.debug('[findBorderRect] rejected on aspect', JSON.stringify({ rect, aspect: +aspect.toFixed(3) }));
+    return null;
+  }
+
+  // A guard rejecting a rect that excludes too much ink was written for the
+  // residual case of a frame wrapping most-but-not-all of a label, then removed:
+  // the screenshot-with-captions case measures 0.1475 outside-to-inside ink,
+  // leaving no usable threshold, because page captions sitting just outside a cut
+  // line are structurally indistinguishable from a label band sitting just
+  // outside a frame. It is left out rather than shipped unvalidated. Residual
+  // risk, accepted knowingly: a frame enclosing ~90% of a label could still be
+  // trusted and drop content below it. That is visible in the preview.
+  console.debug('[findBorderRect]', JSON.stringify({ rect, aspect: +aspect.toFixed(3), maxCol }));
+  return { rect, debug: { maxCol, aspect: +aspect.toFixed(3), maxGapX, maxGapY } };
 }
 
-// Once rotated upright, the tracking barcode sometimes lands as its own
-// narrower side column next to the main info box rather than a full-width
-// band below it - their edges don't line up, so no row is ever solidly
-// dark corner-to-corner across the WHOLE trimmed content, even on a
-// perfectly legitimate label. Splits the trimmed bbox into contiguous
-// column "blocks" wherever a near-blank vertical gap separates two
-// side-by-side regions, so rule-detection can be scoped to just the
-// widest block (the main box) instead of demanding alignment across all
-// of them. The full bbox - barcode column included - is still what gets
-// scaled and composed onto the final page; only the RULE SEARCH narrows.
-function splitContentBlocks(gray, w, bbox){
-  const GAP_DENSITY = 0.02; // a column counts as "blank" below this ink fraction
-  const colDensity = new Float64Array(bbox.width);
-  for (let dx = 0; dx < bbox.width; dx++){
-    let dark = 0;
-    const x = bbox.x + dx;
-    for (let y = bbox.y; y < bbox.y + bbox.height; y++) if (gray[y * w + x] < LABEL_DARK) dark++;
-    colDensity[dx] = dark / bbox.height;
-  }
-  const blocks = [];
-  let blockStart = null;
-  for (let dx = 0; dx <= bbox.width; dx++){
-    const blank = dx === bbox.width || colDensity[dx] <= GAP_DENSITY;
-    if (!blank && blockStart === null) blockStart = dx;
-    else if (blank && blockStart !== null){ blocks.push({ x: blockStart, width: dx - blockStart }); blockStart = null; }
-  }
-  return blocks;
+function rowCoverage(gray, w, y, x0, x1){
+  let dark = 0;
+  const rs = y * w;
+  for (let x = x0; x <= x1; x++) if (gray[rs + x] < LABEL_INK_CUTOFF) dark++;
+  return dark / (x1 - x0 + 1);
+}
+function colCoverage(gray, w, x, y0, y1){
+  let dark = 0;
+  for (let y = y0; y <= y1; y++) if (gray[y * w + x] < LABEL_INK_CUTOFF) dark++;
+  return dark / (y1 - y0 + 1);
 }
 
-// Row-axis analog of splitContentBlocks - isolates the actual label from
+// A DASHED border is a "cut here" guide, not part of the label, so it must not
+// survive into the printed output; a SOLID border is printed label design (the
+// USPS frame) and is kept. The two are told apart by ink coverage along the
+// edge: a dashed line inks roughly half its length (measured 0.63), a solid one
+// all of it (measured 1.00).
+//
+// The inset walks inward one line at a time and stops the moment coverage drops
+// below CUT_LINE_COVER, so it can only ever consume the line itself plus blank
+// space. Real content cannot be reached, because no content spans an entire
+// label edge at line density - the internal divider rules that butt into the
+// border only CROSS it (a few px of a 599px span, ~0.02 coverage), which reads
+// as blank and halts the walk. MAX_INSET is a further backstop.
+const CUT_LINE_SOLID_COVER = 0.85;
+const CUT_LINE_COVER = 0.15;
+const CUT_LINE_BLANK = 0.05;
+const CUT_LINE_MAX_INSET = 0.04;
+function insetPastCutLines(gray, w, h, rect){
+  const x0 = rect.x, y0 = rect.y;
+  const x1 = rect.x + rect.width - 1, y1 = rect.y + rect.height - 1;
+  const maxInsetX = Math.max(1, Math.round(rect.width * CUT_LINE_MAX_INSET));
+  const maxInsetY = Math.max(1, Math.round(rect.height * CUT_LINE_MAX_INSET));
+
+  function walk(measure, limit){
+    const edge = measure(0);
+    if (edge >= CUT_LINE_SOLID_COVER) return { inset: 0, dashed: false, edgeCoverage: +edge.toFixed(3) };
+    let i = 0;
+    while (i < limit && measure(i) >= CUT_LINE_COVER) i++;
+    // One extra line if it is essentially blank, to clear any antialiased halo.
+    if (i > 0 && i < limit && measure(i) < CUT_LINE_BLANK) i++;
+    return { inset: i, dashed: i > 0, edgeCoverage: +edge.toFixed(3) };
+  }
+
+  const top = walk(o => rowCoverage(gray, w, y0 + o, x0, x1), maxInsetY);
+  const bottom = walk(o => rowCoverage(gray, w, y1 - o, x0, x1), maxInsetY);
+  const left = walk(o => colCoverage(gray, w, x0 + o, y0, y1), maxInsetX);
+  const right = walk(o => colCoverage(gray, w, x1 - o, y0, y1), maxInsetX);
+
+  const inset = {
+    x: x0 + left.inset,
+    y: y0 + top.inset,
+    width: rect.width - left.inset - right.inset,
+    height: rect.height - top.inset - bottom.inset,
+  };
+  if (inset.width < rect.width * 0.5 || inset.height < rect.height * 0.5){
+    return { rect, debug: { applied: false, reason: 'inset too aggressive' } };
+  }
+  const debug = { applied: top.inset + bottom.inset + left.inset + right.inset > 0, top, bottom, left, right };
+  console.debug('[insetPastCutLines]', JSON.stringify(debug));
+  return { rect: inset, debug };
+}
+
+// Splits a bbox into contiguous row "bands" separated by near-blank gaps. Used
+// only by the Amazon-return QR finder below (findQrGroupBbox), which needs to
+// pick one band out of a screenshot; the shipping-label pipeline deliberately
+// does not band-split, see findLabelRegion. Isolates the actual label from
 // stray content ABOVE or BELOW it in the pasted image, e.g. a page caption
 // sitting below an Amazon return label's dashed cut line (the dashed
 // border is itself just ink like anything else, so a plain non-white
@@ -2922,226 +3095,101 @@ function splitContentBlocksRows(gray, w, bbox){
   return blocks;
 }
 
-// Finds the actual label's content bounds within a pasted image, isolating
-// it from stray content above/below (e.g. a page caption sitting below an
-// Amazon return label's dashed cut line) by keeping only the tallest
-// contiguous row block and re-tightening the horizontal bounds within just
-// that range. Shared by rotation detection and the normalize pipeline so
-// both agree on where the label actually is, not just one of them.
-// Detects a printed cut-line rectangle (solid OR dashed) enclosing the
-// ENTIRE rough content region - some labels (e.g. Amazon return labels)
-// print a single frame around everything including the barcode, and
-// anything outside it (a page caption, print instructions, whatever else
-// happens to be on the page) needs to be discarded outright rather than
-// reasoned about, since what that stray content looks like varies every
-// time. Scans inward from each edge of the rough bbox for the first row/
-// column with at least LINE_DENSITY ink coverage - a dashed line still has
-// roughly half its length inked, well above ordinary text, without
-// requiring a fully solid line.
+// Fallback for an image with no detectable printed border: trim whitespace and
+// keep everything else, full stop.
 //
-// A barcode's own bars can trigger this same density test (a single dark
-// bar is a solid line spanning its own full height too), so any edge
-// found this way is re-checked for whether it's an ISOLATED line: probing
-// a bit further inward should drop to near-white. A genuine border has
-// clear space just inside it before content starts; a barcode does not -
-// the very next columns are more bars.
-function detectFrameRect(gray, w, h, roughBbox){
-  const LINE_DENSITY = 0.4;
-  const ISOLATED_DENSITY = 0.1;
-  const { x, y, width, height } = roughBbox;
-  const maxScan = Math.floor(Math.min(width, height) * 0.25);
-  // Probe over a BAND, not a single point - a barcode's own bars are
-  // periodic, so a single probe point can land in a gap between bars and
-  // look "isolated" purely by chance. Averaging density across several bar
-  // periods reliably reads as "still dense" instead.
-  const probeStart = Math.max(6, Math.round(Math.min(width, height) * 0.015));
-  const probeEnd = probeStart * 3;
-
-  function rowBandDensity(y0, y1, x0, x1){
-    let dark = 0, total = 0;
-    for (let ry = y0; ry <= y1; ry++){
-      const rowStart = ry * w;
-      for (let cx = x0; cx <= x1; cx++){ total++; if (gray[rowStart + cx] < LABEL_DARK) dark++; }
-    }
-    return dark / total;
-  }
-  function colBandDensity(x0, x1, y0, y1){
-    let dark = 0, total = 0;
-    for (let cx = x0; cx <= x1; cx++){
-      for (let ry = y0; ry <= y1; ry++){ total++; if (gray[ry * w + cx] < LABEL_DARK) dark++; }
-    }
-    return dark / total;
-  }
-
-  let top = null, bottom = null, left = null, right = null;
-  for (let i = 0; i < Math.min(maxScan, height); i++){
-    const ry = y + i;
-    if (rowBandDensity(ry, ry, x, x + width - 1) < LINE_DENSITY) continue;
-    const p0 = Math.min(ry + probeStart, y + height - 1), p1 = Math.min(ry + probeEnd, y + height - 1);
-    if (rowBandDensity(p0, p1, x, x + width - 1) < ISOLATED_DENSITY){ top = i; break; }
-  }
-  for (let i = 0; i < Math.min(maxScan, height); i++){
-    const ry = y + height - 1 - i;
-    if (rowBandDensity(ry, ry, x, x + width - 1) < LINE_DENSITY) continue;
-    const p1 = Math.max(ry - probeStart, y), p0 = Math.max(ry - probeEnd, y);
-    if (rowBandDensity(p0, p1, x, x + width - 1) < ISOLATED_DENSITY){ bottom = height - 1 - i; break; }
-  }
-  for (let i = 0; i < Math.min(maxScan, width); i++){
-    const cx = x + i;
-    if (colBandDensity(cx, cx, y, y + height - 1) < LINE_DENSITY) continue;
-    const p0 = Math.min(cx + probeStart, x + width - 1), p1 = Math.min(cx + probeEnd, x + width - 1);
-    if (colBandDensity(p0, p1, y, y + height - 1) < ISOLATED_DENSITY){ left = i; break; }
-  }
-  for (let i = 0; i < Math.min(maxScan, width); i++){
-    const cx = x + width - 1 - i;
-    if (colBandDensity(cx, cx, y, y + height - 1) < LINE_DENSITY) continue;
-    const p1 = Math.max(cx - probeStart, x), p0 = Math.max(cx - probeEnd, x);
-    if (colBandDensity(p0, p1, y, y + height - 1) < ISOLATED_DENSITY){ right = width - 1 - i; break; }
-  }
-
-  if (top != null && bottom != null && left != null && right != null && bottom > top && right > left){
-    // Only trust this as a full enclosing frame if it covers nearly the
-    // whole rough bbox - a border found well inside a smaller region isn't
-    // "everything is inside this frame", it's some other, unrelated line.
-    const COVERAGE = 0.85;
-    const frame = { x: x + left, y: y + top, width: right - left + 1, height: bottom - top + 1 };
-    console.debug('[detectFrameRect] strict pass ratio', JSON.stringify({ ratio: frame.width / frame.height }));
-    if (frame.width >= width * COVERAGE && frame.height >= height * COVERAGE) return frame;
-  }
-
-  // Strict pass found nothing - LABEL_DARK=128 is too strict to register a
-  // faint or dashed cut line. Retry with a loose cutoff and a plain 30%
-  // row/column density test (no isolation probing), matching the reference
-  // Python module's find_frame().
-  const LOOSE_DARK = 200;
-  const FRAME_DENSITY = 0.30;
-  function rowDensityLoose(ry){
-    let dark = 0;
-    for (let cx = x; cx < x + width; cx++) if (gray[ry * w + cx] < LOOSE_DARK) dark++;
-    return dark / width;
-  }
-  function colDensityLoose(cx){
-    let dark = 0;
-    for (let ry = y; ry < y + height; ry++) if (gray[ry * w + cx] < LOOSE_DARK) dark++;
-    return dark / height;
-  }
-
-  let looseTop = null, looseBottom = null, looseLeft = null, looseRight = null;
-  for (let ry = y; ry < y + height; ry++){ if (rowDensityLoose(ry) > FRAME_DENSITY){ looseTop = ry; break; } }
-  for (let ry = y + height - 1; ry >= y; ry--){ if (rowDensityLoose(ry) > FRAME_DENSITY){ looseBottom = ry; break; } }
-  for (let cx = x; cx < x + width; cx++){ if (colDensityLoose(cx) > FRAME_DENSITY){ looseLeft = cx; break; } }
-  for (let cx = x + width - 1; cx >= x; cx--){ if (colDensityLoose(cx) > FRAME_DENSITY){ looseRight = cx; break; } }
-
-  if (looseTop == null || looseBottom == null || looseLeft == null || looseRight == null || looseBottom <= looseTop || looseRight <= looseLeft) return null;
-
-  const looseWidth = looseRight - looseLeft + 1, looseHeight = looseBottom - looseTop + 1;
-  const looseRatio = looseWidth / looseHeight;
-  console.debug('[detectFrameRect] loose pass ratio', JSON.stringify({ ratio: looseRatio }));
-  // Reject anything that isn't plausibly an upright 4x6-ish label - a 4x6
-  // page is 0.667; measured real frames: UPS dashed cut box 0.649, USPS
-  // solid box 0.749. Without this gate a busy page can hand back a
-  // garbage rectangle with nothing to flag it - let isolateLabelBbox's
-  // dominant-block fallback handle it instead.
-  if (looseRatio < 0.50 || looseRatio > 0.85) return null;
-  return { x: looseLeft, y: looseTop, width: looseWidth, height: looseHeight };
+// This deliberately does NOT try to separate the label from stray page content.
+// Three progressively more careful attempts were made at exactly that - largest
+// connected ink blob, largest by ink mass, then "discard only obvious specks" -
+// and every one amputated real label data on a borderless label whose sections
+// are separated by white gaps: first the entire top third including the SHIP TO
+// address, then the address block alone, then the "1 of 1" package count. The
+// failure is silent and the output still looks like a plausible label, which is
+// the worst property a bug here can have. Ink mass cannot rescue it either: an
+// address block legitimately holds an order of magnitude less ink than a barcode
+// block, so any ratio loose enough to keep the address is too loose to reject
+// anything.
+//
+// Isolating a label from page furniture requires knowing where the label ENDS,
+// and the only trustworthy evidence of that is a printed border or cut line -
+// which findBorderRect handles. Absent that evidence, including a caption is a
+// cosmetic flaw the user sees in the preview and fixes; dropping the destination
+// address is an undeliverable package.
+function findLabelRegion(gray, w, h){
+  const tight = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
+  if (!tight) return null;
+  return { region: tight, debug: { via: 'content-bbox' } };
 }
 
-function isolateLabelBbox(gray, w, h){
-  const roughBbox = contentBbox(gray, w, h, LABEL_WHITE_CUTOFF);
-  if (!roughBbox) return null;
+// The full pipeline: locate the label, drop a cut line if there is one, rotate
+// upright, scale to fit the preset, snap back to pure black/white so barcode
+// edges survive resampling, and centre on a white page.
+//
+// Crop happens BEFORE rotate (cheaper, and rotation by exact multiples of 90
+// preserves a tight crop), and placement is plain centring. An earlier version
+// pinned the label's top rule to the margin instead, which is what once computed
+// y = -504 and silently discarded the top 42.7mm of every UPS label - SHIP TO
+// address included - while the preview still looked clean. Because the crop is
+// already tight to the label, centring is both correct and incapable of pushing
+// content off-canvas.
+async function normalizeLabelToCanvas(sourceImg, preset, forcedRotation, marginMm){
+  const w = sourceImg.naturalWidth, h = sourceImg.naturalHeight;
+  const { canvas: srcCanvas, gray } = toGrayscale(sourceImg, w, h);
 
-  const frame = detectFrameRect(gray, w, h, roughBbox);
-  if (frame) return frame;
+  const border = findBorderRect(gray, w, h, preset);
+  let found;
+  if (border){
+    const trimmed = insetPastCutLines(gray, w, h, border.rect);
+    found = { region: trimmed.rect, debug: { via: 'border', ...border.debug, cutLine: trimmed.debug } };
+  } else {
+    found = findLabelRegion(gray, w, h);
+  }
+  if (!found) throw new Error('image appears blank');
+  const region = found.region;
 
-  // No single frame wraps everything (e.g. a USPS label's printed border
-  // wraps only the address block, with the barcode sitting outside it as
-  // its own column) - fall back to isolating the dominant content section
-  // from smaller disconnected fragments above/below it. A real label
-  // commonly has several well-spaced internal sections (address blocks, a
-  // banner, the barcode) with genuine blank rows between them - that's
-  // normal and must NOT get pruned down to just one section. Only exclude
-  // smaller fragments when a single block clearly dominates the content;
-  // otherwise trust the full rough bbox rather than risk cutting real
-  // label content away.
-  const rowBlocks = splitContentBlocksRows(gray, w, roughBbox);
-  if (rowBlocks.length <= 1) return roughBbox;
+  const orient = forcedRotation != null
+    ? { deg: forcedRotation, debug: { forced: true } }
+    : detectLabelOrientation(gray, w, h, region);
 
-  const largest = rowBlocks.reduce((a, b) => (b.height > a.height ? b : a));
-  const DOMINANCE_FRACTION = 0.5;
-  if (largest.height < roughBbox.height * DOMINANCE_FRACTION) return roughBbox;
-
-  const rowRange = { x: roughBbox.x, y: roughBbox.y + largest.y, width: roughBbox.width, height: largest.height };
-  return contentBbox(gray, w, h, LABEL_WHITE_CUTOFF, rowRange) || rowRange;
-}
-
-// The full pipeline: rotate upright, trim to printed content, scale to the
-// preset's width (driven by the printed frame, not the raw bbox), snap back
-// to pure black/white so barcode edges survive resampling, then paste onto
-// a true white canvas at the preset's physical size with the frame's top
-// rule pinned to the margin.
-async function normalizeLabelToCanvas(sourceImg, rotationDeg, preset){
-  const rotatedImg = rotationDeg === 0
-    ? sourceImg
-    : await loadImage(rotateImageToCanvas(sourceImg, rotationDeg).toDataURL('image/png'));
-
-  const w = rotatedImg.naturalWidth, h = rotatedImg.naturalHeight;
-  const { canvas: rotatedCanvas, gray } = toGrayscale(rotatedImg, w, h);
-
-  const bbox = isolateLabelBbox(gray, w, h);
-  if (!bbox) throw new Error('image appears blank');
-
-  const blocks = splitContentBlocks(gray, w, bbox);
-  const mainBlock = blocks.length ? blocks.reduce((a, b) => (b.width > a.width ? b : a)) : { x: 0, width: bbox.width };
-  const ruleRows = findRuleRows(gray, w, { x: bbox.x + mainBlock.x, y: bbox.y, width: mainBlock.width, height: bbox.height });
-  if (!ruleRows.length) throw new Error('no full-width rules found - is this a label?');
-  const topRule = ruleRows[0];
-
-  const trimmedCanvas = document.createElement('canvas');
-  trimmedCanvas.width = bbox.width; trimmedCanvas.height = bbox.height;
-  trimmedCanvas.getContext('2d').drawImage(rotatedCanvas, bbox.x, bbox.y, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
+  const crop = makeCanvas(region.width, region.height);
+  crop.ctx.drawImage(srcCanvas, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height);
+  const uprightCanvas = orient.deg === 0 ? crop.canvas : rotateImageToCanvas(crop.canvas, orient.deg);
 
   const W = Math.round(preset.widthIn * LABEL_DPI), H = Math.round(preset.heightIn * LABEL_DPI);
-  const marginPx = mmToPx(LABEL_MARGIN_MM, LABEL_DPI);
-  const scale = Math.min((W - 2 * marginPx) / bbox.width, (H - 2 * marginPx) / bbox.height);
-  const scaledW = Math.max(1, Math.round(bbox.width * scale));
-  const scaledH = Math.max(1, Math.round(bbox.height * scale));
-  const scaledCanvas = document.createElement('canvas');
-  scaledCanvas.width = scaledW; scaledCanvas.height = scaledH;
-  const scaledCtx = scaledCanvas.getContext('2d');
-  scaledCtx.imageSmoothingEnabled = true;
-  scaledCtx.imageSmoothingQuality = 'high';
-  scaledCtx.drawImage(trimmedCanvas, 0, 0, scaledW, scaledH);
+  const marginPx = mmToPx(marginMm == null ? LABEL_MARGIN_MM : marginMm, LABEL_DPI);
+  // Math.min, never width alone - fitting on one axis only would crop content
+  // taller than the page aspect without any warning.
+  const scale = Math.min((W - 2 * marginPx) / uprightCanvas.width, (H - 2 * marginPx) / uprightCanvas.height);
+  const scaledW = Math.max(1, Math.round(uprightCanvas.width * scale));
+  const scaledH = Math.max(1, Math.round(uprightCanvas.height * scale));
+
+  const scaled = makeCanvas(scaledW, scaledH);
+  scaled.ctx.imageSmoothingEnabled = true;
+  scaled.ctx.imageSmoothingQuality = 'high';
+  scaled.ctx.drawImage(uprightCanvas, 0, 0, scaledW, scaledH);
 
   // Re-threshold to pure black/white - the single most important step for
-  // barcode scannability, since resampling leaves soft gray edges on the
-  // bars that a thermal printer would otherwise dither into noise.
-  const scaledData = scaledCtx.getImageData(0, 0, scaledW, scaledH);
-  const d = scaledData.data;
+  // barcode scannability, since resampling leaves soft grey edges on the bars
+  // that a thermal printer would otherwise dither into noise.
+  const sd = scaled.ctx.getImageData(0, 0, scaledW, scaledH);
+  const d = sd.data;
   for (let i = 0; i < d.length; i += 4){
     const lum = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
     const v = lum < LABEL_REBINARIZE ? 0 : 255;
     d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
   }
-  scaledCtx.putImageData(scaledData, 0, 0);
+  scaled.ctx.putImageData(sd, 0, 0);
 
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = W; finalCanvas.height = H;
-  const finalCtx = finalCanvas.getContext('2d');
-  finalCtx.fillStyle = '#fff';
-  finalCtx.fillRect(0, 0, W, H);
-  const x = marginPx + Math.round((W - 2 * marginPx - scaledW) / 2);
-  let y = marginPx - Math.round(topRule * scale);
-  if (y < marginPx){
-    console.debug('[normalizeLabelToCanvas] top-rule anchor placed content off-canvas, falling back to vertical centering', JSON.stringify({ topRule, scale, y }));
-    y = Math.round((H - scaledH) / 2);
-  }
-  console.log('[normalizeLabelToCanvas debug]', JSON.stringify({
-    topRule, scale, y,
-    frameDetected: !!detectFrameRect(gray, w, h, contentBbox(gray, w, h, LABEL_WHITE_CUTOFF)),
-  }));
-  finalCtx.drawImage(scaledCanvas, x, y);
+  const final = makeCanvas(W, H);
+  const x = Math.round((W - scaledW) / 2), y = Math.round((H - scaledH) / 2);
+  final.ctx.drawImage(scaled.canvas, x, y);
 
-  return { canvas: finalCanvas, scale, upscaled: scale > 1 };
+  const debug = {
+    region, regionDebug: found.debug, orient: orient.debug,
+    scale: +scale.toFixed(3), placedAt: { x, y }, scaledW, scaledH, pageW: W, pageH: H,
+  };
+  console.log('[normalizeLabelToCanvas]', JSON.stringify(debug));
+  return { canvas: final.canvas, scale, upscaled: scale > 1, rotation: orient.deg, debug };
 }
 
 function drawNormalizedPreview(){
@@ -3158,8 +3206,8 @@ function drawNormalizedPreview(){
 // and redraws the preview from the result.
 async function runLabelPipeline(){
   const preset = getSelectedPreset();
-  imageRotation = labelRotationOverride !== null ? labelRotationOverride : detectRotationDeg(originalImg);
-  normalizedResult = await normalizeLabelToCanvas(originalImg, imageRotation, preset);
+  normalizedResult = await normalizeLabelToCanvas(originalImg, preset, labelRotationOverride);
+  imageRotation = normalizedResult.rotation;
   drawNormalizedPreview();
 }
 
