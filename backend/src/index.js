@@ -43,7 +43,13 @@ const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 app.use("/api/theme", createThemeRouter());
-app.use("/api/devices", createDevicesRouter({ getStates: () => getHomeAssistantStates() }));
+app.use(
+  "/api/devices",
+  createDevicesRouter({
+    getStates: () => getHomeAssistantStates(),
+    getRegistries: () => getHaRegistries(),
+  })
+);
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -643,14 +649,26 @@ let entityPlatformCache = null;
 let entityPlatformCacheAt = 0;
 const ENTITY_PLATFORM_TTL_MS = 10 * 60 * 1000;
 
-function fetchEntityRegistryPlatforms() {
+// Pulls the entity, device and area registries in ONE WebSocket session.
+// The device registry is what makes grouping possible: a Sonos speaker or an
+// Alexa unit shows up as a dozen separate entities (media_player plus a pile of
+// per-speaker config switches and now-playing sensors) that all share a
+// device_id, so device_id is the authoritative grouping key. Deriving groups by
+// pattern-matching entity ids instead would be guesswork that breaks on any
+// naming the user has changed.
+function fetchHaRegistries() {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(HA_WS_URL);
-    const msgId = 1;
+    const WANTED = [
+      { id: 1, type: "config/entity_registry/list", key: "entities" },
+      { id: 2, type: "config/device_registry/list", key: "devices" },
+      { id: 3, type: "config/area_registry/list", key: "areas" },
+    ];
+    const got = {};
     const timeout = setTimeout(() => {
       ws.terminate();
-      reject(new Error("entity registry fetch timed out"));
-    }, 8000);
+      reject(new Error("registry fetch timed out"));
+    }, 10000);
     const finish = (fn) => { clearTimeout(timeout); try { ws.close(); } catch {} fn(); };
     ws.on("message", (raw) => {
       let msg;
@@ -658,27 +676,57 @@ function fetchEntityRegistryPlatforms() {
       if (msg.type === "auth_required") {
         ws.send(JSON.stringify({ type: "auth", access_token: HA_TOKEN }));
       } else if (msg.type === "auth_ok") {
-        ws.send(JSON.stringify({ id: msgId, type: "config/entity_registry/list" }));
+        for (const w of WANTED) ws.send(JSON.stringify({ id: w.id, type: w.type }));
       } else if (msg.type === "auth_invalid") {
         finish(() => reject(new Error("Home Assistant WebSocket auth failed")));
-      } else if (msg.id === msgId && msg.type === "result") {
-        finish(() => {
-          if (!msg.success) { reject(new Error("entity_registry/list failed")); return; }
-          const map = {};
-          for (const entry of msg.result) if (entry.platform) map[entry.entity_id] = entry.platform;
-          resolve(map);
-        });
+      } else if (msg.type === "result") {
+        const w = WANTED.find((x) => x.id === msg.id);
+        if (!w) return;
+        // A single failed list is tolerated: entity_registry alone still yields
+        // platforms, and grouping just degrades to one device per entity.
+        got[w.key] = msg.success ? msg.result : [];
+        if (WANTED.every((x) => got[x.key])) {
+          finish(() => {
+            const platforms = {};
+            const entities = {};
+            for (const e of got.entities) {
+              if (e.platform) platforms[e.entity_id] = e.platform;
+              entities[e.entity_id] = {
+                platform: e.platform || null,
+                deviceId: e.device_id || null,
+                areaId: e.area_id || null,
+                name: e.name || null,
+              };
+            }
+            const areas = {};
+            for (const a of got.areas) areas[a.area_id] = a.name;
+            const devices = {};
+            for (const d of got.devices) {
+              devices[d.id] = {
+                name: d.name_by_user || d.name || null,
+                manufacturer: d.manufacturer || null,
+                model: d.model || null,
+                areaId: d.area_id || null,
+              };
+            }
+            resolve({ platforms, entities, devices, areas });
+          });
+        }
       }
     });
     ws.on("error", (e) => { clearTimeout(timeout); reject(e); });
   });
 }
 
-async function getEntityPlatformMap() {
+async function getHaRegistries() {
   if (entityPlatformCache && Date.now() - entityPlatformCacheAt < ENTITY_PLATFORM_TTL_MS) return entityPlatformCache;
-  entityPlatformCache = await fetchEntityRegistryPlatforms();
+  entityPlatformCache = await fetchHaRegistries();
   entityPlatformCacheAt = Date.now();
   return entityPlatformCache;
+}
+
+async function getEntityPlatformMap() {
+  return (await getHaRegistries()).platforms;
 }
 
 async function getHomeAssistantStates() {

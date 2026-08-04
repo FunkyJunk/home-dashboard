@@ -147,7 +147,84 @@ export function buildUserDeviceTiles(states) {
     .filter(Boolean);
 }
 
-export function createDevicesRouter({ getStates }) {
+// When one physical device is added to the home page, this is the order that
+// decides which of its entities becomes the tile. A Sonos speaker's useful
+// entity is its media_player, not one of its half-dozen config switches; an
+// Alexa unit's is likewise the media_player, not a now-playing text sensor.
+// Read-only domains sort last so a device with anything controllable never
+// picks a status entity as its primary.
+const PRIMARY_DOMAIN_ORDER = [
+  "media_player",
+  "light",
+  "cover",
+  "fan",
+  "switch",
+  "input_boolean",
+  "climate",
+  "lock",
+  "binary_sensor",
+  "sensor",
+];
+
+function primaryEntityOf(entities) {
+  for (const domain of PRIMARY_DOMAIN_ORDER) {
+    const match = entities.find((e) => e.domain === domain);
+    if (match) return match.entityId;
+  }
+  return entities.length ? entities[0].entityId : null;
+}
+
+// Collapses a flat entity list into one row per physical device, using the HA
+// device registry's device_id. Entities with no device_id (helpers, template
+// sensors, anything created in YAML) have no device to belong to, so each
+// becomes its own single-entity group rather than being dropped or lumped into
+// a meaningless "other" bucket.
+export function groupDevices(flatDevices, registries) {
+  const reg = registries || { entities: {}, devices: {}, areas: {} };
+  const groups = new Map();
+
+  for (const d of flatDevices) {
+    const entry = reg.entities?.[d.entityId] || {};
+    const deviceId = entry.deviceId || null;
+    const key = deviceId || `entity:${d.entityId}`;
+    if (!groups.has(key)) {
+      const devInfo = deviceId ? reg.devices?.[deviceId] : null;
+      const areaId = devInfo?.areaId || entry.areaId || null;
+      groups.set(key, {
+        key,
+        deviceId,
+        // A device registry name is the physical thing's name ("Back Yard");
+        // without one, fall back to the entity's own friendly name.
+        name: devInfo?.name || d.name,
+        manufacturer: devInfo?.manufacturer || null,
+        model: devInfo?.model || null,
+        area: areaId ? reg.areas?.[areaId] || null : null,
+        platform: d.platform,
+        entities: [],
+      });
+    }
+    groups.get(key).entities.push(d);
+  }
+
+  return [...groups.values()]
+    .map((g) => {
+      const controllable = g.entities.filter((e) => e.controllable);
+      return {
+        ...g,
+        entities: g.entities.sort(
+          (a, b) => PRIMARY_DOMAIN_ORDER.indexOf(a.domain) - PRIMARY_DOMAIN_ORDER.indexOf(b.domain) ||
+            a.name.localeCompare(b.name)
+        ),
+        entityCount: g.entities.length,
+        controllableCount: controllable.length,
+        onDashboardCount: g.entities.filter((e) => e.onDashboard).length,
+        primaryEntityId: primaryEntityOf(g.entities),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function createDevicesRouter({ getStates, getRegistries }) {
   const router = express.Router();
 
   // Everything on the network this dashboard could show, as Home Assistant
@@ -176,7 +253,24 @@ export function createDevicesRouter({ getStates }) {
           };
         })
         .sort((a, b) => a.name.localeCompare(b.name));
-      res.json({ devices, platforms: [...new Set(devices.map((d) => d.platform).filter(Boolean))].sort() });
+
+      // Grouping is best-effort: if the registry call fails the flat list is
+      // still correct and useful, it just shows one row per entity.
+      let groups = [];
+      let groupingError = null;
+      try {
+        groups = groupDevices(devices, getRegistries ? await getRegistries() : null);
+      } catch (e) {
+        groupingError = e.message || "device registry unavailable";
+        groups = groupDevices(devices, null);
+      }
+
+      res.json({
+        devices,
+        groups,
+        groupingError,
+        platforms: [...new Set(devices.map((d) => d.platform).filter(Boolean))].sort(),
+      });
     } catch (e) {
       res.status(502).json({ error: e.message || "failed to list devices" });
     }
@@ -186,25 +280,46 @@ export function createDevicesRouter({ getStates }) {
     res.json({ devices: listDashboardDevices() });
   });
 
+  // Accepts a single entityId or a list, so adding a whole grouped device is one
+  // request rather than one per entity. Partial success is reported rather than
+  // failing the batch: adding 5 of a device's 6 entities and being told which
+  // one was rejected is more useful than silently rolling all of them back.
   router.post("/dashboard", async (req, res) => {
-    const entityId = String(req.body?.entityId || "").trim();
+    const raw = Array.isArray(req.body?.entityIds)
+      ? req.body.entityIds
+      : [req.body?.entityId];
+    const ids = [...new Set(raw.map((v) => String(v || "").trim()).filter(Boolean))];
     const name = req.body?.name ? String(req.body.name).trim().slice(0, 80) : null;
-    if (!entityId) return res.status(400).json({ error: "entityId is required" });
-    if (!tileTypeFor(entityId)) {
-      return res.status(400).json({ error: `unsupported device type: ${domainOf(entityId)}` });
-    }
-    // Confirm the entity actually exists before storing it, so a typo becomes an
-    // error here rather than a tile that silently never renders.
+    if (!ids.length) return res.status(400).json({ error: "entityId or entityIds is required" });
+
+    let states;
     try {
-      const states = await getStates();
-      if (!states.some((s) => s.entity_id === entityId)) {
-        return res.status(404).json({ error: "no such entity in Home Assistant" });
-      }
+      states = await getStates();
     } catch (e) {
       return res.status(502).json({ error: e.message || "could not reach Home Assistant" });
     }
-    insertOne.run(entityId, name, new Date().toISOString());
-    res.json({ ok: true });
+
+    const added = [];
+    const rejected = [];
+    for (const entityId of ids) {
+      if (!tileTypeFor(entityId)) {
+        rejected.push({ entityId, reason: `unsupported device type: ${domainOf(entityId)}` });
+        continue;
+      }
+      // Confirm the entity exists before storing it, so a stale id becomes an
+      // error here rather than a tile that silently never renders.
+      if (!states.some((s) => s.entity_id === entityId)) {
+        rejected.push({ entityId, reason: "no such entity in Home Assistant" });
+        continue;
+      }
+      insertOne.run(entityId, ids.length === 1 ? name : null, new Date().toISOString());
+      added.push(entityId);
+    }
+
+    if (!added.length) {
+      return res.status(400).json({ error: rejected[0]?.reason || "nothing added", rejected });
+    }
+    res.json({ ok: true, added, rejected });
   });
 
   router.delete("/dashboard/:entityId", (req, res) => {

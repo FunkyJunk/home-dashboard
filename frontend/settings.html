@@ -100,6 +100,22 @@
   .data-grid th[data-sort]:hover{color:var(--c-text);}
   .data-grid td{padding:.5rem .6rem; border-bottom:1px solid var(--c-border); vertical-align:middle; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .data-grid tbody tr:nth-child(even){background:var(--c-row-alt);}
+  /* Grouped device list: the striping above reads as noise once rows nest, so
+     grouping is shown structurally instead - a rule above each device row, and
+     child entity rows on the inset background. */
+  .data-grid tbody tr.device-group-row td,
+  .data-grid tbody tr.device-entity-row td{background:none;}
+  .data-grid tbody tr.device-group-row{background:var(--c-panel);}
+  .data-grid tbody tr.device-group-row td{border-top:1px solid var(--c-border);}
+  .data-grid tbody tr.device-entity-row{background:var(--c-row-alt);}
+  .data-grid tbody tr.device-entity-row td{border-bottom:none; font-size:.8rem;}
+  .data-grid tbody tr.device-entity-row:last-child td{border-bottom:1px solid var(--c-border);}
+  .group-toggle{
+    background:none; border:none; color:var(--c-text-dim); cursor:pointer;
+    font-size:.8rem; padding:0 .4rem 0 0; width:1.2rem;
+  }
+  .group-toggle:hover{color:var(--c-accent);}
+  .device-entity-row code{font-size:.75rem; margin-left:.4rem;}
 
   /* --- Database: Explorer-style two-pane layout - tables on the left
      like a folder tree, the selected table's rows on the right. --- */
@@ -254,11 +270,14 @@
       <div class="settings-block">
         <div class="settings-block-title">Available on your network</div>
         <div class="settings-block-hint">
-          Everything Home Assistant can see, which includes devices bridged in from Homey,
-          Alexa and any other integration &mdash; the Integration column names where each one
-          came from. Locks, thermostats and sensors are shown but stay read-only: this
-          dashboard has no login of its own, so it will display a lock's state and never
-          offer to open it. Thermostats are already handled by the Nest tiles.
+          Grouped by physical device, so a Sonos speaker or an Alexa unit is one row rather
+          than the dozen separate entities Home Assistant splits it into. <strong>Add to home
+          page</strong> adds the device's main control; expand a row to pick individual
+          entities instead. Devices bridged in from Homey, Alexa and any other integration all
+          appear here &mdash; the Integration column names where each came from.
+          Locks, thermostats and sensors are shown but stay read-only: this dashboard has no
+          login of its own, so it will display a lock's state and never offer to open it.
+          Thermostats are already handled by the Nest tiles.
         </div>
         <div class="settings-row" style="margin-bottom:.75rem;">
           <input type="text" class="plain-input" id="devices-search" placeholder="Search name or entity id&hellip;" style="flex:1; min-width:180px;">
@@ -269,16 +288,20 @@
           </label>
           <button type="button" class="plain-btn" id="devices-refresh">Refresh</button>
         </div>
-        <div class="status-text" id="devices-status" style="margin-bottom:.5rem;"></div>
+        <div class="settings-row" style="margin-bottom:.5rem;">
+          <span class="status-text" id="devices-status" style="flex:1;"></span>
+          <button type="button" class="plain-btn plain-btn-sm" id="devices-expand-all">Expand all</button>
+          <button type="button" class="plain-btn plain-btn-sm" id="devices-collapse-all">Collapse all</button>
+        </div>
         <table class="data-grid" id="devices-available-grid">
           <thead>
             <tr>
-              <th data-sort="name" data-label="Name">Name</th>
-              <th data-sort="entityId" data-label="Entity">Entity</th>
+              <th data-sort="name" data-label="Device">Device</th>
               <th data-sort="platform" data-label="Integration">Integration</th>
-              <th data-sort="domain" data-label="Type">Type</th>
-              <th data-sort="state" data-label="State">State</th>
-              <th data-sort="onDashboard" data-label="On dashboard">On dashboard</th>
+              <th data-sort="area" data-label="Area">Area</th>
+              <th data-sort="entityCount" data-label="Entities">Entities</th>
+              <th data-sort="onDashboardCount" data-label="On home page">On home page</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="devices-available-body"><tr><td colspan="6" class="status-text">Loading&hellip;</td></tr></tbody>
@@ -1056,7 +1079,9 @@ themeExtractPasteZone.addEventListener('drop', async (e) => {
 // entity registry is what identifies where a device actually came from.
 // ---------------------------------------------------------------------
 let discoveredDevices = [];
+let deviceGroups = [];
 let chosenDevices = [];
+const expandedGroups = new Set();
 const deviceSort = { available: { col: 'name', dir: 1 }, chosen: { col: 'name', dir: 1 } };
 
 const DOMAIN_LABELS = {
@@ -1092,10 +1117,14 @@ async function loadDevices(){
         missing: !found,
       };
     });
+    deviceGroups = disc.groups || [];
     populateDeviceFilters(disc.platforms || []);
-    status.textContent = `${discoveredDevices.length} devices visible · ${chosenDevices.length} on the dashboard`;
+    const note = disc.groupingError ? ` · grouping unavailable (${disc.groupingError})` : '';
+    status.textContent =
+      `${deviceGroups.length} devices · ${discoveredDevices.length} entities · ${chosenDevices.length} on the home page${note}`;
   } catch (e){
     discoveredDevices = [];
+    deviceGroups = [];
     status.textContent = `Could not load devices: ${e.message}`;
   }
   renderDeviceGrids();
@@ -1116,18 +1145,32 @@ function populateDeviceFilters(platforms){
   if (domains.includes(prevD)) df.value = prevD;
 }
 
-function filteredDevices(){
+// Filters apply to the GROUP: a device matches if any of its entities does, so
+// searching "alexa" finds the speaker even when the match is on a child entity's
+// id rather than the device's own name. The matching entities are carried through
+// as `shown` so an expanded row lists only what matched.
+function filteredGroups(){
   const q = document.getElementById('devices-search').value.trim().toLowerCase();
   const platform = document.getElementById('devices-platform-filter').value;
   const domain = document.getElementById('devices-domain-filter').value;
   const controllableOnly = document.getElementById('devices-controllable-only').checked;
-  return discoveredDevices.filter(d => {
-    if (platform && d.platform !== platform) return false;
-    if (domain && d.domain !== domain) return false;
-    if (controllableOnly && !d.controllable) return false;
-    if (q && !(d.name.toLowerCase().includes(q) || d.entityId.toLowerCase().includes(q))) return false;
-    return true;
-  });
+
+  return deviceGroups.map(g => {
+    const shown = g.entities.filter(e => {
+      if (domain && e.domain !== domain) return false;
+      if (controllableOnly && !e.controllable) return false;
+      return true;
+    });
+    const groupMatchesQuery = !q || g.name.toLowerCase().includes(q) ||
+      shown.some(e => e.name.toLowerCase().includes(q) || e.entityId.toLowerCase().includes(q));
+    const ok = shown.length > 0 && groupMatchesQuery && (!platform || g.platform === platform);
+    // When the query matched only certain entities, narrow the expansion to
+    // those; a match on the device name keeps the whole list visible.
+    const narrowed = q && !g.name.toLowerCase().includes(q)
+      ? shown.filter(e => e.name.toLowerCase().includes(q) || e.entityId.toLowerCase().includes(q))
+      : shown;
+    return ok ? { ...g, shown: narrowed } : null;
+  }).filter(Boolean);
 }
 
 function updateDeviceSortArrows(tableId, sortState){
@@ -1138,21 +1181,63 @@ function updateDeviceSortArrows(tableId, sortState){
 }
 
 function renderDeviceGrids(){
-  // --- available ---
-  const rows = filteredDevices();
+  // --- available, grouped by physical device ---
+  const groups = filteredGroups();
   const s = deviceSort.available;
-  const sorted = s.col ? [...rows].sort((a, b) => s.dir * compareValues(a[s.col], b[s.col])) : rows;
+  const sorted = s.col ? [...groups].sort((a, b) => s.dir * compareValues(a[s.col], b[s.col])) : groups;
   const body = document.getElementById('devices-available-body');
-  body.innerHTML = sorted.length ? sorted.map(d => `
-    <tr>
-      <td title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</td>
-      <td title="${escapeHtml(d.entityId)}"><code>${escapeHtml(d.entityId)}</code></td>
-      <td>${escapeHtml(d.platform || '—')}</td>
-      <td>${escapeHtml(domainLabel(d.domain))}${d.controllable ? '' : ' <span class="status-text">(read-only)</span>'}</td>
-      <td>${escapeHtml(d.unit ? `${d.state} ${d.unit}` : String(d.state))}</td>
-      <td><input type="checkbox" class="device-add" data-entity="${escapeHtml(d.entityId)}" ${d.onDashboard ? 'checked' : ''}></td>
-    </tr>
-  `).join('') : '<tr><td colspan="6" class="status-text">No devices match those filters.</td></tr>';
+
+  body.innerHTML = sorted.length ? sorted.map(g => {
+    const open = expandedGroups.has(g.key);
+    const allOn = g.shown.length > 0 && g.shown.every(e => e.onDashboard);
+    const sub = [g.model, g.manufacturer].filter(Boolean).join(' · ');
+    const groupRow = `
+      <tr class="device-group-row" data-group="${escapeHtml(g.key)}">
+        <td>
+          <button type="button" class="group-toggle" data-group="${escapeHtml(g.key)}"
+                  title="${open ? 'Collapse' : 'Expand'}">${open ? '▾' : '▸'}</button>
+          <strong>${escapeHtml(g.name)}</strong>
+          ${sub ? `<div class="status-text" style="margin-left:1.5rem;">${escapeHtml(sub)}</div>` : ''}
+        </td>
+        <td>${escapeHtml(g.platform || '—')}</td>
+        <td>${escapeHtml(g.area || '—')}</td>
+        <td>${g.shown.length}${g.shown.length !== g.entityCount ? ` of ${g.entityCount}` : ''}
+            ${g.controllableCount ? '' : '<span class="status-text">(read-only)</span>'}</td>
+        <td>${g.onDashboardCount ? `${g.onDashboardCount}` : '<span class="status-text">—</span>'}</td>
+        <td style="white-space:nowrap;">
+          <button type="button" class="plain-btn plain-btn-sm ${allOn ? '' : 'primary'} group-add"
+                  data-group="${escapeHtml(g.key)}" ${allOn ? 'disabled' : ''}>
+            ${allOn ? 'On home page' : '+ Add to home page'}
+          </button>
+        </td>
+      </tr>
+    `;
+    if (!open) return groupRow;
+    const entityRows = g.shown.map(e => `
+      <tr class="device-entity-row">
+        <td colspan="4" style="padding-left:2.2rem;">
+          ${escapeHtml(e.name)}
+          <code class="status-text">${escapeHtml(e.entityId)}</code>
+          <span class="status-text">· ${escapeHtml(domainLabel(e.domain))}${e.controllable ? '' : ' (read-only)'}
+          · ${escapeHtml(e.unit ? `${e.state} ${e.unit}` : String(e.state))}</span>
+        </td>
+        <td><input type="checkbox" class="device-add" data-entity="${escapeHtml(e.entityId)}" ${e.onDashboard ? 'checked' : ''}></td>
+        <td></td>
+      </tr>
+    `).join('');
+    return groupRow + entityRows;
+  }).join('') : '<tr><td colspan="6" class="status-text">No devices match those filters.</td></tr>';
+
+  body.querySelectorAll('.group-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const k = btn.dataset.group;
+      if (expandedGroups.has(k)) expandedGroups.delete(k); else expandedGroups.add(k);
+      renderDeviceGrids();
+    });
+  });
+  body.querySelectorAll('.group-add').forEach(btn => {
+    btn.addEventListener('click', () => addGroupToHomePage(btn.dataset.group, btn));
+  });
   body.querySelectorAll('.device-add').forEach(cb => {
     cb.addEventListener('change', () => toggleDeviceOnDashboard(cb.dataset.entity, cb.checked, cb));
   });
@@ -1175,6 +1260,35 @@ function renderDeviceGrids(){
     btn.addEventListener('click', () => toggleDeviceOnDashboard(btn.dataset.entity, false, null));
   });
   updateDeviceSortArrows('devices-chosen-grid', cs);
+}
+
+// Adds a whole physical device with one click. Only the device's PRIMARY entity
+// goes on the home page, not every entity it owns - a Sonos speaker would
+// otherwise drop six tiles on the dashboard, five of them config switches
+// nobody wants there. Expanding the row is how you add the extras.
+async function addGroupToHomePage(key, btn){
+  const group = deviceGroups.find(g => g.key === key);
+  if (!group) return;
+  const status = document.getElementById('devices-status');
+  const target = group.primaryEntityId;
+  if (!target){
+    status.textContent = 'That device has no entity this dashboard can show.';
+    return;
+  }
+  if (btn){ btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    const res = await fetch('/api/devices/dashboard', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityIds: [target] }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    await loadDevices();
+    status.textContent = `Added ${group.name} (${target}). Refresh the dashboard to see it.`;
+  } catch (e){
+    status.textContent = `Failed to add ${group.name}: ${e.message}`;
+    renderDeviceGrids();
+  }
 }
 
 // Optimistic UI would be wrong here: a rejected add (unsupported domain, entity
@@ -1221,6 +1335,14 @@ document.querySelectorAll('#devices-chosen-grid th[data-sort]').forEach(th => {
   el.addEventListener(id === 'devices-search' ? 'input' : 'change', renderDeviceGrids);
 });
 document.getElementById('devices-refresh').addEventListener('click', loadDevices);
+document.getElementById('devices-expand-all').addEventListener('click', () => {
+  filteredGroups().forEach(g => expandedGroups.add(g.key));
+  renderDeviceGrids();
+});
+document.getElementById('devices-collapse-all').addEventListener('click', () => {
+  expandedGroups.clear();
+  renderDeviceGrids();
+});
 
 // --- Init ---
 restoreTaxFolder();
