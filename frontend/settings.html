@@ -157,6 +157,7 @@
     <a class="back-link" href="index.html">&larr; Dashboard</a>
     <div class="settings-nav">
       <button type="button" class="settings-nav-item" data-section="receipts">Business Receipts</button>
+      <button type="button" class="settings-nav-item" data-section="devices">Devices</button>
       <button type="button" class="settings-nav-item" data-section="database">Database</button>
       <button type="button" class="settings-nav-item" data-section="theme">Theme</button>
     </div>
@@ -222,6 +223,66 @@
           </select>
           <button type="button" class="plain-btn primary" id="settings-ignore-add-btn">Add</button>
         </div>
+      </div>
+    </section>
+
+    <section class="settings-panel" data-panel="devices" hidden>
+      <h1 class="settings-panel-title">Devices</h1>
+
+      <div class="settings-block">
+        <div class="settings-block-title">On the dashboard</div>
+        <div class="settings-block-hint">
+          Devices you have added to the home page. Remove one here and its tile disappears
+          from the dashboard's Controls card on the next refresh.
+        </div>
+        <div id="devices-chosen-wrap">
+          <table class="data-grid" id="devices-chosen-grid">
+            <thead>
+              <tr>
+                <th data-sort="name" data-label="Name">Name</th>
+                <th data-sort="entityId" data-label="Entity">Entity</th>
+                <th data-sort="platform" data-label="Integration">Integration</th>
+                <th data-sort="type" data-label="Tile">Tile</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="devices-chosen-body"><tr><td colspan="5" class="status-text">Loading&hellip;</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Available on your network</div>
+        <div class="settings-block-hint">
+          Everything Home Assistant can see, which includes devices bridged in from Homey,
+          Alexa and any other integration &mdash; the Integration column names where each one
+          came from. Locks, thermostats and sensors are shown but stay read-only: this
+          dashboard has no login of its own, so it will display a lock's state and never
+          offer to open it. Thermostats are already handled by the Nest tiles.
+        </div>
+        <div class="settings-row" style="margin-bottom:.75rem;">
+          <input type="text" class="plain-input" id="devices-search" placeholder="Search name or entity id&hellip;" style="flex:1; min-width:180px;">
+          <select class="plain-select" id="devices-platform-filter"><option value="">All integrations</option></select>
+          <select class="plain-select" id="devices-domain-filter"><option value="">All types</option></select>
+          <label class="settings-inline-label" style="display:flex; align-items:center; gap:.35rem; font-size:.8rem;">
+            <input type="checkbox" id="devices-controllable-only"> Controllable only
+          </label>
+          <button type="button" class="plain-btn" id="devices-refresh">Refresh</button>
+        </div>
+        <div class="status-text" id="devices-status" style="margin-bottom:.5rem;"></div>
+        <table class="data-grid" id="devices-available-grid">
+          <thead>
+            <tr>
+              <th data-sort="name" data-label="Name">Name</th>
+              <th data-sort="entityId" data-label="Entity">Entity</th>
+              <th data-sort="platform" data-label="Integration">Integration</th>
+              <th data-sort="domain" data-label="Type">Type</th>
+              <th data-sort="state" data-label="State">State</th>
+              <th data-sort="onDashboard" data-label="On dashboard">On dashboard</th>
+            </tr>
+          </thead>
+          <tbody id="devices-available-body"><tr><td colspan="6" class="status-text">Loading&hellip;</td></tr></tbody>
+        </table>
       </div>
     </section>
 
@@ -988,12 +1049,186 @@ themeExtractPasteZone.addEventListener('drop', async (e) => {
   if (file && file.type.startsWith('image/')) await importThemeFromImage(file);
 });
 
+// ---------------------------------------------------------------------
+// Devices: what Home Assistant can see on the network, and which of those
+// the user has put on the dashboard. Everything reaches HA through some
+// integration - Homey and Alexa devices included - so `platform` from the
+// entity registry is what identifies where a device actually came from.
+// ---------------------------------------------------------------------
+let discoveredDevices = [];
+let chosenDevices = [];
+const deviceSort = { available: { col: 'name', dir: 1 }, chosen: { col: 'name', dir: 1 } };
+
+const DOMAIN_LABELS = {
+  light: 'Light', switch: 'Switch', input_boolean: 'Toggle', fan: 'Fan',
+  cover: 'Cover', media_player: 'Media', lock: 'Lock', climate: 'Thermostat',
+  binary_sensor: 'Sensor (binary)', sensor: 'Sensor',
+};
+const domainLabel = (d) => DOMAIN_LABELS[d] || d;
+
+async function loadDevices(){
+  const status = document.getElementById('devices-status');
+  status.textContent = 'Loading devices from Home Assistant…';
+  try {
+    const [discRes, chosenRes] = await Promise.all([
+      fetch('/api/devices/discovered'),
+      fetch('/api/devices/dashboard'),
+    ]);
+    if (!discRes.ok) throw new Error((await discRes.json().catch(() => ({}))).error || `HTTP ${discRes.status}`);
+    const disc = await discRes.json();
+    const chosen = chosenRes.ok ? await chosenRes.json() : { devices: [] };
+    discoveredDevices = disc.devices || [];
+    // The chosen list is stored as bare entity ids, so its display columns are
+    // filled in from discovery. A device whose entity has since disappeared
+    // from HA still shows here (flagged) rather than vanishing silently.
+    chosenDevices = (chosen.devices || []).map(d => {
+      const found = discoveredDevices.find(x => x.entityId === d.entity_id);
+      return {
+        entityId: d.entity_id,
+        name: d.name || (found ? found.name : d.entity_id),
+        platform: found ? found.platform : null,
+        type: found ? found.type : null,
+        domain: found ? found.domain : d.entity_id.split('.')[0],
+        missing: !found,
+      };
+    });
+    populateDeviceFilters(disc.platforms || []);
+    status.textContent = `${discoveredDevices.length} devices visible · ${chosenDevices.length} on the dashboard`;
+  } catch (e){
+    discoveredDevices = [];
+    status.textContent = `Could not load devices: ${e.message}`;
+  }
+  renderDeviceGrids();
+}
+
+function populateDeviceFilters(platforms){
+  const pf = document.getElementById('devices-platform-filter');
+  const prev = pf.value;
+  pf.innerHTML = '<option value="">All integrations</option>' +
+    platforms.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+  if (platforms.includes(prev)) pf.value = prev;
+
+  const df = document.getElementById('devices-domain-filter');
+  const prevD = df.value;
+  const domains = [...new Set(discoveredDevices.map(d => d.domain))].sort();
+  df.innerHTML = '<option value="">All types</option>' +
+    domains.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(domainLabel(d))}</option>`).join('');
+  if (domains.includes(prevD)) df.value = prevD;
+}
+
+function filteredDevices(){
+  const q = document.getElementById('devices-search').value.trim().toLowerCase();
+  const platform = document.getElementById('devices-platform-filter').value;
+  const domain = document.getElementById('devices-domain-filter').value;
+  const controllableOnly = document.getElementById('devices-controllable-only').checked;
+  return discoveredDevices.filter(d => {
+    if (platform && d.platform !== platform) return false;
+    if (domain && d.domain !== domain) return false;
+    if (controllableOnly && !d.controllable) return false;
+    if (q && !(d.name.toLowerCase().includes(q) || d.entityId.toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+
+function updateDeviceSortArrows(tableId, sortState){
+  document.querySelectorAll(`#${tableId} th[data-sort]`).forEach(th => {
+    const arrow = sortState.col === th.dataset.sort ? (sortState.dir === 1 ? ' ▲' : ' ▼') : '';
+    th.textContent = th.dataset.label + arrow;
+  });
+}
+
+function renderDeviceGrids(){
+  // --- available ---
+  const rows = filteredDevices();
+  const s = deviceSort.available;
+  const sorted = s.col ? [...rows].sort((a, b) => s.dir * compareValues(a[s.col], b[s.col])) : rows;
+  const body = document.getElementById('devices-available-body');
+  body.innerHTML = sorted.length ? sorted.map(d => `
+    <tr>
+      <td title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</td>
+      <td title="${escapeHtml(d.entityId)}"><code>${escapeHtml(d.entityId)}</code></td>
+      <td>${escapeHtml(d.platform || '—')}</td>
+      <td>${escapeHtml(domainLabel(d.domain))}${d.controllable ? '' : ' <span class="status-text">(read-only)</span>'}</td>
+      <td>${escapeHtml(d.unit ? `${d.state} ${d.unit}` : String(d.state))}</td>
+      <td><input type="checkbox" class="device-add" data-entity="${escapeHtml(d.entityId)}" ${d.onDashboard ? 'checked' : ''}></td>
+    </tr>
+  `).join('') : '<tr><td colspan="6" class="status-text">No devices match those filters.</td></tr>';
+  body.querySelectorAll('.device-add').forEach(cb => {
+    cb.addEventListener('change', () => toggleDeviceOnDashboard(cb.dataset.entity, cb.checked, cb));
+  });
+  updateDeviceSortArrows('devices-available-grid', s);
+
+  // --- chosen ---
+  const cs = deviceSort.chosen;
+  const csorted = cs.col ? [...chosenDevices].sort((a, b) => cs.dir * compareValues(a[cs.col], b[cs.col])) : chosenDevices;
+  const cbody = document.getElementById('devices-chosen-body');
+  cbody.innerHTML = csorted.length ? csorted.map(d => `
+    <tr>
+      <td title="${escapeHtml(d.name)}">${escapeHtml(d.name)}${d.missing ? ' <span class="status-text">(not in Home Assistant right now)</span>' : ''}</td>
+      <td><code>${escapeHtml(d.entityId)}</code></td>
+      <td>${escapeHtml(d.platform || '—')}</td>
+      <td>${escapeHtml(d.type ? domainLabel(d.domain) : '—')}</td>
+      <td><button type="button" class="plain-btn plain-btn-sm danger device-remove" data-entity="${escapeHtml(d.entityId)}">Remove</button></td>
+    </tr>
+  `).join('') : '<tr><td colspan="5" class="status-text">Nothing added yet — pick devices below.</td></tr>';
+  cbody.querySelectorAll('.device-remove').forEach(btn => {
+    btn.addEventListener('click', () => toggleDeviceOnDashboard(btn.dataset.entity, false, null));
+  });
+  updateDeviceSortArrows('devices-chosen-grid', cs);
+}
+
+// Optimistic UI would be wrong here: a rejected add (unsupported domain, entity
+// gone) has to leave the checkbox showing the truth, so the row is reverted on
+// failure and the whole pair of grids is reloaded on success.
+async function toggleDeviceOnDashboard(entityId, add, checkbox){
+  const status = document.getElementById('devices-status');
+  try {
+    const res = add
+      ? await fetch('/api/devices/dashboard', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entityId }),
+        })
+      : await fetch(`/api/devices/dashboard/${encodeURIComponent(entityId)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const found = discoveredDevices.find(d => d.entityId === entityId);
+    if (found) found.onDashboard = add;
+    await loadDevices();
+    status.textContent = `${add ? 'Added' : 'Removed'} ${entityId}. Refresh the dashboard to see it.`;
+  } catch (e){
+    if (checkbox) checkbox.checked = !add;
+    status.textContent = `Failed: ${e.message}`;
+  }
+}
+
+document.querySelectorAll('#devices-available-grid th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    deviceSort.available.dir = deviceSort.available.col === col ? -deviceSort.available.dir : 1;
+    deviceSort.available.col = col;
+    renderDeviceGrids();
+  });
+});
+document.querySelectorAll('#devices-chosen-grid th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    deviceSort.chosen.dir = deviceSort.chosen.col === col ? -deviceSort.chosen.dir : 1;
+    deviceSort.chosen.col = col;
+    renderDeviceGrids();
+  });
+});
+['devices-search', 'devices-platform-filter', 'devices-domain-filter', 'devices-controllable-only'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener(id === 'devices-search' ? 'input' : 'change', renderDeviceGrids);
+});
+document.getElementById('devices-refresh').addEventListener('click', loadDevices);
+
 // --- Init ---
 restoreTaxFolder();
 loadIgnoreKeywords().then(renderSettingsIgnoreGrids);
 loadDbSchema();
 renderThemeList();
-showSection(['receipts', 'database', 'theme'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
+loadDevices();
+showSection(['receipts', 'devices', 'database', 'theme'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
 </script>
 </body>
 </html>

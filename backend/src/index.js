@@ -10,6 +10,13 @@ import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
 import { analyzeReturnScreenshot } from "./amazonReturns.js";
+import {
+  createDevicesRouter,
+  buildUserDeviceTiles,
+  isDashboardDevice,
+  tileTypeFor,
+  isControllableType,
+} from "./devices.js";
 
 const app = express();
 // Default 100kb limit rejects any real pasted photo/screenshot once
@@ -36,6 +43,7 @@ const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 app.use("/api/theme", createThemeRouter());
+app.use("/api/devices", createDevicesRouter({ getStates: () => getHomeAssistantStates() }));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -63,6 +71,16 @@ app.get("/api/dashboard", async (_req, res) => {
     controls: [
       ...(haStates ? getControllableDevices(haStates, rokuStatuses) : []),
       ...nestThermostats,
+      // User-chosen devices from Settings > Devices, appended after the
+      // hand-configured tiles so adding one never reshuffles what was already
+      // there (the dashboard's own drag-to-reorder still applies on top).
+      // Anything already in CONTROLLABLE_DEVICES is dropped rather than
+      // rendered twice - the hand-set entry wins because it carries tuning the
+      // generic builder has no way to know about (a Roku's rokuId link, a
+      // Shelly's fixed-white onData).
+      ...(haStates
+        ? buildUserDeviceTiles(haStates).filter((d) => !CONTROLLABLE_DEVICES[d.id])
+        : []),
     ],
     errors: [weather, cal, homeAssistant, nest, tasks, roku]
       .filter((r) => r.status === "rejected")
@@ -334,12 +352,36 @@ app.post("/api/ha/control/*", async (req, res) => {
     return;
   }
 
-  const meta = CONTROLLABLE_DEVICES[entityId];
+  // Authorization is still an allowlist, it is just no longer hardcoded: an
+  // entity is controllable only if it is either a hand-configured tile or one
+  // the user explicitly added in Settings > Devices. Anything else 404s, so a
+  // crafted request cannot reach an arbitrary Home Assistant entity.
+  let meta = CONTROLLABLE_DEVICES[entityId];
+  if (!meta && isDashboardDevice(entityId)) {
+    const type = tileTypeFor(entityId);
+    // "status" tiles (locks, climate, sensors) are deliberately read-only -
+    // see DOMAIN_TILE_TYPES in devices.js for why locks in particular.
+    if (isControllableType(type)) meta = { type, userAdded: true };
+  }
   if (!meta) {
-    return res.status(404).json({ error: "unknown device" });
+    return res.status(404).json({ error: "unknown or read-only device" });
   }
   try {
-    if (meta.type === "light") {
+    if (meta.type === "toggle") {
+      const { on } = req.body || {};
+      const domain = entityId.split(".")[0];
+      await callHaService(domain, on === false ? "turn_off" : "turn_on", { entity_id: entityId });
+    } else if (meta.type === "fan") {
+      const { on, percentage } = req.body || {};
+      if (Number.isInteger(percentage)) {
+        if (percentage < 0 || percentage > 100) {
+          return res.status(400).json({ error: "invalid percentage" });
+        }
+        await callHaService("fan", "set_percentage", { entity_id: entityId, percentage });
+      } else {
+        await callHaService("fan", on === false ? "turn_off" : "turn_on", { entity_id: entityId });
+      }
+    } else if (meta.type === "light") {
       const { on, brightness, effect } = req.body || {};
       if (on === false) {
         await callHaService("light", "turn_off", { entity_id: entityId });

@@ -2126,11 +2126,68 @@ function renderControls(controls){
         </div>
       `;
     }
+    // Tile types below come from devices the user added in Settings > Devices
+    // (see devices.js DOMAIN_TILE_TYPES), so they are generic - there is no
+    // per-device tuning available the way the hand-configured tiles have.
+    if (c.type === 'toggle'){
+      return `
+        <div class="control-tile" data-tile-id="${c.id}">
+          <div class="control-head">
+            <span class="control-head-left" title="Drag to reorder">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
+            <label class="toggle">
+              <input type="checkbox" class="ctl-toggle" data-id="${c.id}" ${c.on ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </div>
+      `;
+    }
+    if (c.type === 'fan'){
+      return `
+        <div class="control-tile" data-tile-id="${c.id}">
+          <div class="control-head">
+            <span class="control-head-left" title="Drag to reorder">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
+            <label class="toggle">
+              <input type="checkbox" class="ctl-toggle" data-id="${c.id}" ${c.on ? 'checked' : ''} ${c.available ? '' : 'disabled'}>
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          ${c.percentage == null ? '' : `
+            <input type="range" class="control-slider ctl-fan-speed" data-id="${c.id}" min="0" max="100" value="${c.percentage}" ${c.on && c.available ? '' : 'disabled'}>
+          `}
+        </div>
+      `;
+    }
+    // Read-only by design (locks, thermostats, sensors) - see devices.js for
+    // why a lock gets a status tile and not an unlock button.
+    if (c.type === 'status'){
+      const value = c.unit ? `${c.state} ${c.unit}` : c.state;
+      return `
+        <div class="control-tile" data-tile-id="${c.id}">
+          <div class="control-head">
+            <span class="control-head-left" title="Drag to reorder">
+              <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+              <span class="control-name">${escapeHtml(c.name)}</span>
+            </span>
+            <span class="control-value">${escapeHtml(String(value ?? '—'))}</span>
+          </div>
+        </div>
+      `;
+    }
     return '';
   }).join('');
 
   el.querySelectorAll('.ctl-toggle').forEach(input => {
     input.addEventListener('change', () => setControl(input.dataset.id, { on: input.checked }));
+  });
+  el.querySelectorAll('.ctl-fan-speed').forEach(input => {
+    input.addEventListener('change', () => setControl(input.dataset.id, { percentage: Number(input.value) }));
   });
   el.querySelectorAll('.ctl-brightness').forEach(input => {
     input.addEventListener('change', () => setControl(input.dataset.id, { on: true, brightness: Number(input.value) }));
