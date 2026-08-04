@@ -169,6 +169,15 @@
   .card-handle{cursor:grab; touch-action:none; user-select:none;}
   .card-handle:active{cursor:grabbing;}
 
+  /* The floating clone that follows the pointer during a drag (see
+     makeSortable) - gets a lift/shadow so it clearly reads as "picked up"
+     rather than looking like a second, stationary copy of the card. */
+  .drag-ghost{
+    box-shadow:0 16px 32px rgba(0,0,0,.4);
+    cursor:grabbing;
+    pointer-events:none;
+  }
+
   .drag-handle{
     color:var(--text-dim); font-size:.9rem; letter-spacing:-.1em;
     padding:0 .2em;
@@ -1870,14 +1879,103 @@ function reorderDomToSaved(container, itemSelector, key){
 // never progressed to dragover, regardless of drag distance). Pointer
 // events are plain mouse/touch tracking with no browser-internal drag
 // session to depend on, so this works the same way for both.
+//
+// Three things made the original version of this jittery, all fixed below:
+// 1. The dragged card never actually moved with the cursor - it stayed put
+//    (just dimmed) until a swap fired, then teleported to the new slot.
+//    Now a floating clone ("ghost") tracks the pointer via position:fixed,
+//    so there's always a clear "this is what's moving and here it is."
+// 2. The swap target was "nearest card center to the raw pointer, among
+//    ALL cards in the grid" recomputed on every native pointermove (which
+//    fires far faster than the screen repaints) - so two similarly-close
+//    neighbors would flicker back and forth. Now it's a plain hit-test
+//    (is the pointer actually over this card's box?), rAF-throttled to at
+//    most once per repaint.
+// 3. Swapped cards snapped into their new grid slot instantly. Now a FLIP
+//    animation (capture old rects, invert, play) makes them slide there.
 function makeSortable(container, { handleSelector, itemSelector, storageKey }){
   let dragEl = null;
+  let ghost = null;
+  let offsetX = 0, offsetY = 0;
+  let pointerX = 0, pointerY = 0;
+  let rafScheduled = false;
+
+  function itemsExcept(el){
+    return [...container.querySelectorAll(itemSelector)].filter(it => it !== el);
+  }
+
+  // Runs `mutate` (a DOM reorder) and animates any item whose screen
+  // position changed as a result, from its old spot to its new one.
+  function withFlip(mutate){
+    const items = [...container.querySelectorAll(itemSelector)];
+    const oldRects = new Map(items.map(it => [it, it.getBoundingClientRect()]));
+    mutate();
+    for (const it of items){
+      const oldRect = oldRects.get(it);
+      const newRect = it.getBoundingClientRect();
+      const dx = oldRect.left - newRect.left;
+      const dy = oldRect.top - newRect.top;
+      if (!dx && !dy) continue;
+      it.style.transition = 'none';
+      it.style.transform = `translate(${dx}px, ${dy}px)`;
+      requestAnimationFrame(() => {
+        it.style.transition = 'transform .18s ease';
+        it.style.transform = '';
+      });
+    }
+  }
+  container.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'transform') e.target.style.transition = '';
+  });
+
+  function tick(){
+    rafScheduled = false;
+    if (!dragEl) return;
+    if (ghost){
+      ghost.style.left = (pointerX - offsetX) + 'px';
+      ghost.style.top = (pointerY - offsetY) + 'px';
+    }
+
+    const target = itemsExcept(dragEl).find(el => {
+      const r = el.getBoundingClientRect();
+      return pointerX >= r.left && pointerX <= r.right && pointerY >= r.top && pointerY <= r.bottom;
+    });
+    if (!target) return;
+
+    const all = [...container.querySelectorAll(itemSelector)];
+    if (all.indexOf(dragEl) === all.indexOf(target)) return;
+    withFlip(() => {
+      if (all.indexOf(dragEl) < all.indexOf(target)) target.after(dragEl);
+      else target.before(dragEl);
+    });
+  }
 
   container.addEventListener('pointerdown', (e) => {
     const handle = e.target.closest(handleSelector);
     const item = handle && handle.closest(itemSelector);
     if (!item) return;
     dragEl = item;
+
+    const rect = item.getBoundingClientRect();
+    pointerX = e.clientX; pointerY = e.clientY;
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+
+    ghost = item.cloneNode(true);
+    ghost.removeAttribute('id');
+    ghost.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    ghost.className = item.className + ' drag-ghost';
+    Object.assign(ghost.style, {
+      position: 'fixed',
+      left: rect.left + 'px',
+      top: rect.top + 'px',
+      width: rect.width + 'px',
+      height: rect.height + 'px',
+      margin: '0',
+      zIndex: '1000',
+    });
+    document.body.appendChild(ghost);
+
     item.classList.add('dragging');
     try { handle.setPointerCapture(e.pointerId); } catch {}
     e.preventDefault();
@@ -1885,23 +1983,14 @@ function makeSortable(container, { handleSelector, itemSelector, storageKey }){
 
   container.addEventListener('pointermove', (e) => {
     if (!dragEl) return;
-    const items = [...container.querySelectorAll(itemSelector)].filter(el => el !== dragEl);
-    let closest = null;
-    let closestDist = Infinity;
-    for (const el of items){
-      const rect = el.getBoundingClientRect();
-      const dist = Math.hypot(e.clientX - (rect.left + rect.width / 2), e.clientY - (rect.top + rect.height / 2));
-      if (dist < closestDist){ closestDist = dist; closest = el; }
-    }
-    if (!closest) return;
-    const all = [...container.querySelectorAll(itemSelector)];
-    if (all.indexOf(dragEl) < all.indexOf(closest)) closest.after(dragEl);
-    else closest.before(dragEl);
+    pointerX = e.clientX; pointerY = e.clientY;
+    if (!rafScheduled){ rafScheduled = true; requestAnimationFrame(tick); }
   });
 
   const finishDrag = () => {
     if (!dragEl) return;
     dragEl.classList.remove('dragging');
+    if (ghost){ ghost.remove(); ghost = null; }
     saveOrder(storageKey, [...container.querySelectorAll(itemSelector)].map(el => el.dataset.tileId));
     dragEl = null;
   };
