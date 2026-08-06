@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="theme.js"></script>
+<script src="passkey.js"></script>
 <script src="idb.js"></script>
 <style>
   :root{
@@ -176,6 +177,7 @@
       <button type="button" class="settings-nav-item" data-section="devices">Devices</button>
       <button type="button" class="settings-nav-item" data-section="database">Database</button>
       <button type="button" class="settings-nav-item" data-section="theme">Theme</button>
+      <button type="button" class="settings-nav-item" data-section="security">Security</button>
     </div>
     <div class="settings-sidebar-footer">
       <span class="settings-sidebar-footer-label">Content theme</span>
@@ -306,6 +308,37 @@
           </thead>
           <tbody id="devices-available-body"><tr><td colspan="6" class="status-text">Loading&hellip;</td></tr></tbody>
         </table>
+      </div>
+    </section>
+
+
+    <section class="settings-panel" data-panel="security" hidden>
+      <h1 class="settings-panel-title">Security</h1>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Passkeys</div>
+        <div class="settings-block-hint">
+          A passkey replaces a password with your device&rsquo;s own biometrics &mdash; Face ID on iPhone,
+          Windows Hello on a PC. The private key never leaves the device; the server only ever stores
+          a public key. <strong>Registering the first passkey switches authentication on</strong> for
+          every API route. Until then the dashboard is open to anything that can reach it.
+        </div>
+        <div class="settings-row" style="margin-bottom:.75rem;">
+          <span class="status-text" id="passkey-status">Checking&hellip;</span>
+          <button type="button" class="plain-btn primary" id="passkey-register-btn">Register this device</button>
+        </div>
+        <table class="data-grid" id="passkey-grid">
+          <thead>
+            <tr><th>Device</th><th>Added</th><th>Last used</th><th></th></tr>
+          </thead>
+          <tbody id="passkey-body"><tr><td colspan="4" class="status-text">Loading&hellip;</td></tr></tbody>
+        </table>
+        <div class="settings-block-hint" style="margin-top:.9rem; margin-bottom:0;">
+          Passkeys are tied to the address you register them at. Register at
+          <code>https://dash.polypimp.com</code> &mdash; a LAN IP can never work, because WebAuthn
+          requires a domain name. If you lose every passkey, delete the rows from
+          <code>auth.db</code> on the NAS to re-open registration.
+        </div>
       </div>
     </section>
 
@@ -1344,13 +1377,75 @@ document.getElementById('devices-collapse-all').addEventListener('click', () => 
   renderDeviceGrids();
 });
 
+
+// ---------------------------------------------------------------------
+// Security: passkey management. Registering the first one is what turns
+// enforcement on server-side (see auth.js), so the copy here is explicit
+// about that rather than treating it as an incidental setting.
+// ---------------------------------------------------------------------
+async function loadPasskeys(){
+  const statusEl = document.getElementById('passkey-status');
+  const body = document.getElementById('passkey-body');
+  try {
+    const [status, creds] = await Promise.all([
+      fetch('/api/auth/status').then(r => r.json()),
+      fetch('/api/auth/credentials').then(r => r.ok ? r.json() : { credentials: [] }),
+    ]);
+    statusEl.textContent = status.enforced
+      ? `Authentication ON · ${status.credentialCount} passkey${status.credentialCount === 1 ? '' : 's'}`
+      : 'Authentication OFF — no passkey registered, every API route is open';
+    statusEl.style.color = status.enforced ? 'var(--c-accent)' : 'var(--c-danger)';
+
+    const rows = creds.credentials || [];
+    const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
+    body.innerHTML = rows.length ? rows.map(c => `
+      <tr>
+        <td>${escapeHtml(c.label || 'Passkey')}</td>
+        <td>${escapeHtml(fmt(c.createdAt))}</td>
+        <td>${escapeHtml(fmt(c.lastUsedAt))}</td>
+        <td><button type="button" class="plain-btn plain-btn-sm danger passkey-remove"
+                    data-id="${escapeHtml(c.id)}" ${rows.length <= 1 ? 'disabled title="Removing the only passkey would disable authentication entirely"' : ''}>Remove</button></td>
+      </tr>
+    `).join('') : '<tr><td colspan="4" class="status-text">No passkeys yet.</td></tr>';
+
+    body.querySelectorAll('.passkey-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const res = await fetch(`/api/auth/credentials/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) statusEl.textContent = `Failed: ${j.error || res.status}`;
+        loadPasskeys();
+      });
+    });
+  } catch (e){
+    statusEl.textContent = `Could not load passkeys: ${e.message}`;
+  }
+}
+
+document.getElementById('passkey-register-btn').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  const statusEl = document.getElementById('passkey-status');
+  btn.disabled = true;
+  statusEl.textContent = 'Waiting for your device…';
+  try {
+    const label = /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone / Mac'
+      : /Android/.test(navigator.userAgent) ? 'Android' : 'This computer';
+    await registerPasskey(label);
+    statusEl.textContent = 'Registered.';
+  } catch (e){
+    statusEl.textContent = `Failed: ${e.message}`;
+  }
+  btn.disabled = false;
+  loadPasskeys();
+});
+
 // --- Init ---
 restoreTaxFolder();
 loadIgnoreKeywords().then(renderSettingsIgnoreGrids);
 loadDbSchema();
 renderThemeList();
 loadDevices();
-showSection(['receipts', 'devices', 'database', 'theme'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
+showSection(['receipts', 'devices', 'database', 'theme', 'security'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
+loadPasskeys();
 </script>
 </body>
 </html>
