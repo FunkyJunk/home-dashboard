@@ -22,6 +22,27 @@ services:
     depends_on:
       - homeassistant
 
+  # Cloudflare Tunnel. Connects OUTBOUND to Cloudflare, so the dashboard is
+  # reachable remotely with no inbound port forwarded on the router at all -
+  # there is nothing on the public internet to scan or knock on.
+  #
+  # Runs here rather than on a desktop for two reasons: the NAS is on 24/7 (a
+  # connector on a PC dies whenever it sleeps, which is exactly when remote
+  # access is wanted), and being on this compose network lets the tunnel address
+  # nginx as `frontend:80` without publishing any host port.
+  #
+  # The token comes from .env via compose interpolation rather than being passed
+  # on the command line, so it never lands in shell history or `ps` output.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: dashboard-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+
   frontend:
     image: ghcr.io/funkyjunk/home-dashboard-frontend:latest
     container_name: dashboard-frontend

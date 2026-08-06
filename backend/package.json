@@ -10,9 +10,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@simplewebauthn/server": "^13.3.2",
     "better-sqlite3": "^11.3.0",
-    "express": "^4.19.2",
     "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "googleapis": "^140.0.0",
     "node-fetch": "^3.3.2",
     "node-ical": "^0.27.1",

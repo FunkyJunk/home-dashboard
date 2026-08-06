@@ -10,6 +10,7 @@ import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
 import { analyzeReturnScreenshot } from "./amazonReturns.js";
+import { createAuthRouter, requireAuth, authIsEnforced } from "./auth.js";
 import {
   createDevicesRouter,
   buildUserDeviceTiles,
@@ -40,6 +41,14 @@ const oauth2Client = new google.auth.OAuth2(
 );
 oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
 const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+app.use("/api/auth", createAuthRouter());
+
+// Gate for everything else under /api. Self-enabling: with no passkey
+// registered this is a no-op, so deploying it cannot lock anyone out. See
+// auth.js for why that bootstrap property is required.
+app.use("/api", requireAuth);
+console.log(`[auth] passkey enforcement: ${authIsEnforced() ? "ON" : "OFF (no passkeys registered yet)"}`);
 
 app.use("/api/receipts", createReceiptsRouter({ oauth2Client }));
 app.use("/api/theme", createThemeRouter());
