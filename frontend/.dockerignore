@@ -1,0 +1,7 @@
+# Scratch and harness files must never reach the image. The Dockerfile now
+# copies the whole directory, so this is what keeps that safe.
+_*
+*.bak
+*.log
+Dockerfile
+.dockerignore
