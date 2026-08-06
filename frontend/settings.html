@@ -325,7 +325,8 @@
         </div>
         <div class="settings-row" style="margin-bottom:.75rem;">
           <span class="status-text" id="passkey-status">Checking&hellip;</span>
-          <button type="button" class="plain-btn primary" id="passkey-register-btn">Register this device</button>
+          <button type="button" class="plain-btn primary" id="passkey-register-btn">Register (any method)</button>
+          <button type="button" class="plain-btn" id="passkey-register-platform-btn">Use this computer&rsquo;s fingerprint</button>
         </div>
         <table class="data-grid" id="passkey-grid">
           <thead>
@@ -1421,22 +1422,29 @@ async function loadPasskeys(){
   }
 }
 
-document.getElementById('passkey-register-btn').addEventListener('click', async (ev) => {
-  const btn = ev.currentTarget;
+async function runRegistration(btn, platformOnly){
   const statusEl = document.getElementById('passkey-status');
   btn.disabled = true;
   statusEl.textContent = 'Waiting for your device…';
   try {
-    const label = /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone / Mac'
-      : /Android/.test(navigator.userAgent) ? 'Android' : 'This computer';
-    await registerPasskey(label);
+    const label = platformOnly
+      ? (/Macintosh/.test(navigator.userAgent) ? 'Touch ID (this Mac)' : 'Windows Hello (this PC)')
+      : (/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone / Mac'
+        : /Android/.test(navigator.userAgent) ? 'Android' : 'This computer');
+    await registerPasskey(label, platformOnly);
     statusEl.textContent = 'Registered.';
   } catch (e){
-    statusEl.textContent = `Failed: ${e.message}`;
+    // A platform request that cannot be satisfied errors here rather than
+    // quietly falling back, which is the point of asking explicitly.
+    statusEl.textContent = platformOnly
+      ? `Built-in authenticator failed: ${e.message}. Check Windows Settings → Accounts → Passkeys for a third-party provider shadowing Hello.`
+      : `Failed: ${e.message}`;
   }
   btn.disabled = false;
   loadPasskeys();
-});
+}
+document.getElementById('passkey-register-btn').addEventListener('click', (ev) => runRegistration(ev.currentTarget, false));
+document.getElementById('passkey-register-platform-btn').addEventListener('click', (ev) => runRegistration(ev.currentTarget, true));
 
 // --- Init ---
 restoreTaxFolder();

@@ -234,6 +234,13 @@ export function createAuthRouter() {
       authenticatorSelection: {
         residentKey: "required",       // discoverable, so login needs no username
         userVerification: "required",  // forces Face ID / Hello, not just presence
+        // Left unset by default so the browser offers everything it can (phone
+        // via hybrid, security key, built-in). When the caller asks for
+        // "platform", pin it to the device's own authenticator instead: on
+        // Windows, Edge otherwise offered only phone and security key and
+        // silently omitted Hello, with no way to tell why. Asking explicitly
+        // means Hello is either used or reports a real error.
+        ...(req.body?.platform ? { authenticatorAttachment: "platform" } : {}),
       },
     });
     const challengeId = putChallenge("register", options.challenge);

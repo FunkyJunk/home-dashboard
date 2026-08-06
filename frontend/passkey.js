@@ -40,9 +40,12 @@ function passkeySupported(){
 
 // Registers this device as a passkey. Enrolling the FIRST one also switches
 // enforcement on server-side, so this is the moment the dashboard closes.
-async function registerPasskey(label){
+// platformOnly pins the ceremony to this device's built-in authenticator
+// (Windows Hello, Touch ID) rather than letting the browser also offer a phone
+// or security key. Without it, Edge on Windows omitted Hello entirely.
+async function registerPasskey(label, platformOnly){
   if (!passkeySupported()) throw new Error('this browser has no WebAuthn support');
-  const { challengeId, options } = await postJson('/api/auth/register/options', {});
+  const { challengeId, options } = await postJson('/api/auth/register/options', platformOnly ? { platform: true } : {});
 
   options.challenge = b64urlToBuf(options.challenge);
   options.user.id = b64urlToBuf(options.user.id);
