@@ -15,12 +15,40 @@ services:
     # Swap for `build: ../backend` if you'd rather build on the NAS directly.
     image: ghcr.io/funkyjunk/home-dashboard-backend:latest
     container_name: dashboard-backend
+    labels:
+      # Opt in to Watchtower auto-updates (see the watchtower service below).
+      - "com.centurylinklabs.watchtower.enable=true"
     restart: unless-stopped
     env_file: .env
     volumes:
       - ./volumes/backend:/app/data   # persists which receipts have been resolved
     depends_on:
       - homeassistant
+
+  # Auto-deploy. Polls the registry and restarts a container when a newer image
+  # appears, so a push to main reaches the NAS without anyone SSH-ing in - which
+  # is what makes it possible to ship changes from a phone or laptop away from
+  # home.
+  #
+  # --label-enable is the important flag: ONLY containers carrying the
+  # watchtower.enable label are touched. Home Assistant is deliberately excluded
+  # - an unattended HA update can break device integrations, and the worst time
+  # to discover that is while travelling. cloudflared is excluded too; it already
+  # runs with --no-autoupdate and a broken tunnel would cut off remote access.
+  #
+  # Note this mounts the Docker socket, which is effectively root control of the
+  # Docker daemon. That is how Watchtower works, and it is an accepted trade-off
+  # on a personal NAS - but it is real, so nothing else should be added here
+  # casually.
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: dashboard-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=America/New_York
+    command: --label-enable --cleanup --interval 300
 
   # Cloudflare Tunnel. Connects OUTBOUND to Cloudflare, so the dashboard is
   # reachable remotely with no inbound port forwarded on the router at all -
@@ -46,6 +74,9 @@ services:
   frontend:
     image: ghcr.io/funkyjunk/home-dashboard-frontend:latest
     container_name: dashboard-frontend
+    labels:
+      # Opt in to Watchtower auto-updates (see the watchtower service below).
+      - "com.centurylinklabs.watchtower.enable=true"
     restart: unless-stopped
     ports:
       - "8080:80"
