@@ -107,6 +107,15 @@ async function loginWithPasskey(){
   });
 }
 
+// Ends the session server-side and clears the cookie. There was previously no
+// way to sign out at all, which meant a session could not be ended, an identity
+// could not be switched, and the login path could not be re-tested once a
+// session existed.
+async function logoutPasskey(){
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.href = '/login.html';
+}
+
 // Sends any expired/absent session straight to the login page rather than
 // letting pages fail silently with half-rendered data. Wrapping fetch once here
 // avoids touching the couple of hundred existing call sites; /api/auth/* is

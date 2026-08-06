@@ -327,6 +327,7 @@
           <span class="status-text" id="passkey-status">Checking&hellip;</span>
           <button type="button" class="plain-btn primary" id="passkey-register-btn">Register (any method)</button>
           <button type="button" class="plain-btn" id="passkey-register-platform-btn">Use this computer&rsquo;s fingerprint</button>
+          <button type="button" class="plain-btn" id="passkey-logout-btn" style="display:none;">Sign out</button>
         </div>
         <table class="data-grid" id="passkey-grid">
           <thead>
@@ -1397,6 +1398,21 @@ async function loadPasskeys(){
       : 'Authentication OFF — no passkey registered, every API route is open';
     statusEl.style.color = status.enforced ? 'var(--c-accent)' : 'var(--c-danger)';
 
+    // Adding a passkey requires a session (see auth.js - it stops anyone who
+    // reaches the API from enrolling their own device). Without this gate the
+    // buttons stayed live while signed out, so the authenticator would happily
+    // create a credential that the server then refused - leaving an orphaned
+    // passkey on the device and a failure message that is easy to miss.
+    const needsSignIn = status.enforced && !status.authenticated;
+    document.getElementById('passkey-register-btn').disabled = needsSignIn;
+    document.getElementById('passkey-register-platform-btn').disabled = needsSignIn;
+    document.getElementById('passkey-logout-btn').style.display =
+      (status.enforced && status.authenticated) ? '' : 'none';
+    if (needsSignIn){
+      statusEl.innerHTML = 'Authentication ON — <a href="/login.html?next=%2Fsettings.html%23security">sign in</a> before adding another passkey.';
+      statusEl.style.color = 'var(--c-danger)';
+    }
+
     const rows = creds.credentials || [];
     const fmt = (d) => d ? new Date(d).toLocaleString() : '—';
     body.innerHTML = rows.length ? rows.map(c => `
@@ -1445,6 +1461,7 @@ async function runRegistration(btn, platformOnly){
 }
 document.getElementById('passkey-register-btn').addEventListener('click', (ev) => runRegistration(ev.currentTarget, false));
 document.getElementById('passkey-register-platform-btn').addEventListener('click', (ev) => runRegistration(ev.currentTarget, true));
+document.getElementById('passkey-logout-btn').addEventListener('click', logoutPasskey);
 
 // --- Init ---
 restoreTaxFolder();
