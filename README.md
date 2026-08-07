@@ -400,3 +400,61 @@ a dependency. Note that IPP's attribute order is mandated - `attributes-charset`
 first, `attributes-natural-language` second - and printers reject the request
 outright when it's wrong, which is a miserable thing to debug from a generic
 HTTP 400.
+
+## 12. Tests, and the deploy gate
+
+```bash
+cd backend
+npm install
+npm test
+```
+
+51 test cases, no network and no real Home Assistant or printer required — mocks
+stand in for both. Runs in about a second.
+
+| File | Covers |
+|---|---|
+| `test/recurrence.test.mjs` | the repeat engine: every frequency, DST, clamping, validation |
+| `test/reminders.test.mjs` | the HA to-do lifecycle, rollover, one-push-per-occurrence |
+| `test/ipp-codec.test.mjs` | IPP wire format conformance and byte-exactness |
+| `test/ipp-client.test.mjs` | the four printer profiles, including the refusal cases |
+
+### The gate
+
+`.github/workflows/build-and-push.yml` runs the suite as a separate `test` job,
+and the image build declares `needs: test`. A red suite means **no image is
+published**, which matters here specifically because Watchtower deploys
+`:latest` unattended within five minutes — without the gate, a broken commit
+reaches the wall tablet before anyone reads the CI email. Tests also run on pull
+requests, so a branch gets a verdict before merge.
+
+### Choices worth knowing before you add tests
+
+- **TZ is pinned to `America/New_York` by `test/helpers/env.mjs`**, matching
+  `infra/docker-compose.yml`. The recurrence engine works in local wall time, so
+  its DST cases are only meaningful in a zone that *has* DST — on a CI runner,
+  which defaults to UTC, a spring-forward test would pass for the wrong reason.
+  Set `TZ_OVERRIDE` to check behaviour elsewhere.
+- **The `ipp` package is a devDependency used only as a test oracle.**
+  `src/ipp.js` is hand-rolled, so it is validated against an independent
+  implementation in both directions — my encoder decoded by theirs, their
+  serializer decoded by mine. Testing an encoder against its own decoder lets a
+  shared misunderstanding pass, which is the failure mode that actually matters
+  for a binary protocol. It never ships: the Dockerfile installs with
+  `--omit=dev` and copies only `package.json` and `src`.
+- **The oracle is wrong in two places, and the spec wins.** It cannot serialize
+  `rangeOfInteger` (it emits eight zero bytes whatever you pass), and it decodes
+  document data as UTF-8, mangling high bytes — `0xff 0x80` returns as
+  `0xfd 0xfd`. Both cases are therefore asserted against bytes built by hand to
+  RFC 8010. Document byte-exactness in particular is checked on the raw request
+  buffer, since one altered byte in a PDF means blank label stock.
+- **The committed lockfile pins CI, not the image.** `package-lock.json` exists
+  so a transitive dependency update cannot change what the gate tested, and CI
+  installs with `npm ci`. The published image is still unpinned:
+  `backend/Dockerfile` copies only `package.json` and runs
+  `npm install --omit=dev`, so it resolves fresh on every build. Closing that
+  gap means pointing the Dockerfile at the lockfile and switching it to
+  `npm ci` — a deliberate change to the deploy path, not done here.
+- **Test files are listed explicitly in the `test` script** rather than globbed.
+  Glob support in `node --test` arrived in Node 21, and CI pins Node 20 to match
+  `node:20-alpine`. A new test file needs adding to that list.

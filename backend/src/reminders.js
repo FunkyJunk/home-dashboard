@@ -193,6 +193,15 @@ function nthWeekdayOfMonth(year, month, weekday, nth) {
 const atTimeOf = (d, ref) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate(), ref.getHours(), ref.getMinutes(), ref.getSeconds());
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+// Steps whole CALENDAR days, keeping ref's wall-clock time. Adding 86_400_000ms
+// instead would drift by an hour across a DST boundary, because that day is 23
+// or 25 hours long - a 9am daily reminder became 10am after spring-forward and
+// 8am after fall-back.
+const addDays = (d, n, ref) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, ref.getHours(), ref.getMinutes(), ref.getSeconds());
+
 // Returns the first occurrence strictly after `after`, keeping the time-of-day
 // of `anchor` (the reminder's original due moment).
 export function nextOccurrence(spec, anchor, after) {
@@ -202,13 +211,18 @@ export function nextOccurrence(spec, anchor, after) {
 
   if (rule.freq === "daily") {
     let next = atTimeOf(anchor, anchor);
-    // Step from the anchor so "every 3 days" stays on its original cadence
-    // instead of re-basing on whenever the user got round to ticking it off.
-    const dayMs = 24 * 60 * 60 * 1000;
     if (next <= base) {
-      const days = Math.ceil((base - next) / (dayMs * rule.interval)) * rule.interval;
-      next = new Date(next.getTime() + days * dayMs);
-      while (next <= base) next = new Date(next.getTime() + rule.interval * dayMs);
+      // Whole calendar days from anchor to base. Measured between local
+      // midnights and rounded, so the one 23- or 25-hour day each year cannot
+      // skew the count. Stepping is from the anchor so "every 3 days" keeps its
+      // original cadence rather than re-basing on when it was ticked off.
+      const elapsedDays = Math.round((startOfDay(base) - startOfDay(anchor)) / DAY_MS);
+      let steps = Math.max(rule.interval, Math.ceil(elapsedDays / rule.interval) * rule.interval);
+      next = addDays(anchor, steps, anchor);
+      while (next <= base) {
+        steps += rule.interval;
+        next = addDays(anchor, steps, anchor);
+      }
     }
     return next;
   }
