@@ -558,10 +558,34 @@ async function getNestAccessToken() {
       grant_type: "refresh_token",
     }),
   });
-  if (!r.ok) throw new Error(`Nest token refresh failed: ${r.status}`);
+  // Google answers a bad refresh with 400 for several unrelated reasons, and
+  // the status alone cannot separate them: invalid_grant means the refresh
+  // token is expired or revoked (re-mint it), invalid_client means
+  // NEST_CLIENT_ID/SECRET are wrong (fix .env). Those need opposite fixes, so
+  // the body's error code has to reach the footer where this is read. The
+  // token-endpoint error body carries no credential material.
+  if (!r.ok) {
+    let reason = "";
+    try {
+      const text = (await r.text()).trim();
+      try {
+        const parsed = JSON.parse(text);
+        reason = parsed.error_description || parsed.error || text;
+      } catch {
+        reason = text;
+      }
+    } catch {
+      // Body unreadable - fall through and report the status on its own.
+    }
+    reason = String(reason).replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(`Nest token refresh failed: ${r.status}${reason ? ` - ${reason}` : ""}`);
+  }
   const data = await r.json();
   nestAccessToken = data.access_token;
-  nestTokenExpiresAt = Date.now() + data.expires_in * 1000;
+  // A response without expires_in would leave the deadline NaN, making every
+  // comparison false and re-refreshing on each poll. Fall back to Google's
+  // standard hour, minus the 60s skew the cache check already applies.
+  nestTokenExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
   return nestAccessToken;
 }
 

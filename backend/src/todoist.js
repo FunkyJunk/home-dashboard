@@ -11,12 +11,37 @@ function getAuthHeaders() {
   return { Authorization: `Bearer ${process.env.TODOIST_TOKEN}` };
 }
 
+// Carries Todoist's own explanation alongside the status code. A bare 401
+// cannot tell a revoked/regenerated token apart from one mangled in .env -
+// docker compose passes surrounding quotes and trailing whitespace through
+// literally, and either yields exactly the same 401. This message is the only
+// place the failure is visible (it renders in the dashboard footer), so the
+// reason has to travel with it. The body holds the reason, never the token.
+async function todoistError(res) {
+  let detail = "";
+  try {
+    const text = (await res.text()).trim();
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed.error || parsed.error_message || parsed.message || text;
+    } catch {
+      detail = text;
+    }
+  } catch {
+    // Body unreadable - the status code alone still reports something useful.
+  }
+  detail = String(detail).replace(/\s+/g, " ").slice(0, 160);
+  return new Error(
+    `Todoist API error: ${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`
+  );
+}
+
 async function fetchFromTodoist(path) {
   const res = await fetch(`${TODOIST_API_URL}${path}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
-    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
+    throw await todoistError(res);
   }
   return res.json();
 }
@@ -28,7 +53,7 @@ async function postToTodoist(path, body) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
+    throw await todoistError(res);
   }
   // close/complete-style endpoints return 204 No Content - res.json() throws
   // on an empty body, so only parse when there's actually something there.
@@ -42,7 +67,7 @@ async function deleteFromTodoist(path) {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
-    throw new Error(`Todoist API error: ${res.status} ${res.statusText}`);
+    throw await todoistError(res);
   }
 }
 
