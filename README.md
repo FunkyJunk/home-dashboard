@@ -70,29 +70,7 @@ without a Workspace admin.
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
 
-## 3. Todoist access (Tasks widget)
-
-The Tasks widget reads/writes Todoist tasks (`backend/src/todoist.js`).
-Unlike Google Tasks (no time field) and Apple Reminders (migrated to
-proprietary sync), Todoist has a proper REST API with full date-time support
-and RRULE recurrence — allowing the dashboard to use its real time picker
-and daily-repeat checkbox.
-
-1. https://todoist.com → create a free account if you don't have one (or sign
-   in).
-2. Go to **Settings → Integrations → Developer** and create a new API token
-   (or use an existing one).
-3. Add to `infra/.env` on the NAS:
-   ```
-   TODOIST_TOKEN=your-api-token-here
-   ```
-4. `docker compose up -d` again to pick up the new `.env` values — no new
-   image build needed for a plain env change, only for code changes.
-
-   The dashboard will sync with whichever Todoist projects you use — the free
-   tier covers everything needed here.
-
-## 4. Ring camera access
+## 3. Ring camera access
 
 Ring has no OAuth app registration flow like Google - auth is your account
 email/password plus 2FA, exchanged once for a long-lived refresh token.
@@ -113,7 +91,7 @@ email/password plus 2FA, exchanged once for a long-lived refresh token.
    cameras to limit the drain, but a camera add-on that hammers this more
    than the existing 60s poll cycle will burn through battery faster.
 
-## 5. Nest thermostat access (direct, bypassing Homey)
+## 4. Nest thermostat access (direct, bypassing Homey)
 
 The thermostats are also reachable through Home Assistant via the Homey
 bridge, but that integration has never surfaced correct names or reliable
@@ -144,7 +122,7 @@ successor, the **Device Access** program:
    mode (those tokens expire after 7 days) - move it to "Production" in the
    Cloud Console's OAuth consent screen settings to avoid that.
 
-## 6. Roku Devices card (direct ECP + Plex)
+## 5. Roku Devices card (direct ECP + Plex)
 
 Talks directly to each Roku over its local, unauthenticated control API
 (ECP, port 8060) rather than through Home Assistant - no token needed for
@@ -176,7 +154,7 @@ player address.
    Without `PLEX_TOKEN` set, the card still works - it just shows the
    active app name for every device, the same as any non-Plex app.
 
-## 7. Synology NAS setup
+## 6. Synology NAS setup
 
 1. **Control Panel → Terminal & SNMP** → enable SSH.
 2. **Package Center** → install **Container Manager** (DSM 7.x's Docker
@@ -215,13 +193,13 @@ player address.
    access, so the MyQ integration in HA breaks periodically when they change
    something. Not a you-problem — just expect the occasional patch.
 
-## 8. Point the wall tablet
+## 7. Point the wall tablet
 
 Browser → `http://<nas-ip>:8080` (or whatever port the frontend container
 publishes) and set it full-screen/kiosk mode. Since this stays LAN-only,
 there's no reverse proxy, no cert, no port forwarding to worry about.
 
-## 9. Business receipts (needs HTTPS)
+## 8. Business receipts (needs HTTPS)
 
 The Business Receipts card saves files straight to a folder on your PC via
 the browser's File System Access API (`showDirectoryPicker`), which only
@@ -259,7 +237,7 @@ across vendor formats far better. It's a small per-email cost on a cheap
 model, and falls back to the regex heuristics automatically if the key
 isn't set or a call fails.
 
-## 10. Scratch Pad (notes + shipping labels)
+## 9. Scratch Pad (notes + shipping labels)
 
 Notes are local-only - there's no way to sync with Google Keep from here.
 Keep's API (`keep.googleapis.com`) only works for Google Workspace accounts

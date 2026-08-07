@@ -4,7 +4,6 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
 import { getAllRokuStatuses, sendRokuKey, getRokuApps, launchRokuApp } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
@@ -63,12 +62,11 @@ app.use(
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.get("/api/dashboard", async (_req, res) => {
-  const [weather, cal, homeAssistant, nest, tasks, roku] = await Promise.allSettled([
+  const [weather, cal, homeAssistant, nest, roku] = await Promise.allSettled([
     getWeather(),
     getCalendar(),
     getHomeAssistantStates(),
     getNestThermostats(),
-    getReminders(),
     getAllRokuStatuses(),
   ]);
 
@@ -81,7 +79,6 @@ app.get("/api/dashboard", async (_req, res) => {
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
-    tasks: tasks.status === "fulfilled" ? tasks.value : [],
     roku: rokuStatuses,
     controls: [
       ...(haStates ? getControllableDevices(haStates, rokuStatuses) : []),
@@ -97,20 +94,10 @@ app.get("/api/dashboard", async (_req, res) => {
         ? buildUserDeviceTiles(haStates).filter((d) => !CONTROLLABLE_DEVICES[d.id])
         : []),
     ],
-    errors: [weather, cal, homeAssistant, nest, tasks, roku]
+    errors: [weather, cal, homeAssistant, nest, roku]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
-});
-
-// Marks a Todoist task complete via the REST API.
-app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
-  try {
-    await completeReminder(req.params.taskListId, req.params.taskId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to complete task" });
-  }
 });
 
 // Proxies a Plex poster/art image so the Plex token never reaches the
@@ -204,64 +191,6 @@ app.post("/api/roku/:id/launch/:appId", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to launch Roku app" });
-  }
-});
-
-app.get("/api/tasks/lists", async (req, res) => {
-  try {
-    res.json(await getReminderLists());
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to load task lists" });
-  }
-});
-
-// Manual task creation via Todoist REST API. Supports full due times,
-// all-day dates, and recurrence (daily, weekly, monthly, yearly, etc. via
-// a natural-language dueString - Todoist has no structured recurrence
-// field, see todoist.js for why).
-app.post("/api/tasks", async (req, res) => {
-  const { taskListId, title, due, allDay, notes, dueString } = req.body || {};
-  if (!title || !String(title).trim()) {
-    return res.status(400).json({ error: "title is required" });
-  }
-  try {
-    const task = await createReminder({
-      listId: taskListId || undefined,
-      title: String(title).trim(),
-      due: due || null,
-      allDay: !!allDay,
-      notes: notes || undefined,
-      dueString: dueString || null,
-    });
-    res.json(task);
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to create task" });
-  }
-});
-
-// Updates an existing task's title/due/notes/recurrence.
-app.patch("/api/tasks/:taskListId/:taskId", async (req, res) => {
-  const { title, due, allDay, notes, dueString } = req.body || {};
-  try {
-    const task = await updateReminder(req.params.taskId, {
-      title: title !== undefined ? String(title).trim() : undefined,
-      due: due !== undefined ? due : undefined,
-      allDay: !!allDay,
-      notes: notes !== undefined ? notes : undefined,
-      dueString: dueString || null,
-    });
-    res.json(task);
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to update task" });
-  }
-});
-
-app.delete("/api/tasks/:taskListId/:taskId", async (req, res) => {
-  try {
-    await deleteReminder(req.params.taskId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to delete task" });
   }
 });
 
@@ -537,10 +466,6 @@ async function getCalendar() {
   }));
 }
 
-// Only ever shows incomplete tasks (showCompleted: false) - this is a
-// glance-at-the-dashboard widget, not a full task manager. Pulls every
-// list (most accounts just have the one default "My Tasks", but nothing
-// stops someone from having more) and merges them, soonest due date first.
 let nestAccessToken = null;
 let nestTokenExpiresAt = 0;
 
