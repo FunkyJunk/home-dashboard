@@ -299,11 +299,10 @@
     border-radius:calc(var(--radius-scale, 1) * 4px); cursor:pointer;
   }
   .task-add-btn:hover{color:var(--teal); border-color:var(--teal);}
-  /* Reminders, shown inside the Scratch Pad card. Backed by a Home Assistant
-     todo entity; the repeat rule lives in backend/src/reminders.js because
-     HA's TodoItem has no recurrence field. */
-  .scratch-pad-head-btns{display:flex; align-items:center; gap:.4rem;}
-  .rem-list{display:flex; flex-direction:column; margin-bottom:.75rem;}
+  /* Reminders card. Backed by a Home Assistant todo entity; the repeat rule
+     lives in backend/src/reminders.js because HA's TodoItem has no recurrence
+     field. */
+  .rem-list{display:flex; flex-direction:column;}
   .rem-row{
     display:flex; align-items:flex-start; gap:.6rem;
     padding:.5rem 0; border-bottom:1px solid var(--panel-line);
@@ -897,17 +896,19 @@
         <div class="week-strip" id="week"></div>
       </div>
 
+      <div class="card" data-tile-id="reminders">
+        <div class="task-card-head">
+          <h2 class="card-handle">Reminders</h2>
+          <button type="button" class="task-add-btn" id="reminder-add-btn" title="Add reminder">+</button>
+        </div>
+        <div class="rem-list" id="reminder-list"></div>
+      </div>
+
       <div class="card" data-tile-id="scratch-pad">
         <div class="task-card-head">
           <h2 class="card-handle">Scratch Pad</h2>
-          <div class="scratch-pad-head-btns">
-            <button type="button" class="task-add-btn" id="scratch-pad-add-reminder-btn" title="Add reminder">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-            </button>
-            <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
-          </div>
+          <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
         </div>
-        <div class="rem-list" id="reminder-list"></div>
         <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" contenteditable="true" data-placeholder="Paste or drag image(s)/PDF here"></div>
         <div class="label-stage-thumbs" id="label-stage-thumbs"></div>
         <div class="label-stage-actions" id="label-stage-actions" style="display:none;">
@@ -2373,7 +2374,7 @@ document.getElementById('scratch-pad-add-note-btn').addEventListener('click', as
 renderScratchPadNotes();
 
 // ---------------------------------------------------------------------
-// Reminders (Scratch Pad card). Items live in a Home Assistant todo entity;
+// Reminders card. Items live in a Home Assistant todo entity;
 // the repeat rule and the phone push live in backend/src/reminders.js,
 // because HA's todo model has no recurrence field. Ticking a recurring
 // reminder rolls it to its next occurrence rather than closing it, so the
@@ -2698,7 +2699,7 @@ async function deleteEditingReminder(){
 remBuildWeekdayChips();
 document.getElementById('reminder-freq').addEventListener('change', remUpdateRecurrenceUI);
 document.getElementById('reminder-monthly-mode').addEventListener('change', remUpdateRecurrenceUI);
-document.getElementById('scratch-pad-add-reminder-btn').addEventListener('click', () => openReminderModal(null));
+document.getElementById('reminder-add-btn').addEventListener('click', () => openReminderModal(null));
 document.getElementById('reminder-modal-close').addEventListener('click', closeReminderModal);
 document.getElementById('reminder-cancel').addEventListener('click', closeReminderModal);
 document.getElementById('reminder-submit').addEventListener('click', submitReminder);
@@ -4186,6 +4187,7 @@ const CARD_REGISTRY = [
   { id: 'today', label: 'Today & Upcoming' },
   { id: 'home-status', label: 'Home Status' },
   { id: 'week', label: 'This Week' },
+  { id: 'reminders', label: 'Reminders' },
   { id: 'scratch-pad', label: 'Scratch Pad' },
   { id: 'controls', label: 'Controls' },
   { id: 'ring', label: 'Ring Cameras' },
@@ -4225,7 +4227,7 @@ function applyCardMinimized(tileId){
 // These are the compact board-grid tiles (as opposed to the "wide" cards
 // like Controls/Ring/Roku/Receipts) - already small enough that collapsing
 // them saves no real space, so they never get a minimize button at all.
-const NO_MINIMIZE_IDS = new Set(['today', 'home-status', 'week', 'scratch-pad']);
+const NO_MINIMIZE_IDS = new Set(['today', 'home-status', 'week', 'reminders', 'scratch-pad']);
 
 // Wraps each registered card's content (everything after its header) in a
 // single .card-body element, once, so minimizing just needs one class

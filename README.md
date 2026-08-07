@@ -267,10 +267,10 @@ Renders dragged-in PDFs with a self-hosted `pdf.js` (`frontend/pdf.min.js`
 `jspdf.umd.min.js`) so a PDF label goes through the identical crop step as
 a pasted image.
 
-## 10. Reminders + iPhone notifications (Scratch Pad card)
+## 10. Reminders + iPhone notifications
 
-Reminders are added from the **Scratch Pad** card (bell button in its header)
-and stored in a Home Assistant **to-do list**, so the same list is editable
+Reminders live in their own **Reminders** card (`+` button in its header) and
+are stored in a Home Assistant **to-do list**, so the same list is editable
 from HA's own To-do panel and from the dashboard. Due reminders push to the
 iPhone through the Home Assistant Companion app.
 
