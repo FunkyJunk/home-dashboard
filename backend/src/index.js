@@ -886,7 +886,33 @@ function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
   return !isNaN(t) && Date.now() - t < withinMs;
 }
 
-const server = app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));
+// Reminders are stored and fired as local wall time, so the container's zone
+// decides when a notification actually goes out. The backend shipped once
+// without TZ set, which meant UTC: a 7pm reminder pushed at 3pm Eastern while
+// the dashboard still displayed 7pm, because the browser parses in its own
+// zone. Logging the resolved zone at boot makes that visible in
+// `docker logs dashboard-backend` instead of only in mis-timed notifications.
+function logEffectiveTimezone() {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
+  const now = new Date();
+  const offsetMin = -now.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMin);
+  const offset = `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  console.log(`[time] zone=${zone} offset=UTC${offset} local=${now.toString()}`);
+  if (!process.env.TZ) {
+    console.warn(
+      "[time] TZ is not set - the container is running in whatever the image " +
+        "defaults to (UTC on node:alpine). Reminders will fire at the wrong " +
+        "wall-clock time. Set TZ on the backend service in docker-compose.yml."
+    );
+  }
+}
+
+const server = app.listen(PORT, () => {
+  console.log(`Backend listening on :${PORT}`);
+  logEffectiveTimezone();
+});
 
 // Reminder pushes run on their own clock, independent of whether the wall
 // tablet has the dashboard open - the old Todoist widget only popped a browser

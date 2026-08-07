@@ -300,6 +300,16 @@ rule, in its own `reminders.db`.
    REMINDER_ALLDAY_HOUR=8
    ```
 
+**The backend's `TZ` is load-bearing.** Reminders are stored and fired as local
+wall time, so the container's timezone decides when a notification actually
+goes out. `infra/docker-compose.yml` sets `TZ` on the backend service;
+`node:20-alpine` has no timezone of its own and would otherwise run in UTC,
+pushing a 7pm reminder at 3pm Eastern and all-day reminders at 4am — while the
+dashboard kept displaying the time you typed, because the browser parses in its
+own zone. The backend logs its resolved zone at startup, so
+`docker logs dashboard-backend | grep '\[time\]'` will tell you what it thinks
+the time is, and warns loudly if `TZ` is unset.
+
 Behaviour worth knowing:
 
 - **Ticking a repeating reminder rolls it forward** to its next occurrence

@@ -66,12 +66,21 @@ const stmts = {
 // Due-value parsing
 //
 // HA hands back either "2026-08-07" (all-day) or "2026-08-07 13:30:00" (timed,
-// naive local). Both are parsed as *local* time deliberately: the container
-// runs TZ=America/New_York (infra/docker-compose.yml) and HA is on the same
-// clock, so a naive stamp means local wall time on both sides. Passing these
-// through `new Date(str)` would be a trap - a bare "2026-08-07" is treated as
-// UTC midnight by the spec, which lands on the previous evening in any western
-// timezone and would fire every all-day reminder a day early.
+// naive local). Both are parsed as *local* time deliberately: a naive stamp
+// means local wall time on both sides, and the browser writes these from what
+// the user typed into a date/time input.
+//
+// That makes the container's TZ load-bearing, not cosmetic. It is set on the
+// backend service in infra/docker-compose.yml; the image itself (node:20-alpine)
+// has no timezone configured and would otherwise run in UTC, shifting every
+// notification by the offset while the dashboard kept displaying the time that
+// was typed. startup logs the effective zone so a missing TZ is visible rather
+// than silent - see logEffectiveTimezone in index.js.
+//
+// Passing these through `new Date(str)` would be a separate trap: a bare
+// "2026-08-07" is treated as UTC midnight by the spec, which lands on the
+// previous evening in any western timezone and would fire every all-day
+// reminder a day early.
 // ---------------------------------------------------------------------------
 
 export function parseDue(due) {
