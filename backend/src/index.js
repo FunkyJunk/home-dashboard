@@ -11,6 +11,11 @@ import { analyzeShippingLabel } from "./shippingLabels.js";
 import { analyzeReturnScreenshot } from "./amazonReturns.js";
 import { createAuthRouter, requireAuth, authIsEnforced } from "./auth.js";
 import {
+  createRemindersClient,
+  createRemindersRouter,
+  startReminderScheduler,
+} from "./reminders.js";
+import {
   createDevicesRouter,
   buildUserDeviceTiles,
   isDashboardDevice,
@@ -58,6 +63,14 @@ app.use(
     getRegistries: () => getHaRegistries(),
   })
 );
+
+const reminders = createRemindersClient({
+  callHaService,
+  callHaServiceForResponse,
+  getStates: () => getHomeAssistantStates(),
+  listServices: () => listHaServices(),
+});
+app.use("/api/reminders", createRemindersRouter(reminders));
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -408,6 +421,33 @@ async function callHaService(domain, service, data) {
   if (!r.ok) throw new Error(`Home Assistant service call failed: ${r.status}`);
 }
 
+// Same call, but for services declared SupportsResponse.ONLY (todo.get_items
+// is the one this dashboard needs). HA rejects those without the
+// ?return_response query flag - "Add ?return_response to query parameters" -
+// and answers { changed_states, service_response }.
+async function callHaServiceForResponse(domain, service, data) {
+  const r = await fetch(`${HA_URL}/api/services/${domain}/${service}?return_response`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${HA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(
+      `Home Assistant service call failed: ${r.status}${detail ? ` - ${detail.replace(/\s+/g, " ").slice(0, 160)}` : ""}`
+    );
+  }
+  return r.json();
+}
+
+async function listHaServices() {
+  const r = await fetch(`${HA_URL}/api/services`, {
+    headers: { Authorization: `Bearer ${HA_TOKEN}` },
+  });
+  if (!r.ok) throw new Error(`Home Assistant services fetch failed: ${r.status}`);
+  return r.json();
+}
+
 const RING_CAMERA_ID = /^camera\.[a-z0-9_]+$/;
 
 // Roku ECP key names - allowlisted rather than passed through raw, since this
@@ -751,6 +791,11 @@ function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
 }
 
 const server = app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));
+
+// Reminder pushes run on their own clock, independent of whether the wall
+// tablet has the dashboard open - the old Todoist widget only popped a browser
+// dialog, so a due reminder was silently missed whenever the page was closed.
+startReminderScheduler(reminders);
 
 // Ring's "_live_view" entities stream over WebRTC rather than HLS/MJPEG - the
 // only way to get an actual live frame (not a replay of the last motion

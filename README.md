@@ -266,3 +266,63 @@ Renders dragged-in PDFs with a self-hosted `pdf.js` (`frontend/pdf.min.js`
 + `frontend/pdf.worker.min.js`, same no-CDN convention as `xlsx.full.min.js`/
 `jspdf.umd.min.js`) so a PDF label goes through the identical crop step as
 a pasted image.
+
+## 10. Reminders + iPhone notifications (Scratch Pad card)
+
+Reminders are added from the **Scratch Pad** card (bell button in its header)
+and stored in a Home Assistant **to-do list**, so the same list is editable
+from HA's own To-do panel and from the dashboard. Due reminders push to the
+iPhone through the Home Assistant Companion app.
+
+Why the storage is split: HA's to-do model has no recurrence field. `TodoItem`
+is `(uid, summary, status, due, description, completed)`, and
+`todo.add_item`/`todo.update_item` accept only
+`item`/`rename`/`status`/`due_date`/`due_datetime`/`description` (checked
+against `homeassistant/components/todo/services.yaml`). So HA holds the *next*
+occurrence of each reminder and `backend/src/reminders.js` owns the repeat
+rule, in its own `reminders.db`.
+
+1. In Home Assistant, add the **Local To-do** integration (Settings → Devices
+   & services → Add integration → Local To-do) and create a list. Any `todo.*`
+   entity works - a CalDAV or Google Tasks to-do list is fine too.
+2. Install the **Home Assistant Companion** app on the iPhone and sign it into
+   your HA, granting notification permission during setup.
+3. Confirm the push target exists: HA → Developer tools → Actions → search
+   `notify.` and look for `notify.mobile_app_<your-phone>`. If it isn't there,
+   notifications can't be delivered yet and the dashboard will still work as a
+   plain reminder list.
+4. Optionally pin the targets in `infra/.env` (both are auto-discovered when
+   blank, which picks the *first* match - set them once you have more than one
+   to-do list or phone):
+   ```
+   HA_TODO_ENTITY=todo.reminders
+   HA_NOTIFY_SERVICE=mobile_app_my_iphone
+   REMINDER_ALLDAY_HOUR=8
+   ```
+
+Behaviour worth knowing:
+
+- **Ticking a repeating reminder rolls it forward** to its next occurrence
+  instead of closing it - same item, new due date. A one-off is marked
+  completed as usual. This matches how Todoist behaved and keeps the recurrence
+  rule attached to a stable `uid`.
+- **A missed reminder is not auto-advanced.** It stays overdue (red badge)
+  until ticked, so a skipped bin night is visible rather than silently rolled
+  to next week. Completing it late schedules the next occurrence from *now*,
+  not from the date it was missed, so it never lands in the past.
+- **Each occurrence pushes exactly once.** The backend polls every
+  `REMINDER_POLL_SECONDS` and records `(uid, due)` in `reminders.db`, so a
+  reminder that stays overdue for days doesn't re-notify every minute.
+- **Notifications don't need the tablet.** The old Todoist widget only popped a
+  browser dialog, so anything due while the dashboard was closed was missed
+  entirely. This runs in the backend.
+- **Day-of-month recurrence clamps rather than skips**: "the 31st of each
+  month" fires on Feb 28/29. A "fifth Monday" falls back to the last Monday in
+  months that don't have one. Both choices favour firing on a nearby day over
+  silently skipping a month.
+- **All-day reminders** push at `REMINDER_ALLDAY_HOUR` (default 08:00) rather
+  than midnight.
+
+Available repeats: daily / every N days, every weekday (Mon-Fri), weekly on any
+combination of days / every N weeks, monthly on the same date or on the nth
+(or last) weekday / every N months, and yearly / every N years.

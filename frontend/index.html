@@ -299,6 +299,64 @@
     border-radius:calc(var(--radius-scale, 1) * 4px); cursor:pointer;
   }
   .task-add-btn:hover{color:var(--teal); border-color:var(--teal);}
+  /* Reminders, shown inside the Scratch Pad card. Backed by a Home Assistant
+     todo entity; the repeat rule lives in backend/src/reminders.js because
+     HA's TodoItem has no recurrence field. */
+  .scratch-pad-head-btns{display:flex; align-items:center; gap:.4rem;}
+  .rem-list{display:flex; flex-direction:column; margin-bottom:.75rem;}
+  .rem-row{
+    display:flex; align-items:flex-start; gap:.6rem;
+    padding:.5rem 0; border-bottom:1px solid var(--panel-line);
+  }
+  .rem-row:last-child{border-bottom:none;}
+  .rem-check{
+    appearance:none; width:1.1em; height:1.1em; margin-top:.15em; flex-shrink:0;
+    border:1px solid var(--panel-line); border-radius:calc(var(--radius-scale, 1) * 4px);
+    background:var(--bg-inset); cursor:pointer;
+  }
+  .rem-check:hover{border-color:var(--teal);}
+  .rem-check:checked{background:var(--teal); border-color:var(--teal);}
+  .rem-check:disabled{opacity:.5; cursor:not-allowed;}
+  .rem-body{flex:1; min-width:0; cursor:pointer;}
+  .rem-title{font-size:.9rem; color:var(--text); word-break:break-word;}
+  .rem-meta{display:flex; flex-wrap:wrap; align-items:center; gap:.4em; margin-top:.25rem;}
+  .rem-badge{
+    display:inline-flex; align-items:center; gap:.3em;
+    font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);
+    background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 12px); padding:.15em .55em;
+  }
+  .rem-badge.overdue{color:var(--coral); border-color:var(--coral-dim);}
+  .rem-badge svg{width:.85em; height:.85em; flex-shrink:0;}
+  .rem-notes{font-size:.75rem; color:var(--text-dim); margin-top:.2rem;}
+  .rem-empty{font-size:.85rem; color:var(--text-dim); padding:.1rem 0 .6rem;}
+  .rem-modal-inner{
+    max-width:min(90vw, 480px); box-sizing:border-box;
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 14px); padding:1.5rem; box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  .rem-modal-inner .modal-head{
+    padding-bottom:.75rem; margin-bottom:1.25rem; border-bottom:1px solid var(--panel-line);
+    font-size:1rem;
+  }
+  .rem-grid{display:grid; grid-template-columns:1fr 1fr; gap:1rem 1.25rem; margin-bottom:1.25rem;}
+  .rem-detail{
+    display:flex; flex-direction:column; gap:1rem; margin:0 0 1.25rem;
+    padding:1rem; background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 8px);
+  }
+  .rem-weekdays{display:flex; flex-wrap:wrap; gap:.4rem;}
+  .rem-weekday{
+    display:inline-flex; align-items:center; gap:.35em; cursor:pointer;
+    font-size:.78rem; color:var(--text-dim);
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 12px); padding:.25em .6em;
+  }
+  .rem-weekday input{accent-color:var(--teal); margin:0; cursor:pointer;}
+  .rem-weekday.on{color:var(--teal); border-color:var(--teal);}
+  .rem-title-input{font-size:1.05rem; font-weight:600; margin-bottom:.75rem;}
+  .rem-notes-input{min-height:4em; resize:vertical; margin-bottom:1rem;}
+
   .scratch-pad-dropzone{
     box-sizing:border-box; width:100%; background:var(--bg-inset);
     border:1px solid var(--panel-line); border-radius:calc(var(--radius-scale, 1) * 8px); padding:.65rem .8rem;
@@ -842,8 +900,14 @@
       <div class="card" data-tile-id="scratch-pad">
         <div class="task-card-head">
           <h2 class="card-handle">Scratch Pad</h2>
-          <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
+          <div class="scratch-pad-head-btns">
+            <button type="button" class="task-add-btn" id="scratch-pad-add-reminder-btn" title="Add reminder">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:1em;height:1em;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            </button>
+            <button type="button" class="task-add-btn" id="scratch-pad-add-note-btn" title="Add note">+</button>
+          </div>
         </div>
+        <div class="rem-list" id="reminder-list"></div>
         <div class="scratch-pad-dropzone" id="scratch-pad-dropzone" contenteditable="true" data-placeholder="Paste or drag image(s)/PDF here"></div>
         <div class="label-stage-thumbs" id="label-stage-thumbs"></div>
         <div class="label-stage-actions" id="label-stage-actions" style="display:none;">
@@ -964,6 +1028,86 @@
           <button class="modal-close" id="receipt-detail-modal-close">Close</button>
         </div>
         <div id="receipt-detail-body"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="reminder-modal">
+      <div class="modal-inner rem-modal-inner">
+        <div class="modal-head">
+          <span id="reminder-modal-title">Add reminder</span>
+          <button class="modal-close" id="reminder-modal-close">Close</button>
+        </div>
+        <input type="text" class="add-task-ctrl rem-title-input" id="reminder-title" placeholder="Reminder title">
+        <textarea class="add-task-ctrl rem-notes-input" id="reminder-notes" placeholder="Notes (optional) &mdash; these become the phone notification's body"></textarea>
+        <div class="rem-grid">
+          <div class="add-task-field">
+            <label for="reminder-date">Date</label>
+            <input type="date" class="add-task-ctrl" id="reminder-date">
+          </div>
+          <div class="add-task-field">
+            <label for="reminder-time">Time</label>
+            <input type="time" class="add-task-ctrl" id="reminder-time" placeholder="--:--">
+          </div>
+          <div class="add-task-field">
+            <label for="reminder-freq">Repeat</label>
+            <select class="add-task-ctrl" id="reminder-freq">
+              <option value="">Does not repeat</option>
+              <option value="daily">Daily</option>
+              <option value="weekdays">Every weekday (Mon&ndash;Fri)</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+          <div class="add-task-field is-hidden" id="reminder-interval-field">
+            <label for="reminder-interval">Frequency</label>
+            <select class="add-task-ctrl" id="reminder-interval"></select>
+          </div>
+        </div>
+        <div class="rem-detail is-hidden" id="reminder-detail">
+          <div class="add-task-field is-hidden" id="reminder-weekday-field">
+            <label>On these days</label>
+            <div class="rem-weekdays" id="reminder-weekdays"></div>
+          </div>
+          <div class="add-task-field is-hidden" id="reminder-monthly-field">
+            <label for="reminder-monthly-mode">Monthly pattern</label>
+            <select class="add-task-ctrl" id="reminder-monthly-mode">
+              <option value="dayOfMonth">On the same date each month</option>
+              <option value="nthWeekday">On a weekday of the month</option>
+            </select>
+          </div>
+          <div class="rem-grid is-hidden" id="reminder-nth-row" style="margin-bottom:0;">
+            <div class="add-task-field">
+              <label for="reminder-nth">Which one</label>
+              <select class="add-task-ctrl" id="reminder-nth">
+                <option value="1">First</option>
+                <option value="2">Second</option>
+                <option value="3">Third</option>
+                <option value="4">Fourth</option>
+                <option value="5">Fifth</option>
+                <option value="-1">Last</option>
+              </select>
+            </div>
+            <div class="add-task-field">
+              <label for="reminder-nth-weekday">Weekday</label>
+              <select class="add-task-ctrl" id="reminder-nth-weekday">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="receipts-status" id="reminder-status"></div>
+        <div class="ignore-modal-actions">
+          <button type="button" class="receipt-btn business" id="reminder-submit">Add reminder</button>
+          <button type="button" class="receipt-btn" id="reminder-cancel">Cancel</button>
+          <button type="button" class="receipt-btn ignore is-hidden" id="reminder-delete" style="margin-left:auto;">Delete</button>
+        </div>
       </div>
     </div>
 
@@ -2227,6 +2371,343 @@ document.getElementById('scratch-pad-add-note-btn').addEventListener('click', as
 });
 
 renderScratchPadNotes();
+
+// ---------------------------------------------------------------------
+// Reminders (Scratch Pad card). Items live in a Home Assistant todo entity;
+// the repeat rule and the phone push live in backend/src/reminders.js,
+// because HA's todo model has no recurrence field. Ticking a recurring
+// reminder rolls it to its next occurrence rather than closing it, so the
+// row stays in the list with a new due badge.
+const REM_BELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>';
+const REM_REPEAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+const REM_WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+let currentReminders = [];
+
+// The backend hands back HA's own format: "2026-08-07" or
+// "2026-08-07 13:30:00". Both are local wall time, so they're split by hand -
+// new Date('2026-08-07') would be parsed as UTC and render a day early.
+function remParseDue(due){
+  if (!due) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(String(due));
+  if (!m) return null;
+  const [, y, mo, d, hh, mi] = m;
+  const allDay = hh === undefined;
+  return {
+    allDay,
+    date: new Date(+y, +mo - 1, +d, allDay ? 0 : +hh, allDay ? 0 : +mi),
+  };
+}
+
+function remDueLabel(due){
+  const p = remParseDue(due);
+  if (!p) return { text: 'No date', overdue: false };
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayDiff = Math.round((new Date(p.date.getFullYear(), p.date.getMonth(), p.date.getDate()) - startOfToday) / 86400000);
+  let day;
+  if (dayDiff === 0) day = 'Today';
+  else if (dayDiff === 1) day = 'Tomorrow';
+  else if (dayDiff === -1) day = 'Yesterday';
+  else if (dayDiff > 1 && dayDiff < 7) day = REM_WEEKDAY_SHORT[p.date.getDay()];
+  else day = `${p.date.getMonth() + 1}/${p.date.getDate()}`;
+  const time = p.allDay
+    ? ''
+    : `, ${p.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return { text: `${day}${time}`, overdue: p.date <= now };
+}
+
+function reminderRowHtml(r){
+  const due = remDueLabel(r.due);
+  const badges = [
+    `<span class="rem-badge${due.overdue ? ' overdue' : ''}">${REM_BELL}${escapeHtml(due.text)}</span>`,
+    r.recurrenceLabel ? `<span class="rem-badge">${REM_REPEAT}${escapeHtml(r.recurrenceLabel)}</span>` : '',
+  ].join('');
+  return `
+    <div class="rem-row" data-uid="${escapeHtml(r.uid)}">
+      <input type="checkbox" class="rem-check" title="Complete">
+      <div class="rem-body" title="Click to edit">
+        <div class="rem-title">${escapeHtml(r.title || '')}</div>
+        <div class="rem-meta">${badges}</div>
+        ${r.notes ? `<div class="rem-notes">${escapeHtml(r.notes)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+async function renderReminders(){
+  const el = document.getElementById('reminder-list');
+  let list;
+  try {
+    const res = await fetch('/api/reminders');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'unavailable');
+    list = await res.json();
+  } catch (e){
+    // A missing todo entity or an unreachable HA is worth naming here rather
+    // than rendering an empty list that looks like "nothing due".
+    el.innerHTML = `<div class="rem-empty">Reminders unavailable: ${escapeHtml(e.message || 'unknown error')}</div>`;
+    return;
+  }
+  currentReminders = list;
+  el.innerHTML = list.length
+    ? list.map(reminderRowHtml).join('')
+    : '<div class="rem-empty">No reminders.</div>';
+
+  el.querySelectorAll('.rem-row').forEach(row => {
+    const uid = row.dataset.uid;
+    row.querySelector('.rem-check').addEventListener('change', async (e) => {
+      const cb = e.target;
+      cb.disabled = true;
+      try {
+        const res = await fetch(`/api/reminders/${encodeURIComponent(uid)}/complete`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'failed');
+        await renderReminders();
+      } catch (err){
+        cb.checked = false;
+        cb.disabled = false;
+        alert('Failed to complete that reminder: ' + (err.message || 'unknown error'));
+      }
+    });
+    row.querySelector('.rem-body').addEventListener('click', () => {
+      openReminderModal(currentReminders.find(r => r.uid === uid) || null);
+    });
+  });
+}
+
+// ---- recurrence editor ----------------------------------------------------
+
+const REM_INTERVAL_UNITS = { daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year' };
+
+function remBuildWeekdayChips(){
+  const wrap = document.getElementById('reminder-weekdays');
+  wrap.innerHTML = REM_WEEKDAY_SHORT.map((label, i) => `
+    <label class="rem-weekday" data-weekday="${i}">
+      <input type="checkbox" value="${i}">${label}
+    </label>
+  `).join('');
+  wrap.querySelectorAll('input').forEach(cb => {
+    cb.addEventListener('change', () => cb.closest('.rem-weekday').classList.toggle('on', cb.checked));
+  });
+}
+
+function remSelectedWeekdays(){
+  return [...document.querySelectorAll('#reminder-weekdays input:checked')].map(cb => Number(cb.value));
+}
+
+function remSetWeekdays(days){
+  document.querySelectorAll('#reminder-weekdays .rem-weekday').forEach(chip => {
+    const cb = chip.querySelector('input');
+    cb.checked = days.includes(Number(chip.dataset.weekday));
+    chip.classList.toggle('on', cb.checked);
+  });
+}
+
+// "Every weekday" is a preset over the same engine (weekly on Mon-Fri) rather
+// than its own frequency, so the backend has one code path for all repeats.
+function remUpdateRecurrenceUI(){
+  const freq = document.getElementById('reminder-freq').value;
+  const intervalField = document.getElementById('reminder-interval-field');
+  const detail = document.getElementById('reminder-detail');
+  const weekdayField = document.getElementById('reminder-weekday-field');
+  const monthlyField = document.getElementById('reminder-monthly-field');
+  const nthRow = document.getElementById('reminder-nth-row');
+  const monthlyMode = document.getElementById('reminder-monthly-mode').value;
+
+  const repeats = !!freq;
+  const engineFreq = freq === 'weekdays' ? 'weekly' : freq;
+  // A fixed Mon-Fri preset has nothing left to configure, so it shows neither
+  // an interval nor a weekday picker.
+  const showInterval = repeats && freq !== 'weekdays';
+  const showWeekdays = freq === 'weekly';
+  const showMonthly = freq === 'monthly';
+  const showNth = showMonthly && monthlyMode === 'nthWeekday';
+
+  intervalField.classList.toggle('is-hidden', !showInterval);
+  weekdayField.classList.toggle('is-hidden', !showWeekdays);
+  monthlyField.classList.toggle('is-hidden', !showMonthly);
+  nthRow.classList.toggle('is-hidden', !showNth);
+  detail.classList.toggle('is-hidden', !(showWeekdays || showMonthly));
+
+  if (showInterval){
+    const unit = REM_INTERVAL_UNITS[engineFreq] || 'day';
+    const sel = document.getElementById('reminder-interval');
+    const keep = sel.value;
+    const max = engineFreq === 'daily' ? 30 : engineFreq === 'weekly' ? 12 : engineFreq === 'monthly' ? 12 : 10;
+    sel.innerHTML = Array.from({ length: max }, (_, i) => {
+      const n = i + 1;
+      return `<option value="${n}">${n === 1 ? `Every ${unit}` : `Every ${n} ${unit}s`}</option>`;
+    }).join('');
+    sel.value = keep && Number(keep) <= max ? keep : '1';
+  }
+}
+
+function remReadRecurrence(){
+  const freq = document.getElementById('reminder-freq').value;
+  if (!freq) return null;
+  if (freq === 'weekdays') return { freq: 'weekly', interval: 1, byWeekday: [1, 2, 3, 4, 5] };
+  const interval = Number(document.getElementById('reminder-interval').value || 1);
+  if (freq === 'weekly'){
+    return { freq: 'weekly', interval, byWeekday: remSelectedWeekdays() };
+  }
+  if (freq === 'monthly'){
+    const mode = document.getElementById('reminder-monthly-mode').value;
+    if (mode === 'nthWeekday'){
+      return {
+        freq: 'monthly', interval, monthlyMode: 'nthWeekday',
+        nth: Number(document.getElementById('reminder-nth').value),
+        weekday: Number(document.getElementById('reminder-nth-weekday').value),
+      };
+    }
+    return { freq: 'monthly', interval, monthlyMode: 'dayOfMonth' };
+  }
+  return { freq, interval };
+}
+
+function remApplyRecurrence(spec, dueDate){
+  const freqSel = document.getElementById('reminder-freq');
+  const modeSel = document.getElementById('reminder-monthly-mode');
+  if (!spec){
+    freqSel.value = '';
+    modeSel.value = 'dayOfMonth';
+    remSetWeekdays(dueDate ? [dueDate.getDay()] : []);
+    remUpdateRecurrenceUI();
+    return;
+  }
+  const isWeekdayPreset = spec.freq === 'weekly' && (spec.interval || 1) === 1 &&
+    (spec.byWeekday || []).join() === '1,2,3,4,5';
+  freqSel.value = isWeekdayPreset ? 'weekdays' : spec.freq;
+  modeSel.value = spec.monthlyMode === 'nthWeekday' ? 'nthWeekday' : 'dayOfMonth';
+  if (spec.freq === 'monthly' && spec.monthlyMode === 'nthWeekday'){
+    document.getElementById('reminder-nth').value = String(spec.nth);
+    document.getElementById('reminder-nth-weekday').value = String(spec.weekday);
+  }
+  remSetWeekdays(spec.byWeekday || (dueDate ? [dueDate.getDay()] : []));
+  remUpdateRecurrenceUI();
+  document.getElementById('reminder-interval').value = String(spec.interval || 1);
+}
+
+// ---- modal ---------------------------------------------------------------
+
+let editingReminder = null;
+
+function openReminderModal(reminder){
+  editingReminder = reminder || null;
+  const isEdit = !!reminder;
+  const parsed = isEdit ? remParseDue(reminder.due) : null;
+
+  document.getElementById('reminder-modal-title').textContent = isEdit ? 'Edit reminder' : 'Add reminder';
+  document.getElementById('reminder-submit').textContent = isEdit ? 'Save changes' : 'Add reminder';
+  document.getElementById('reminder-delete').classList.toggle('is-hidden', !isEdit);
+  document.getElementById('reminder-title').value = isEdit ? (reminder.title || '') : '';
+  document.getElementById('reminder-notes').value = isEdit ? (reminder.notes || '') : '';
+
+  const now = new Date();
+  const dateStr = parsed
+    ? `${parsed.date.getFullYear()}-${String(parsed.date.getMonth() + 1).padStart(2, '0')}-${String(parsed.date.getDate()).padStart(2, '0')}`
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  document.getElementById('reminder-date').value = dateStr;
+  document.getElementById('reminder-time').value = parsed && !parsed.allDay
+    ? `${String(parsed.date.getHours()).padStart(2, '0')}:${String(parsed.date.getMinutes()).padStart(2, '0')}`
+    : '';
+
+  remApplyRecurrence(isEdit ? reminder.recurrence : null, parsed ? parsed.date : now);
+
+  document.getElementById('reminder-status').textContent = '';
+  document.getElementById('reminder-status').className = 'receipts-status';
+  document.getElementById('reminder-modal').classList.add('open');
+  document.getElementById('reminder-title').focus();
+}
+
+function closeReminderModal(){
+  document.getElementById('reminder-modal').classList.remove('open');
+  editingReminder = null;
+}
+
+async function submitReminder(){
+  const title = document.getElementById('reminder-title').value.trim();
+  const dateStr = document.getElementById('reminder-date').value;
+  const timeStr = document.getElementById('reminder-time').value;
+  const notes = document.getElementById('reminder-notes').value.trim();
+  const statusEl = document.getElementById('reminder-status');
+  const recurrence = remReadRecurrence();
+  const isEdit = !!editingReminder;
+
+  if (!title){
+    statusEl.textContent = 'A title is required.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+  if (recurrence && !dateStr){
+    statusEl.textContent = 'A repeating reminder needs a date to repeat from.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+  if (recurrence && recurrence.freq === 'weekly' && !recurrence.byWeekday.length){
+    statusEl.textContent = 'Pick at least one day of the week.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+
+  const body = { title, notes, recurrence };
+  if (dateStr){
+    body.due = timeStr ? `${dateStr} ${timeStr}:00` : dateStr;
+    body.allDay = !timeStr;
+  }
+
+  const btn = document.getElementById('reminder-submit');
+  btn.disabled = true;
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'receipts-status';
+  try {
+    const url = isEdit ? `/api/reminders/${encodeURIComponent(editingReminder.uid)}` : '/api/reminders';
+    const res = await fetch(url, {
+      method: isEdit ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok){
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'request failed');
+    }
+    closeReminderModal();
+    await renderReminders();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteEditingReminder(){
+  if (!editingReminder) return;
+  const statusEl = document.getElementById('reminder-status');
+  statusEl.textContent = 'Deleting…';
+  statusEl.className = 'receipts-status';
+  try {
+    const res = await fetch(`/api/reminders/${encodeURIComponent(editingReminder.uid)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'request failed');
+    closeReminderModal();
+    await renderReminders();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  }
+}
+
+remBuildWeekdayChips();
+document.getElementById('reminder-freq').addEventListener('change', remUpdateRecurrenceUI);
+document.getElementById('reminder-monthly-mode').addEventListener('change', remUpdateRecurrenceUI);
+document.getElementById('scratch-pad-add-reminder-btn').addEventListener('click', () => openReminderModal(null));
+document.getElementById('reminder-modal-close').addEventListener('click', closeReminderModal);
+document.getElementById('reminder-cancel').addEventListener('click', closeReminderModal);
+document.getElementById('reminder-submit').addEventListener('click', submitReminder);
+document.getElementById('reminder-delete').addEventListener('click', deleteEditingReminder);
+document.getElementById('reminder-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'reminder-modal') closeReminderModal();
+});
+
+renderReminders();
 
 // ---------------------------------------------------------------------
 // Shipping label tool: paste an image or drag a PDF -> Claude vision reads
@@ -3594,6 +4075,12 @@ async function refresh(){
     renderHomeStatus(data.homeAssistant);
     renderControls(data.controls);
     renderRing(data.ring);
+    // Reminders come from their own endpoint rather than /api/dashboard: they
+    // are also edited from the HA to-do panel and rolled forward by the
+    // backend scheduler, so the card has to re-read on every cycle to stay in
+    // step with changes it didn't make. Deliberately not awaited - a slow or
+    // unreachable HA must not delay the rest of the board.
+    renderReminders();
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){
