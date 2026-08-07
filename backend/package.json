@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test --test-reporter=spec test/recurrence.test.mjs test/reminders.test.mjs test/ipp-codec.test.mjs test/ipp-client.test.mjs"
+    "test": "node --test --test-reporter=spec test/recurrence.test.mjs test/reminders.test.mjs test/ipp-codec.test.mjs test/ipp-client.test.mjs test/build.test.mjs"
   },
   "devDependencies": {
     "ipp": "^1.1.0"

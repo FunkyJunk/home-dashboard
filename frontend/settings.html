@@ -60,6 +60,27 @@
     background:var(--c-bg); color:var(--c-text);
   }
   .settings-panel-title{font-size:1.3rem; font-weight:600; margin-bottom:1.5rem;}
+  /* Build pane */
+  .is-hidden{display:none !important;}
+  .build-grid{display:grid; grid-template-columns:minmax(9rem, max-content) 1fr; gap:.4rem 1rem; font-size:.85rem;}
+  .build-grid dt, .build-key{color:var(--c-text-dim); font-family:'IBM Plex Mono', monospace; font-size:.75rem; text-transform:uppercase; letter-spacing:.03em;}
+  .build-val{font-family:'IBM Plex Mono', monospace; word-break:break-all;}
+  .build-val a{color:var(--teal);}
+  .build-val.muted{color:var(--c-text-dim);}
+  .build-warn{
+    background:var(--coral-dim); border:1px solid var(--coral); color:var(--coral);
+    border-radius:calc(var(--radius-scale, 1) * 6px); padding:.6rem .8rem;
+    font-size:.82rem; margin-bottom:1rem; line-height:1.4;
+  }
+  .build-log{
+    background:var(--bg-inset); border:1px solid var(--c-border);
+    border-radius:calc(var(--radius-scale, 1) * 6px); padding:.75rem;
+    font-family:'IBM Plex Mono', monospace; font-size:.72rem; line-height:1.5;
+    max-height:26rem; overflow:auto; white-space:pre-wrap; word-break:break-word; margin:0;
+  }
+  .build-log .lvl-error{color:var(--coral);}
+  .build-log .lvl-warn{color:var(--amber);}
+  .build-log .log-at{color:var(--c-text-dim);}
   .settings-block{background:var(--c-panel); border:1px solid var(--c-border); border-radius:calc(var(--radius-scale, 1) * 6px); padding:1.25rem; margin-bottom:1.5rem;}
   .settings-block-title{font-size:.95rem; font-weight:600; margin-bottom:.75rem;}
   .settings-block-hint{font-size:.8rem; color:var(--c-text-dim); margin-bottom:.75rem; line-height:1.4;}
@@ -178,6 +199,7 @@
       <button type="button" class="settings-nav-item" data-section="database">Database</button>
       <button type="button" class="settings-nav-item" data-section="theme">Theme</button>
       <button type="button" class="settings-nav-item" data-section="security">Security</button>
+      <button type="button" class="settings-nav-item" data-section="build">Build</button>
     </div>
     <div class="settings-sidebar-footer">
       <span class="settings-sidebar-footer-label">Content theme</span>
@@ -361,6 +383,52 @@
       </div>
     </section>
 
+    <section class="settings-panel" data-panel="build" hidden>
+      <h1 class="settings-panel-title">Build</h1>
+      <p class="settings-block-hint">
+        What is actually running on the NAS. Frontend and backend are separate
+        images built by separate CI jobs, so they can be at different commits &mdash;
+        if a change seems missing, compare the two below before suspecting the
+        deploy.
+      </p>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Deployed versions</div>
+        <div class="build-warn is-hidden" id="build-mismatch"></div>
+        <div class="build-grid" id="build-versions">Loading&hellip;</div>
+      </div>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Backend runtime</div>
+        <div class="build-grid" id="build-runtime">Loading&hellip;</div>
+      </div>
+
+      <div class="settings-block">
+        <div class="settings-block-title">Backend log</div>
+        <p class="settings-block-hint">
+          The backend's own recent output, newest last. This is a copy held in
+          memory, so it resets whenever the backend restarts and only reaches
+          back as far as its buffer &mdash; <code>docker logs dashboard-backend</code>
+          on the NAS is still the complete record.
+        </p>
+        <div class="settings-row" style="margin-bottom:.75rem;">
+          <select class="receipt-input" id="build-log-level" style="width:auto;">
+            <option value="">All levels</option>
+            <option value="warn">Warnings and errors</option>
+            <option value="error">Errors only</option>
+          </select>
+          <select class="receipt-input" id="build-log-limit" style="width:auto;">
+            <option value="100">Last 100 lines</option>
+            <option value="200" selected>Last 200 lines</option>
+            <option value="300">Last 300 lines</option>
+          </select>
+          <button type="button" class="receipt-btn" id="build-refresh-btn">Refresh</button>
+          <span class="settings-block-hint" id="build-log-meta" style="margin:0;"></span>
+        </div>
+        <pre class="build-log" id="build-log">Loading&hellip;</pre>
+      </div>
+    </section>
+
     <section class="settings-panel" data-panel="theme" hidden>
       <h1 class="settings-panel-title">Theme</h1>
 
@@ -459,6 +527,9 @@ function showSection(name){
   document.querySelectorAll('.settings-nav-item').forEach(b => b.classList.toggle('active', b.dataset.section === name));
   document.querySelectorAll('.settings-panel').forEach(p => p.hidden = p.dataset.panel !== name);
   history.replaceState(null, '', '#' + name);
+  // Fetched on open rather than on page load: it costs two requests and is
+  // stale the moment a deploy lands, so it should reflect when you looked.
+  if (name === 'build') refreshBuildPane();
 }
 document.querySelectorAll('.settings-nav-item').forEach(btn => {
   btn.addEventListener('click', () => showSection(btn.dataset.section));
@@ -474,6 +545,115 @@ document.querySelectorAll('[data-content-theme]').forEach(btn => {
   btn.addEventListener('click', () => applyContentTheme(btn.dataset.contentTheme));
 });
 applyContentTheme(localStorage.getItem(SETTINGS_CONTENT_THEME_KEY) || 'dark');
+
+// --- Build pane -----------------------------------------------------------
+// Answers "is what I pushed actually running?" without SSH. The two images are
+// built by separate CI jobs and deployed independently by Watchtower, so they
+// are read from separate sources and compared: /build.json is baked into the
+// frontend image at build time, /api/build comes from the backend process.
+function buildRow(key, valueHtml, muted){
+  return `<div class="build-key">${escapeHtml(key)}</div>` +
+         `<div class="build-val${muted ? ' muted' : ''}">${valueHtml}</div>`;
+}
+
+function fmtStamp(iso){
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return escapeHtml(iso);
+  const ago = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
+  const agoText = ago < 1 ? 'just now'
+    : ago < 60 ? `${ago} min ago`
+    : ago < 1440 ? `${Math.round(ago / 60)} h ago`
+    : `${Math.round(ago / 1440)} d ago`;
+  return `${escapeHtml(d.toLocaleString())} <span class="log-at">(${agoText})</span>`;
+}
+
+function describeBuild(label, b){
+  if (!b) return buildRow(label, 'unavailable', true);
+  if (!b.commit) {
+    // No commit means the image wasn't built by CI - worth saying plainly
+    // rather than rendering a row of blanks.
+    return buildRow(label, 'built outside CI &mdash; no build metadata', true);
+  }
+  const commit = b.ciRunUrl
+    ? `<a href="${escapeHtml(b.ciRunUrl)}" target="_blank" rel="noopener">${escapeHtml(b.commit.slice(0, 7))}</a>`
+    : escapeHtml(b.commit.slice(0, 7));
+  const bits = [commit];
+  if (b.ref) bits.push(`on ${escapeHtml(b.ref)}`);
+  if (b.ciRunNumber) bits.push(`run #${escapeHtml(b.ciRunNumber)}`);
+  return buildRow(label, bits.join(' &middot; ')) +
+         buildRow(label + ' built', fmtStamp(b.builtAt) || 'unknown');
+}
+
+async function loadBuildInfo(){
+  const [frontend, backend] = await Promise.all([
+    // Cache-busted: build.json is a static file, and a cached copy would defeat
+    // the entire point of this pane.
+    fetch('/build.json?t=' + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('/api/build').then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  document.getElementById('build-versions').innerHTML =
+    describeBuild('Frontend', frontend) + describeBuild('Backend', backend);
+
+  const warn = document.getElementById('build-mismatch');
+  if (frontend?.commit && backend?.commit && frontend.commit !== backend.commit){
+    warn.textContent = 'Frontend and backend are running different commits. '
+      + 'One image has not been deployed yet - Watchtower updates them independently, '
+      + 'so give it a few minutes, then reload.';
+    warn.classList.remove('is-hidden');
+  } else {
+    warn.classList.add('is-hidden');
+  }
+
+  const rt = backend?.runtime;
+  document.getElementById('build-runtime').innerHTML = !rt
+    ? buildRow('Status', 'backend unreachable', true)
+    : [
+        buildRow('Started', fmtStamp(rt.startedAt) || 'unknown'),
+        buildRow('Uptime', escapeHtml(String(Math.floor(rt.uptimeSeconds / 3600)) + 'h '
+          + String(Math.floor((rt.uptimeSeconds % 3600) / 60)) + 'm')),
+        buildRow('Node', escapeHtml(rt.node || '?')),
+        // Called out because a wrong timezone silently shifts when reminders
+        // fire, and it shipped wrong once.
+        buildRow('Timezone', escapeHtml(rt.timezone || 'unknown')
+          + (rt.tzEnvSet ? '' : ' <span class="lvl-warn">(TZ not set)</span>')),
+        buildRow('Local time', escapeHtml(rt.localTime || '')),
+        buildRow('Log buffer', escapeHtml(`${rt.logLinesBuffered} / ${rt.logCapacity} lines`)),
+      ].join('');
+}
+
+async function loadBuildLog(){
+  const el = document.getElementById('build-log');
+  const meta = document.getElementById('build-log-meta');
+  const level = document.getElementById('build-log-level').value;
+  const limit = document.getElementById('build-log-limit').value;
+  try {
+    const res = await fetch(`/api/build/log?limit=${encodeURIComponent(limit)}`
+      + (level ? `&level=${encodeURIComponent(level)}` : ''));
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const data = await res.json();
+    meta.textContent = `${data.returned} shown, ${data.buffered} buffered`;
+    el.innerHTML = data.lines.length
+      ? data.lines.map(l => {
+          const t = new Date(l.at);
+          const stamp = Number.isNaN(t.getTime()) ? l.at : t.toLocaleTimeString();
+          return `<span class="log-at">${escapeHtml(stamp)}</span> `
+            + `<span class="lvl-${escapeHtml(l.level)}">${escapeHtml(l.text)}</span>`;
+        }).join('\n')
+      : 'Nothing logged at this level.';
+    // Newest last, so start scrolled to the bottom like a terminal would.
+    el.scrollTop = el.scrollHeight;
+  } catch (e){
+    meta.textContent = '';
+    el.textContent = 'Could not read the log: ' + (e.message || 'unknown error');
+  }
+}
+
+function refreshBuildPane(){ loadBuildInfo(); loadBuildLog(); }
+document.getElementById('build-refresh-btn').addEventListener('click', refreshBuildPane);
+document.getElementById('build-log-level').addEventListener('change', loadBuildLog);
+document.getElementById('build-log-limit').addEventListener('change', loadBuildLog);
 
 // --- Tax folder (own copy of index.html's state - both pages read/write
 // the same IndexedDB-stored handle via idb.js, just via separate
@@ -1469,7 +1649,7 @@ loadIgnoreKeywords().then(renderSettingsIgnoreGrids);
 loadDbSchema();
 renderThemeList();
 loadDevices();
-showSection(['receipts', 'devices', 'database', 'theme', 'security'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
+showSection(['receipts', 'devices', 'database', 'theme', 'security', 'build'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'receipts');
 loadPasskeys();
 </script>
 </body>

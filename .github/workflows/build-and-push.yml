@@ -56,9 +56,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A single timestamp shared by both matrix jobs would be nicer, but each
+      # job runs on its own runner - so each stamps its own build time, and the
+      # two can differ by seconds. The commit is what actually identifies a
+      # build; the time is for reading at a glance.
+      - id: stamp
+        run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
           platforms: linux/amd64
           push: true
           tags: ghcr.io/funkyjunk/home-dashboard-${{ matrix.service }}:latest
+          # Surfaced at /api/build and on Settings > Build, so "did my push
+          # actually reach the NAS?" is answerable from the dashboard.
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_REF=${{ github.ref_name }}
+            BUILD_TIME=${{ steps.stamp.outputs.time }}
+            BUILD_RUN_NUMBER=${{ github.run_number }}
+            BUILD_RUN_URL=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            BUILD_IMAGE=ghcr.io/funkyjunk/home-dashboard-${{ matrix.service }}:latest

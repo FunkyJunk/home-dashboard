@@ -16,6 +16,7 @@ import {
   startReminderScheduler,
 } from "./reminders.js";
 import { getPrinterAttributes, printJob, chooseFormat, probeHost, PRODUCIBLE_FORMATS } from "./ipp.js";
+import { captureConsole, createBuildRouter } from "./build.js";
 import {
   createDevicesRouter,
   buildUserDeviceTiles,
@@ -23,6 +24,12 @@ import {
   tileTypeFor,
   isControllableType,
 } from "./devices.js";
+
+// First statement after the imports, so /api/build/log covers this file's own
+// startup logging. It cannot capture anything the imported modules logged while
+// being evaluated - ESM hoists imports above all statements - but none of them
+// log at module scope today.
+captureConsole();
 
 const app = express();
 // Default 100kb limit rejects any real pasted photo/screenshot once
@@ -72,6 +79,7 @@ const reminders = createRemindersClient({
   listServices: () => listHaServices(),
 });
 app.use("/api/reminders", createRemindersRouter(reminders));
+app.use("/api/build", createBuildRouter());
 
 // ---------------------------------------------------------------------------
 // Label printing straight from the NAS over IPP, bypassing the browser print
