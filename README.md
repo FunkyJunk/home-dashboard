@@ -326,3 +326,77 @@ Behaviour worth knowing:
 Available repeats: daily / every N days, every weekday (Mon-Fri), weekly on any
 combination of days / every N weeks, monthly on the same date or on the nth
 (or last) weekday / every N months, and yearly / every N years.
+
+## 11. Printing labels from the NAS over IPP
+
+By default a 4x6 label opens the browser's print dialog, so the printer has to
+be visible to whatever device has the dashboard open. Set `LABEL_PRINTER_URI`
+and the NAS sends the job itself over IPP - no dialog, no client-side printer
+setup.
+
+The document sent is the *same* 4x6 PDF the label pipeline already builds with
+jsPDF for the saved copy, so there is no second rendering path that could drift
+from the canvas pipeline in `frontend/index.html`.
+
+### Finding the printer's URI
+
+The backend container runs on Docker's bridge network, not host, so mDNS
+(Bonjour) multicast never reaches it and the printer cannot be auto-discovered.
+Given an IP or hostname, the probe endpoint tries the conventional IPP paths and
+reports which answers:
+
+```bash
+curl -X POST http://<nas>:3000/api/printer/probe \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"192.168.1.60"}'
+```
+
+To find the IP in the first place, from the NAS shell (HA's container is
+host-networked, so it can see the LAN):
+
+```bash
+avahi-browse -rt _ipp._tcp
+```
+
+Then set it in `infra/.env` and `docker compose up -d`:
+
+```
+LABEL_PRINTER_URI=ipp://192.168.1.60:631/ipp/print
+LABEL_PRINTER_MEDIA=na_index-4x6_4x6in
+```
+
+`GET /api/printer` reports what the printer says about itself - name, model,
+state, `media-supported`, and the formats it accepts - plus which format the
+dashboard picked.
+
+### Document format is negotiated, not assumed
+
+The dashboard can produce `application/pdf`, `image/png`, and `image/jpeg`. It
+reads the printer's `document-format-supported` and picks the best match,
+preferring PDF. A printer advertising only `application/octet-stream` (common on
+AirPrint firmware) is sent the PDF bytes under that type and left to sniff them.
+
+**A printer that speaks only raster (`image/urf`, `image/pwg-raster`) cannot be
+used this way.** Encoding PWG Raster or Apple URF is a real amount of work that
+isn't here. Rather than send a document such a printer will reject, the
+dashboard reports it: `GET /api/printer` returns `printable: false`, and a print
+attempt returns HTTP 415 naming both what the printer accepts and what the
+dashboard can send. Label printing falls back to the browser dialog in that
+case, so nothing is lost.
+
+### Failure behaviour
+
+A printer problem never costs you the label. If the NAS can't print - offline,
+out of paper, wrong format - the error is shown in the label modal and the
+browser print dialog opens as it did before. Specifically:
+
+- unreachable printer: `could not reach printer at http://... (ECONNREFUSED)`
+- out of paper: `printer is not accepting jobs (media-empty-error)`
+- format mismatch: HTTP 415 with `printerAccepts` and `dashboardCanSend`
+
+The IPP client is `backend/src/ipp.js`, hand-rolled for the three operations
+needed (Get-Printer-Attributes, Print-Job, and path probing) rather than adding
+a dependency. Note that IPP's attribute order is mandated - `attributes-charset`
+first, `attributes-natural-language` second - and printers reject the request
+outright when it's wrong, which is a miserable thing to debug from a generic
+HTTP 400.

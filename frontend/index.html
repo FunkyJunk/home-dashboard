@@ -3595,6 +3595,65 @@ document.getElementById('label-crop-rotate-btn').addEventListener('click', async
   await runPipelineAndUpdateUI();
 });
 
+// Printer status is fetched once and cached: the label modal asks about it at
+// print time, and a per-print round trip to a sleeping thermal printer would
+// stall the one moment the user is waiting on.
+let nasPrinterInfo = null;
+
+async function loadNasPrinterInfo(){
+  try {
+    const res = await fetch('/api/printer');
+    nasPrinterInfo = await res.json();
+  } catch {
+    nasPrinterInfo = { configured: false, error: 'unreachable' };
+  }
+  return nasPrinterInfo;
+}
+
+const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  // result is "data:application/pdf;base64,...." - only the payload is wanted.
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(reader.error || new Error('could not read the label PDF'));
+  reader.readAsDataURL(blob);
+});
+
+// Returns true when the NAS accepted the job, false to mean "use the browser
+// dialog instead". A failure here must never lose the label: the caller falls
+// back to window.print() rather than leaving the user with nothing.
+async function sendLabelToNasPrinter(pdfBlob, recipient, statusEl){
+  const info = nasPrinterInfo || await loadNasPrinterInfo();
+  if (!info || !info.configured || info.printable === false) return false;
+
+  try {
+    statusEl.textContent = 'Sending to printer…';
+    statusEl.className = 'receipts-status';
+    const res = await fetch('/api/printer/print-label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document: await blobToBase64(pdfBlob),
+        mediaType: 'application/pdf',
+        jobName: `label-${sanitizeFilenamePart(recipient)}`,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok){
+      const extra = data.printerAccepts ? ` (printer accepts: ${data.printerAccepts.join(', ')})` : '';
+      throw new Error((data.error || 'print failed') + extra);
+    }
+    return true;
+  } catch (e){
+    // Surfaced rather than swallowed, but the browser dialog still opens - so
+    // a printer problem costs a click, not the label.
+    statusEl.textContent = `Printer error, opening the print dialog instead: ${e.message || 'unknown error'}`;
+    statusEl.className = 'receipts-status error';
+    return false;
+  }
+}
+
+loadNasPrinterInfo();
+
 function printLabelImage(dataUrl, preset){
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`<!doctype html><html><head><title>Print label</title><style>
@@ -3646,7 +3705,11 @@ async function confirmLabelCrop(){
       statusEl.className = 'receipts-status error';
     }
 
-    printLabelImage(croppedDataUrl, preset);
+    // Prefer the NAS printer when one is configured and can actually take a
+    // document we can produce; otherwise fall back to the browser dialog, which
+    // is still the only option on a printer that speaks raster only.
+    const sent = await sendLabelToNasPrinter(pdfBlob, recipient, statusEl);
+    if (!sent) printLabelImage(croppedDataUrl, preset);
     closeLabelCropModal();
   } catch (e){
     statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');

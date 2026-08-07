@@ -15,6 +15,7 @@ import {
   createRemindersRouter,
   startReminderScheduler,
 } from "./reminders.js";
+import { getPrinterAttributes, printJob, chooseFormat, probeHost, PRODUCIBLE_FORMATS } from "./ipp.js";
 import {
   createDevicesRouter,
   buildUserDeviceTiles,
@@ -71,6 +72,101 @@ const reminders = createRemindersClient({
   listServices: () => listHaServices(),
 });
 app.use("/api/reminders", createRemindersRouter(reminders));
+
+// ---------------------------------------------------------------------------
+// Label printing straight from the NAS over IPP, bypassing the browser print
+// dialog. The frontend already renders the normalised label to a 4x6 PDF with
+// jsPDF for the saved copy, so that same document is what gets posted here -
+// no second rendering path to keep in step with the canvas pipeline.
+// ---------------------------------------------------------------------------
+const LABEL_PRINTER_URI = process.env.LABEL_PRINTER_URI || null;
+const LABEL_PRINTER_MEDIA = process.env.LABEL_PRINTER_MEDIA || null;
+
+app.get("/api/printer", async (_req, res) => {
+  if (!LABEL_PRINTER_URI) {
+    return res.json({ configured: false, producibleFormats: PRODUCIBLE_FORMATS });
+  }
+  try {
+    const info = await getPrinterAttributes(LABEL_PRINTER_URI);
+    const choice = chooseFormat(info.formats, PRODUCIBLE_FORMATS);
+    res.json({
+      configured: true,
+      ...info,
+      producibleFormats: PRODUCIBLE_FORMATS,
+      // Surfaced so the UI can say "this printer needs raster" rather than
+      // offering a button that will always fail.
+      chosenFormat: choice?.format || null,
+      printable: !!choice,
+    });
+  } catch (e) {
+    res.status(502).json({ configured: true, uri: LABEL_PRINTER_URI, error: e.message || "printer unreachable" });
+  }
+});
+
+// Discovery helper: the backend container is on Docker's bridge network, not
+// host, so mDNS/Bonjour multicast never reaches it and the printer cannot be
+// browsed for. Given a hostname or IP this walks the handful of conventional
+// IPP paths and reports which one answers.
+app.post("/api/printer/probe", async (req, res) => {
+  const host = String(req.body?.host || "").trim();
+  // Hostname or IP, with an optional :port. No scheme and no path - the point
+  // of the probe is to find the path.
+  if (!/^[a-zA-Z0-9._-]+(:\d{1,5})?$/.test(host)) {
+    return res.status(400).json({ error: "a hostname or IP (optionally host:port) is required, with no scheme or path" });
+  }
+  try {
+    res.json({ host, results: await probeHost(host) });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "probe failed" });
+  }
+});
+
+app.post("/api/printer/print-label", async (req, res) => {
+  if (!LABEL_PRINTER_URI) {
+    return res.status(409).json({ error: "no printer configured - set LABEL_PRINTER_URI" });
+  }
+  const { document, mediaType, jobName, copies } = req.body || {};
+  if (!document || typeof document !== "string") {
+    return res.status(400).json({ error: "document (base64) is required" });
+  }
+  if (!PRODUCIBLE_FORMATS.includes(mediaType)) {
+    return res.status(400).json({ error: `mediaType must be one of ${PRODUCIBLE_FORMATS.join(", ")}` });
+  }
+  try {
+    const info = await getPrinterAttributes(LABEL_PRINTER_URI);
+    if (info.acceptingJobs === false) {
+      return res.status(502).json({
+        error: `printer is not accepting jobs${info.stateReasons.length ? ` (${info.stateReasons.join(", ")})` : ""}`,
+      });
+    }
+    const choice = chooseFormat(info.formats, [mediaType]);
+    if (!choice) {
+      // Naming both sides is the whole point: a bare "unsupported" leaves no
+      // way to tell whether to change the dashboard or the printer.
+      return res.status(415).json({
+        error: `printer cannot accept ${mediaType}`,
+        printerAccepts: info.formats,
+        dashboardCanSend: PRODUCIBLE_FORMATS,
+      });
+    }
+    const data = Buffer.from(document, "base64");
+    if (!data.length) return res.status(400).json({ error: "document decoded to zero bytes" });
+
+    const job = await printJob(LABEL_PRINTER_URI, {
+      data,
+      // A printer that only advertises application/octet-stream is told
+      // octet-stream and left to sniff the document itself.
+      format: choice.viaOctetStream ? "application/octet-stream" : choice.format,
+      jobName: String(jobName || "shipping-label").slice(0, 120),
+      copies: Number(copies) || 1,
+      media: LABEL_PRINTER_MEDIA || undefined,
+    });
+    console.log(`[printer] sent ${data.length}B as ${choice.format} -> job ${job.jobId ?? "?"} (${job.jobState ?? "?"})`);
+    res.json({ ok: true, bytes: data.length, sentAs: choice.format, ...job });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to print" });
+  }
+});
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
