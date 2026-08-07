@@ -189,3 +189,37 @@ test("rejects unusable input before touching HA", async () => {
 test("completing something that is already gone fails cleanly", async () => {
   await assert.rejects(() => client.complete("no-such-uid"), /reminder not found/);
 });
+
+test("reports which to-do list it is using, and flags an ambiguous choice", async () => {
+  // Both targets are auto-discovered by taking the first match, so a shopping
+  // list can quietly capture the reminders. HA's own UI is LAN-only, so this
+  // has to be answerable over HTTP.
+  const src = await client.describeSource();
+  assert.equal(src.usingTodoEntity, "todo.dashboard");
+  assert.equal(src.pinnedByEnv, false);
+  assert.equal(src.usingNotifyService, "mobile_app_test_iphone");
+  assert.ok(src.timezone, "reports the zone reminders are compared in");
+
+  // One list, no pin: an incidental choice, but the only possible one.
+  assert.equal(src.todoCandidates.length, 1);
+  assert.equal(src.ambiguous, false);
+
+  // Two lists and no pin is the case worth flagging.
+  ha.items.length = 0;
+  const withShopping = createRemindersClient({
+    ...ha.deps,
+    getStates: async () => [
+      { entity_id: "todo.shopping_list", state: "3", attributes: { friendly_name: "Shopping List" } },
+      { entity_id: "todo.dashboard", state: "0", attributes: { friendly_name: "Reminders" } },
+    ],
+  });
+  const amb = await withShopping.describeSource();
+  assert.equal(amb.ambiguous, true, "two lists and no pin must be flagged");
+  assert.equal(amb.usingTodoEntity, "todo.shopping_list", "discovery takes the first, which is the hazard");
+  assert.deepEqual(
+    amb.todoCandidates.map((c) => c.entity),
+    ["todo.shopping_list", "todo.dashboard"]
+  );
+  assert.equal(amb.todoCandidates[0].name, "Shopping List");
+  assert.equal(amb.todoCandidates[0].openItems, 3);
+});
