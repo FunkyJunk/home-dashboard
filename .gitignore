@@ -11,3 +11,6 @@ nest-credentials.json
 # Per-machine Claude Code permissions. Only ever ignored here by a global
 # gitignore before, so it would have been committed on any machine without one.
 .claude/settings.local.json
+# Generated into the image at build time by frontend/Dockerfile from the CI
+# build args. A copy in the repo would be stale and misleading.
+frontend/build.json

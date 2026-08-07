@@ -475,3 +475,40 @@ requests, so a branch gets a verdict before merge.
 - **Test files are listed explicitly in the `test` script** rather than globbed.
   Glob support in `node --test` arrived in Node 21, and CI pins Node 20 to match
   `node:20-alpine`. A new test file needs adding to that list.
+
+## 13. Seeing what is actually deployed
+
+**Settings → Build** answers "is what I pushed running?" without SSH-ing into
+the NAS.
+
+- **Deployed versions** — the commit, branch, CI run number and build time for
+  the frontend and backend *separately*. They are built by separate CI matrix
+  jobs and updated independently by Watchtower, so they can genuinely be at
+  different commits; the page warns when they are. That mismatch is the usual
+  explanation for "I deployed but nothing changed".
+- **Backend runtime** — start time, uptime, Node version, and the effective
+  timezone. Timezone is there because it silently decides when reminders fire
+  and it shipped wrong once (see §10).
+- **Backend log** — the backend's recent output, filterable by level. It's a
+  ring buffer in memory, so it resets on restart and holds only the last few
+  hundred lines. `docker logs dashboard-backend` on the NAS is still the
+  complete record.
+
+The commit links to its GitHub Actions run, so the full build log is one click
+away.
+
+### How the values get there
+
+CI passes the commit, ref, timestamp, run number and run URL as Docker build
+args (`.github/workflows/build-and-push.yml`). The backend bakes them into the
+image as env vars and serves them at `GET /api/build`; the frontend has no
+process to hold env vars, so its Dockerfile writes them into `/build.json`,
+which the page fetches. Both are declared *after* the dependency install layer
+so a commit-to-commit change can't invalidate the npm cache.
+
+**All fields null means the image wasn't built by CI** — the page says so
+explicitly rather than showing blanks, which is what you want to see if someone
+built by hand on the NAS.
+
+One quirk: Node's own deprecation warnings arrive on the error channel, so they
+appear under "Errors only". They aren't application errors.
