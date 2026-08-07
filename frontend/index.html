@@ -284,7 +284,9 @@
   .week-temps .hi{color:var(--amber);}
   .week-temps .lo{color:var(--text-dim); margin-left:.4em;}
 
-  /* Tasks */
+  /* Card head with an inline add button - used by Scratch Pad. Kept the
+     .task-* names when the Tasks card was removed rather than renaming
+     across every card that borrows them. */
   .task-card-head{
     display:flex; align-items:center; justify-content:space-between;
     margin-bottom:1rem; padding-bottom:.6rem; border-bottom:1px solid var(--panel-line);
@@ -297,36 +299,62 @@
     border-radius:calc(var(--radius-scale, 1) * 4px); cursor:pointer;
   }
   .task-add-btn:hover{color:var(--teal); border-color:var(--teal);}
-  .task-list{display:flex; flex-direction:column;}
-  .task-row{
-    display:flex; align-items:flex-start; gap:.65rem;
-    padding:.6rem .6rem; margin:0 -.6rem; border-bottom:1px solid var(--panel-line);
-    border-radius:calc(var(--radius-scale, 1) * 4px);
+  /* Reminders card. Backed by a Home Assistant todo entity; the repeat rule
+     lives in backend/src/reminders.js because HA's TodoItem has no recurrence
+     field. */
+  .rem-list{display:flex; flex-direction:column;}
+  .rem-row{
+    display:flex; align-items:flex-start; gap:.6rem;
+    padding:.5rem 0; border-bottom:1px solid var(--panel-line);
   }
-  .task-row:last-child{border-bottom:none;}
-  .task-row.overdue{background:var(--coral-dim); border-bottom-color:transparent;}
-  .task-checkbox{
+  .rem-row:last-child{border-bottom:none;}
+  .rem-check{
     appearance:none; width:1.1em; height:1.1em; margin-top:.15em; flex-shrink:0;
-    border:1px solid var(--panel-line); border-radius:calc(var(--radius-scale, 1) * 4px); background:var(--bg-inset);
-    cursor:pointer; position:relative;
+    border:1px solid var(--panel-line); border-radius:calc(var(--radius-scale, 1) * 4px);
+    background:var(--bg-inset); cursor:pointer;
   }
-  .task-checkbox:hover{border-color:var(--teal);}
-  .task-checkbox:checked{background:var(--teal); border-color:var(--teal);}
-  .task-checkbox:disabled{opacity:.5; cursor:not-allowed;}
-  .task-body{flex:1; min-width:0; cursor:pointer;}
-  .task-title{font-size:.9rem; color:var(--text); word-break:break-word;}
-  .task-due-row{display:flex; align-items:center; gap:.4em; margin-top:.3rem;}
-  .task-due{
+  .rem-check:hover{border-color:var(--teal);}
+  .rem-check:checked{background:var(--teal); border-color:var(--teal);}
+  .rem-check:disabled{opacity:.5; cursor:not-allowed;}
+  .rem-body{flex:1; min-width:0; cursor:pointer;}
+  .rem-title{font-size:.9rem; color:var(--text); word-break:break-word;}
+  .rem-meta{display:flex; flex-wrap:wrap; align-items:center; gap:.4em; margin-top:.25rem;}
+  .rem-badge{
     display:inline-flex; align-items:center; gap:.3em;
-    font-family:'IBM Plex Mono', monospace; font-size:.72rem; color:var(--text-dim);
+    font-family:'IBM Plex Mono', monospace; font-size:.7rem; color:var(--text-dim);
     background:var(--bg-inset); border:1px solid var(--panel-line);
-    border-radius:calc(var(--radius-scale, 1) * 12px); padding:.2em .6em .2em .5em;
+    border-radius:calc(var(--radius-scale, 1) * 12px); padding:.15em .55em;
   }
-  .task-due svg{width:.9em; height:.9em; flex-shrink:0;}
-  .task-due.overdue{color:var(--coral); border-color:var(--coral-dim); background:transparent;}
-  .task-repeat{display:inline-flex; color:var(--text-dim); flex-shrink:0;}
-  .task-repeat svg{width:.85em; height:.85em;}
-  .task-notes{font-size:.78rem; color:var(--text-dim); margin-top:.2rem;}
+  .rem-badge.overdue{color:var(--coral); border-color:var(--coral-dim);}
+  .rem-badge svg{width:.85em; height:.85em; flex-shrink:0;}
+  .rem-notes{font-size:.75rem; color:var(--text-dim); margin-top:.2rem;}
+  .rem-empty{font-size:.85rem; color:var(--text-dim); padding:.1rem 0 .6rem;}
+  .rem-modal-inner{
+    max-width:min(90vw, 480px); box-sizing:border-box;
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 14px); padding:1.5rem; box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  .rem-modal-inner .modal-head{
+    padding-bottom:.75rem; margin-bottom:1.25rem; border-bottom:1px solid var(--panel-line);
+    font-size:1rem;
+  }
+  .rem-grid{display:grid; grid-template-columns:1fr 1fr; gap:1rem 1.25rem; margin-bottom:1.25rem;}
+  .rem-detail{
+    display:flex; flex-direction:column; gap:1rem; margin:0 0 1.25rem;
+    padding:1rem; background:var(--bg-inset); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 8px);
+  }
+  .rem-weekdays{display:flex; flex-wrap:wrap; gap:.4rem;}
+  .rem-weekday{
+    display:inline-flex; align-items:center; gap:.35em; cursor:pointer;
+    font-size:.78rem; color:var(--text-dim);
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:calc(var(--radius-scale, 1) * 12px); padding:.25em .6em;
+  }
+  .rem-weekday input{accent-color:var(--teal); margin:0; cursor:pointer;}
+  .rem-weekday.on{color:var(--teal); border-color:var(--teal);}
+  .rem-title-input{font-size:1.05rem; font-weight:600; margin-bottom:.75rem;}
+  .rem-notes-input{min-height:4em; resize:vertical; margin-bottom:1rem;}
 
   .scratch-pad-dropzone{
     box-sizing:border-box; width:100%; background:var(--bg-inset);
@@ -423,15 +451,6 @@
   .label-crop-preview-wrap canvas{max-width:100%; max-height:50vh; border-radius:calc(var(--radius-scale, 1) * 4px); border:1px solid var(--panel-line);}
   .label-crop-fields{display:flex; flex-direction:column; gap:1rem; margin-bottom:1rem;}
 
-  .add-task-modal-inner{
-    max-width:min(90vw, 480px); box-sizing:border-box;
-    background:var(--panel); border:1px solid var(--panel-line);
-    border-radius:calc(var(--radius-scale, 1) * 14px); padding:1.5rem; box-shadow:0 20px 60px rgba(0,0,0,.5);
-  }
-  .add-task-modal-inner .modal-head{
-    padding-bottom:.75rem; margin-bottom:1.25rem; border-bottom:1px solid var(--panel-line);
-    font-size:1rem;
-  }
   /* Dedicated control class - do NOT reuse .receipt-input here. That class
      is defined later in the stylesheet with width:5.5em for tiny inline
      receipt fields, and a same-specificity rule appearing later in source
@@ -443,22 +462,9 @@
     padding:.65rem .8rem; color:var(--text); font-family:inherit; font-size:.9rem;
   }
   .add-task-ctrl:focus{outline:none; border-color:var(--teal);}
-  .add-task-title-input{font-size:1.05rem; font-weight:600; margin-bottom:.75rem;}
-  .add-task-notes-input{min-height:4.5em; resize:vertical; margin-bottom:1.25rem;}
-  .add-task-grid{
-    display:grid; grid-template-columns:1fr 1fr; gap:1rem 1.25rem; margin-bottom:1.5rem;
-  }
   .add-task-field{display:flex; flex-direction:column; gap:.4rem;}
   .add-task-field label{font-size:.75rem; color:var(--text-dim); font-family:'IBM Plex Mono', monospace; font-weight:600; letter-spacing:.02em; text-transform:uppercase;}
   .is-hidden{display:none !important;}
-  .add-task-recurrence-detail{
-    display:flex; flex-direction:column; gap:1rem; margin:-.75rem 0 1.5rem;
-    padding:1rem; background:var(--bg-inset); border:1px solid var(--panel-line); border-radius:calc(var(--radius-scale, 1) * 8px);
-  }
-  .add-task-recurrence-detail .add-task-row{display:grid; grid-template-columns:1fr 1fr; gap:1rem;}
-  .add-task-recurrence-keep{font-size:.8rem; color:var(--text-dim); margin:-1rem 0 1.5rem; line-height:1.4;}
-
-  .due-popup-modal-inner{max-width:min(90vw, 420px);}
 
   .hourly-strip{width:100%;}
   .hourly-chart{display:block; width:100%;}
@@ -890,12 +896,12 @@
         <div class="week-strip" id="week"></div>
       </div>
 
-      <div class="card" data-tile-id="tasks">
+      <div class="card" data-tile-id="reminders">
         <div class="task-card-head">
-          <h2 class="card-handle">Tasks</h2>
-          <button type="button" class="task-add-btn" id="task-add-btn" title="Add task">+</button>
+          <h2 class="card-handle">Reminders</h2>
+          <button type="button" class="task-add-btn" id="reminder-add-btn" title="Add reminder">+</button>
         </div>
-        <div class="task-list" id="tasks"><div class="empty">Loading&hellip;</div></div>
+        <div class="rem-list" id="reminder-list"></div>
       </div>
 
       <div class="card" data-tile-id="scratch-pad">
@@ -1026,101 +1032,83 @@
       </div>
     </div>
 
-    <div class="modal-overlay" id="add-task-modal">
-      <div class="modal-inner add-task-modal-inner">
+    <div class="modal-overlay" id="reminder-modal">
+      <div class="modal-inner rem-modal-inner">
         <div class="modal-head">
-          <span id="add-task-modal-title">Add task</span>
-          <button class="modal-close" id="add-task-modal-close">Close</button>
+          <span id="reminder-modal-title">Add reminder</span>
+          <button class="modal-close" id="reminder-modal-close">Close</button>
         </div>
-        <input type="text" class="add-task-ctrl add-task-title-input" id="add-task-title" placeholder="Task title">
-        <textarea class="add-task-ctrl add-task-notes-input" id="add-task-notes" placeholder="Description or notes (optional)"></textarea>
-        <div class="add-task-grid">
+        <input type="text" class="add-task-ctrl rem-title-input" id="reminder-title" placeholder="Reminder title">
+        <textarea class="add-task-ctrl rem-notes-input" id="reminder-notes" placeholder="Notes (optional) &mdash; these become the phone notification's body"></textarea>
+        <div class="rem-grid">
           <div class="add-task-field">
-            <label>Date</label>
-            <input type="date" class="add-task-ctrl" id="add-task-date">
+            <label for="reminder-date">Date</label>
+            <input type="date" class="add-task-ctrl" id="reminder-date">
           </div>
           <div class="add-task-field">
-            <label>Time</label>
-            <input type="time" class="add-task-ctrl" id="add-task-time" placeholder="--:--">
+            <label for="reminder-time">Time</label>
+            <input type="time" class="add-task-ctrl" id="reminder-time" placeholder="--:--">
           </div>
           <div class="add-task-field">
-            <label>List</label>
-            <select class="add-task-ctrl" id="add-task-list"></select>
-          </div>
-          <div class="add-task-field">
-            <label>Repeats</label>
-            <select class="add-task-ctrl" id="add-task-recurrence">
-              <option value="">Never</option>
+            <label for="reminder-freq">Repeat</label>
+            <select class="add-task-ctrl" id="reminder-freq">
+              <option value="">Does not repeat</option>
               <option value="daily">Daily</option>
+              <option value="weekdays">Every weekday (Mon&ndash;Fri)</option>
               <option value="weekly">Weekly</option>
-              <option value="biweekly">Biweekly</option>
               <option value="monthly">Monthly</option>
               <option value="yearly">Yearly</option>
             </select>
           </div>
+          <div class="add-task-field is-hidden" id="reminder-interval-field">
+            <label for="reminder-interval">Frequency</label>
+            <select class="add-task-ctrl" id="reminder-interval"></select>
+          </div>
         </div>
-        <p class="add-task-recurrence-keep is-hidden" id="add-task-recurrence-keep"></p>
-        <div class="add-task-recurrence-detail is-hidden" id="add-task-recurrence-detail">
-          <div class="add-task-field" id="add-task-weekday-field">
-            <label>On</label>
-            <select class="add-task-ctrl" id="add-task-weekday">
-              <option value="sunday">Sunday</option>
-              <option value="monday">Monday</option>
-              <option value="tuesday">Tuesday</option>
-              <option value="wednesday">Wednesday</option>
-              <option value="thursday">Thursday</option>
-              <option value="friday">Friday</option>
-              <option value="saturday">Saturday</option>
+        <div class="rem-detail is-hidden" id="reminder-detail">
+          <div class="add-task-field is-hidden" id="reminder-weekday-field">
+            <label>On these days</label>
+            <div class="rem-weekdays" id="reminder-weekdays"></div>
+          </div>
+          <div class="add-task-field is-hidden" id="reminder-monthly-field">
+            <label for="reminder-monthly-mode">Monthly pattern</label>
+            <select class="add-task-ctrl" id="reminder-monthly-mode">
+              <option value="dayOfMonth">On the same date each month</option>
+              <option value="nthWeekday">On a weekday of the month</option>
             </select>
           </div>
-          <div class="add-task-field" id="add-task-monthly-mode-field">
-            <label>Monthly pattern</label>
-            <select class="add-task-ctrl" id="add-task-monthly-mode">
-              <option value="dayofmonth">Day of month (e.g. the 2nd)</option>
-              <option value="weekday">Day of week (e.g. first Monday)</option>
-            </select>
-          </div>
-          <div class="add-task-row" id="add-task-monthly-weekday-row">
+          <div class="rem-grid is-hidden" id="reminder-nth-row" style="margin-bottom:0;">
             <div class="add-task-field">
-              <label>Which</label>
-              <select class="add-task-ctrl" id="add-task-monthly-ordinal">
-                <option value="1st">First</option>
-                <option value="2nd">Second</option>
-                <option value="3rd">Third</option>
-                <option value="4th">Fourth</option>
-                <option value="last">Last</option>
+              <label for="reminder-nth">Which one</label>
+              <select class="add-task-ctrl" id="reminder-nth">
+                <option value="1">First</option>
+                <option value="2">Second</option>
+                <option value="3">Third</option>
+                <option value="4">Fourth</option>
+                <option value="5">Fifth</option>
+                <option value="-1">Last</option>
               </select>
             </div>
             <div class="add-task-field">
-              <label>Weekday</label>
-              <select class="add-task-ctrl" id="add-task-monthly-weekday">
-                <option value="sunday">Sunday</option>
-                <option value="monday">Monday</option>
-                <option value="tuesday">Tuesday</option>
-                <option value="wednesday">Wednesday</option>
-                <option value="thursday">Thursday</option>
-                <option value="friday">Friday</option>
-                <option value="saturday">Saturday</option>
+              <label for="reminder-nth-weekday">Weekday</label>
+              <select class="add-task-ctrl" id="reminder-nth-weekday">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
               </select>
             </div>
           </div>
         </div>
-        <div class="receipts-status" id="add-task-status"></div>
+        <div class="receipts-status" id="reminder-status"></div>
         <div class="ignore-modal-actions">
-          <button type="button" class="receipt-btn business" id="add-task-submit">Add task</button>
-          <button type="button" class="receipt-btn" id="add-task-cancel">Cancel</button>
-          <button type="button" class="receipt-btn ignore is-hidden" id="add-task-delete" style="margin-left:auto;">Delete</button>
+          <button type="button" class="receipt-btn business" id="reminder-submit">Add reminder</button>
+          <button type="button" class="receipt-btn" id="reminder-cancel">Cancel</button>
+          <button type="button" class="receipt-btn ignore is-hidden" id="reminder-delete" style="margin-left:auto;">Delete</button>
         </div>
-      </div>
-    </div>
-
-    <div class="modal-overlay" id="due-popup-modal">
-      <div class="modal-inner due-popup-modal-inner">
-        <div class="modal-head">
-          <span>Task reminder</span>
-          <button class="modal-close" id="due-popup-modal-close">Close</button>
-        </div>
-        <div class="task-list" id="due-popup-list"></div>
       </div>
     </div>
 
@@ -1507,218 +1495,6 @@ function renderWeek(daily){
       </div>
     `;
   }).join('');
-}
-
-let allTaskLists = [];
-
-// Tasks widget reads/writes Todoist (backend/src/todoist.js), which carries
-// a real due time and recurrence - the backend sends allDay/recurring
-// directly, no guessing from the title.
-function taskDueInfo(t){
-  if (t.allDay) return { isAllDay: true, dateStr: t.due };
-  const d = new Date(t.due);
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-  return { isAllDay: false, dateStr: `${y}-${m}-${day}`, time: d };
-}
-function todayDateOnly(){
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// A task is overdue starting right after its due day ends at local
-// midnight - not the instant its due date "becomes today", since it's
-// still due (not late) for the whole of its due day.
-function overdueLabel(dueStr){
-  const [y, m, d] = dueStr.split('-').map(Number);
-  const dayAfterDue = new Date(y, m - 1, d + 1); // local midnight, day after due
-  const diffMs = Date.now() - dayAfterDue.getTime();
-  if (diffMs <= 0) return null;
-  const totalHours = Math.floor(diffMs / 3600000);
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  const parts = [];
-  if (days) parts.push(`${days}d`);
-  if (hours || !days) parts.push(`${hours}h`);
-  return `${parts.join(' ')} overdue`;
-}
-
-const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>';
-const REPEAT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
-
-// Builds the pill badge + tells the caller whether this task counts as
-// "overdue" (a prior day) or "due now" (today, with a time that has passed) -
-// both states are what trigger the reminder popup and the red highlight.
-function taskDueBadge(t){
-  if (!t.due) return { html: '', overdue: false, dueNow: false };
-  const today = todayDateOnly();
-  const info = taskDueInfo(t);
-  if (info.dateStr < today){
-    const label = overdueLabel(info.dateStr);
-    const overdue = !!label;
-    return { html: `<span class="task-due${overdue ? ' overdue' : ''}">${CLOCK_ICON}${label || 'Today'}</span>`, overdue, dueNow: overdue };
-  }
-  if (info.isAllDay){
-    return { html: `<span class="task-due">${CLOCK_ICON}Today</span>`, overdue: false, dueNow: false };
-  }
-  const timeLabel = info.time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const dueNow = info.time.getTime() <= Date.now();
-  return { html: `<span class="task-due${dueNow ? ' overdue' : ''}">${CLOCK_ICON}Today, ${timeLabel}</span>`, overdue: false, dueNow };
-}
-
-// Overdue tasks always sort first (oldest-overdue on top); within today,
-// all-day tasks come before timed ones, timed ones ascending by time.
-function sortTasks(tasks){
-  const today = todayDateOnly();
-  const info = (t) => t.due ? { hasDue: true, ...taskDueInfo(t) } : { hasDue: false };
-  return [...tasks].sort((a, b) => {
-    const ia = info(a), ib = info(b);
-    const overdueA = ia.hasDue && ia.dateStr < today;
-    const overdueB = ib.hasDue && ib.dateStr < today;
-    if (overdueA !== overdueB) return overdueA ? -1 : 1;
-    if (overdueA && overdueB) return ia.dateStr.localeCompare(ib.dateStr);
-    if (ia.hasDue !== ib.hasDue) return ia.hasDue ? -1 : 1;
-    if (!ia.hasDue) return 0;
-    if (ia.isAllDay !== ib.isAllDay) return ia.isAllDay ? -1 : 1;
-    if (!ia.isAllDay) return ia.time - ib.time;
-    return 0;
-  });
-}
-
-function taskRowHtml(t){
-  const badge = taskDueBadge(t);
-  const repeatTitle = t.recurrenceLabel ? `Repeats: ${t.recurrenceLabel}` : 'Repeats';
-  const dueRowHtml = badge.html || t.recurring
-    ? `<div class="task-due-row">${badge.html}${t.recurring ? `<span class="task-repeat" title="${escapeHtml(repeatTitle)}">${REPEAT_ICON}</span>` : ''}</div>`
-    : '';
-  return `
-    <div class="task-row${badge.overdue || badge.dueNow ? ' overdue' : ''}" data-task-list-id="${escapeHtml(t.taskListId)}" data-task-id="${escapeHtml(t.id)}">
-      <input type="checkbox" class="task-checkbox">
-      <div class="task-body" title="Click to edit">
-        <div class="task-title">${escapeHtml(t.title)}</div>
-        ${dueRowHtml}
-        ${t.notes ? `<div class="task-notes">${escapeHtml(t.notes)}</div>` : ''}
-      </div>
-    </div>
-  `;
-}
-
-function wireTaskCheckboxes(container){
-  container.querySelectorAll('.task-checkbox').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const row = cb.closest('.task-row');
-      completeTask(row.dataset.taskListId, row.dataset.taskId, cb, row);
-    });
-  });
-}
-
-function wireTaskEditClicks(container){
-  container.querySelectorAll('.task-body').forEach(body => {
-    body.addEventListener('click', () => {
-      const row = body.closest('.task-row');
-      const task = currentTasks.find(t => t.id === row.dataset.taskId);
-      if (task) openTaskModal(task);
-    });
-  });
-}
-
-let currentTasks = [];
-
-function renderTasks(tasks){
-  const el = document.getElementById('tasks');
-  currentTasks = tasks || [];
-  if (!tasks){ el.innerHTML = '<div class="empty">Unavailable.</div>'; return; }
-
-  const today = todayDateOnly();
-  // Only today's and overdue tasks clutter the widget - anything due later
-  // is left for its own day. Tasks with no due date have no way to be
-  // "later" so they stay visible rather than disappearing entirely.
-  const visible = sortTasks(tasks.filter(t => !t.due || taskDueInfo(t).dateStr <= today));
-
-  checkDueTasks(visible);
-
-  if (!visible.length){ el.innerHTML = '<div class="empty">Nothing due today.</div>'; return; }
-
-  el.innerHTML = visible.map(taskRowHtml).join('');
-  wireTaskCheckboxes(el);
-  wireTaskEditClicks(el);
-}
-
-// The instant a task became overdue/due, or null if it isn't yet. Matches
-// overdueLabel's own definition of "overdue" (local midnight the day after
-// its due date), so the popup and the badge always agree on timing.
-function taskDueMoment(t){
-  if (!t.due) return null;
-  const today = todayDateOnly();
-  const info = taskDueInfo(t);
-  if (info.dateStr < today){
-    const [y, m, d] = info.dateStr.split('-').map(Number);
-    return new Date(y, m - 1, d + 1);
-  }
-  if (!info.isAllDay && info.time.getTime() <= Date.now()) return info.time;
-  return null;
-}
-
-// Only tasks that became due/overdue within the last hour trigger the
-// popup - a task overdue by 14h has already been seen plenty and shouldn't
-// keep reappearing on every reload. It still shows normally (highlighted)
-// in the widget itself regardless of age.
-const DUE_POPUP_WINDOW_MS = 60 * 60 * 1000;
-const dismissedPopupIds = new Set();
-
-function checkDueTasks(visibleTasks){
-  const now = Date.now();
-  const poppable = visibleTasks.filter(t => {
-    const moment = taskDueMoment(t);
-    return moment && (now - moment.getTime()) <= DUE_POPUP_WINDOW_MS;
-  });
-  const popup = document.getElementById('due-popup-modal');
-  if (!poppable.length){ closeDuePopup(); return; }
-  const hasUndismissed = poppable.some(t => !dismissedPopupIds.has(t.id));
-  if (hasUndismissed || popup.classList.contains('open')){
-    renderDuePopupList(poppable);
-    popup.classList.add('open');
-  }
-}
-function renderDuePopupList(tasks){
-  const el = document.getElementById('due-popup-list');
-  if (!tasks.length){ closeDuePopup(); return; }
-  el.innerHTML = tasks.map(taskRowHtml).join('');
-  wireTaskCheckboxes(el);
-}
-function closeDuePopup(){
-  // Remember what was shown so a still-fresh task doesn't force the popup
-  // back open on the next refresh right after being dismissed.
-  document.querySelectorAll('#due-popup-list .task-row').forEach(row => dismissedPopupIds.add(row.dataset.taskId));
-  document.getElementById('due-popup-modal').classList.remove('open');
-}
-
-async function completeTask(taskListId, taskId, checkbox, row){
-  checkbox.disabled = true;
-  try {
-    const res = await fetch(`/api/tasks/${encodeURIComponent(taskListId)}/${encodeURIComponent(taskId)}/complete`, { method: 'POST' });
-    if (!res.ok) throw new Error('request failed');
-    dismissedPopupIds.delete(taskId);
-    currentTasks = currentTasks.filter(t => t.id !== taskId);
-    row.style.opacity = '.4';
-    setTimeout(() => {
-      row.remove();
-      // A task can be showing in both the main widget and the due popup
-      // at once - clear its row out of whichever list this checkbox
-      // *wasn't* in too, so completing it from the popup doesn't leave a
-      // stale row sitting in the card until the next refresh cycle.
-      document.querySelectorAll(`.task-row[data-task-id="${CSS.escape(taskId)}"]`).forEach(r => r.remove());
-      // If that was the last task left in the popup, close it now instead
-      // of leaving an empty dialog open until the next refresh.
-      const popup = document.getElementById('due-popup-modal');
-      if (popup.classList.contains('open') && !document.querySelector('#due-popup-list .task-row')){
-        closeDuePopup();
-      }
-    }, 200);
-  } catch (e){
-    checkbox.checked = false;
-    checkbox.disabled = false;
-    alert('Failed to complete that task: ' + (e.message || 'unknown error'));
-  }
 }
 
 // Cached so a window resize can redraw at the new width without waiting
@@ -2596,6 +2372,343 @@ document.getElementById('scratch-pad-add-note-btn').addEventListener('click', as
 });
 
 renderScratchPadNotes();
+
+// ---------------------------------------------------------------------
+// Reminders card. Items live in a Home Assistant todo entity;
+// the repeat rule and the phone push live in backend/src/reminders.js,
+// because HA's todo model has no recurrence field. Ticking a recurring
+// reminder rolls it to its next occurrence rather than closing it, so the
+// row stays in the list with a new due badge.
+const REM_BELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>';
+const REM_REPEAT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+const REM_WEEKDAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+let currentReminders = [];
+
+// The backend hands back HA's own format: "2026-08-07" or
+// "2026-08-07 13:30:00". Both are local wall time, so they're split by hand -
+// new Date('2026-08-07') would be parsed as UTC and render a day early.
+function remParseDue(due){
+  if (!due) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(String(due));
+  if (!m) return null;
+  const [, y, mo, d, hh, mi] = m;
+  const allDay = hh === undefined;
+  return {
+    allDay,
+    date: new Date(+y, +mo - 1, +d, allDay ? 0 : +hh, allDay ? 0 : +mi),
+  };
+}
+
+function remDueLabel(due){
+  const p = remParseDue(due);
+  if (!p) return { text: 'No date', overdue: false };
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayDiff = Math.round((new Date(p.date.getFullYear(), p.date.getMonth(), p.date.getDate()) - startOfToday) / 86400000);
+  let day;
+  if (dayDiff === 0) day = 'Today';
+  else if (dayDiff === 1) day = 'Tomorrow';
+  else if (dayDiff === -1) day = 'Yesterday';
+  else if (dayDiff > 1 && dayDiff < 7) day = REM_WEEKDAY_SHORT[p.date.getDay()];
+  else day = `${p.date.getMonth() + 1}/${p.date.getDate()}`;
+  const time = p.allDay
+    ? ''
+    : `, ${p.date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  return { text: `${day}${time}`, overdue: p.date <= now };
+}
+
+function reminderRowHtml(r){
+  const due = remDueLabel(r.due);
+  const badges = [
+    `<span class="rem-badge${due.overdue ? ' overdue' : ''}">${REM_BELL}${escapeHtml(due.text)}</span>`,
+    r.recurrenceLabel ? `<span class="rem-badge">${REM_REPEAT}${escapeHtml(r.recurrenceLabel)}</span>` : '',
+  ].join('');
+  return `
+    <div class="rem-row" data-uid="${escapeHtml(r.uid)}">
+      <input type="checkbox" class="rem-check" title="Complete">
+      <div class="rem-body" title="Click to edit">
+        <div class="rem-title">${escapeHtml(r.title || '')}</div>
+        <div class="rem-meta">${badges}</div>
+        ${r.notes ? `<div class="rem-notes">${escapeHtml(r.notes)}</div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+async function renderReminders(){
+  const el = document.getElementById('reminder-list');
+  let list;
+  try {
+    const res = await fetch('/api/reminders');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'unavailable');
+    list = await res.json();
+  } catch (e){
+    // A missing todo entity or an unreachable HA is worth naming here rather
+    // than rendering an empty list that looks like "nothing due".
+    el.innerHTML = `<div class="rem-empty">Reminders unavailable: ${escapeHtml(e.message || 'unknown error')}</div>`;
+    return;
+  }
+  currentReminders = list;
+  el.innerHTML = list.length
+    ? list.map(reminderRowHtml).join('')
+    : '<div class="rem-empty">No reminders.</div>';
+
+  el.querySelectorAll('.rem-row').forEach(row => {
+    const uid = row.dataset.uid;
+    row.querySelector('.rem-check').addEventListener('change', async (e) => {
+      const cb = e.target;
+      cb.disabled = true;
+      try {
+        const res = await fetch(`/api/reminders/${encodeURIComponent(uid)}/complete`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'failed');
+        await renderReminders();
+      } catch (err){
+        cb.checked = false;
+        cb.disabled = false;
+        alert('Failed to complete that reminder: ' + (err.message || 'unknown error'));
+      }
+    });
+    row.querySelector('.rem-body').addEventListener('click', () => {
+      openReminderModal(currentReminders.find(r => r.uid === uid) || null);
+    });
+  });
+}
+
+// ---- recurrence editor ----------------------------------------------------
+
+const REM_INTERVAL_UNITS = { daily: 'day', weekly: 'week', monthly: 'month', yearly: 'year' };
+
+function remBuildWeekdayChips(){
+  const wrap = document.getElementById('reminder-weekdays');
+  wrap.innerHTML = REM_WEEKDAY_SHORT.map((label, i) => `
+    <label class="rem-weekday" data-weekday="${i}">
+      <input type="checkbox" value="${i}">${label}
+    </label>
+  `).join('');
+  wrap.querySelectorAll('input').forEach(cb => {
+    cb.addEventListener('change', () => cb.closest('.rem-weekday').classList.toggle('on', cb.checked));
+  });
+}
+
+function remSelectedWeekdays(){
+  return [...document.querySelectorAll('#reminder-weekdays input:checked')].map(cb => Number(cb.value));
+}
+
+function remSetWeekdays(days){
+  document.querySelectorAll('#reminder-weekdays .rem-weekday').forEach(chip => {
+    const cb = chip.querySelector('input');
+    cb.checked = days.includes(Number(chip.dataset.weekday));
+    chip.classList.toggle('on', cb.checked);
+  });
+}
+
+// "Every weekday" is a preset over the same engine (weekly on Mon-Fri) rather
+// than its own frequency, so the backend has one code path for all repeats.
+function remUpdateRecurrenceUI(){
+  const freq = document.getElementById('reminder-freq').value;
+  const intervalField = document.getElementById('reminder-interval-field');
+  const detail = document.getElementById('reminder-detail');
+  const weekdayField = document.getElementById('reminder-weekday-field');
+  const monthlyField = document.getElementById('reminder-monthly-field');
+  const nthRow = document.getElementById('reminder-nth-row');
+  const monthlyMode = document.getElementById('reminder-monthly-mode').value;
+
+  const repeats = !!freq;
+  const engineFreq = freq === 'weekdays' ? 'weekly' : freq;
+  // A fixed Mon-Fri preset has nothing left to configure, so it shows neither
+  // an interval nor a weekday picker.
+  const showInterval = repeats && freq !== 'weekdays';
+  const showWeekdays = freq === 'weekly';
+  const showMonthly = freq === 'monthly';
+  const showNth = showMonthly && monthlyMode === 'nthWeekday';
+
+  intervalField.classList.toggle('is-hidden', !showInterval);
+  weekdayField.classList.toggle('is-hidden', !showWeekdays);
+  monthlyField.classList.toggle('is-hidden', !showMonthly);
+  nthRow.classList.toggle('is-hidden', !showNth);
+  detail.classList.toggle('is-hidden', !(showWeekdays || showMonthly));
+
+  if (showInterval){
+    const unit = REM_INTERVAL_UNITS[engineFreq] || 'day';
+    const sel = document.getElementById('reminder-interval');
+    const keep = sel.value;
+    const max = engineFreq === 'daily' ? 30 : engineFreq === 'weekly' ? 12 : engineFreq === 'monthly' ? 12 : 10;
+    sel.innerHTML = Array.from({ length: max }, (_, i) => {
+      const n = i + 1;
+      return `<option value="${n}">${n === 1 ? `Every ${unit}` : `Every ${n} ${unit}s`}</option>`;
+    }).join('');
+    sel.value = keep && Number(keep) <= max ? keep : '1';
+  }
+}
+
+function remReadRecurrence(){
+  const freq = document.getElementById('reminder-freq').value;
+  if (!freq) return null;
+  if (freq === 'weekdays') return { freq: 'weekly', interval: 1, byWeekday: [1, 2, 3, 4, 5] };
+  const interval = Number(document.getElementById('reminder-interval').value || 1);
+  if (freq === 'weekly'){
+    return { freq: 'weekly', interval, byWeekday: remSelectedWeekdays() };
+  }
+  if (freq === 'monthly'){
+    const mode = document.getElementById('reminder-monthly-mode').value;
+    if (mode === 'nthWeekday'){
+      return {
+        freq: 'monthly', interval, monthlyMode: 'nthWeekday',
+        nth: Number(document.getElementById('reminder-nth').value),
+        weekday: Number(document.getElementById('reminder-nth-weekday').value),
+      };
+    }
+    return { freq: 'monthly', interval, monthlyMode: 'dayOfMonth' };
+  }
+  return { freq, interval };
+}
+
+function remApplyRecurrence(spec, dueDate){
+  const freqSel = document.getElementById('reminder-freq');
+  const modeSel = document.getElementById('reminder-monthly-mode');
+  if (!spec){
+    freqSel.value = '';
+    modeSel.value = 'dayOfMonth';
+    remSetWeekdays(dueDate ? [dueDate.getDay()] : []);
+    remUpdateRecurrenceUI();
+    return;
+  }
+  const isWeekdayPreset = spec.freq === 'weekly' && (spec.interval || 1) === 1 &&
+    (spec.byWeekday || []).join() === '1,2,3,4,5';
+  freqSel.value = isWeekdayPreset ? 'weekdays' : spec.freq;
+  modeSel.value = spec.monthlyMode === 'nthWeekday' ? 'nthWeekday' : 'dayOfMonth';
+  if (spec.freq === 'monthly' && spec.monthlyMode === 'nthWeekday'){
+    document.getElementById('reminder-nth').value = String(spec.nth);
+    document.getElementById('reminder-nth-weekday').value = String(spec.weekday);
+  }
+  remSetWeekdays(spec.byWeekday || (dueDate ? [dueDate.getDay()] : []));
+  remUpdateRecurrenceUI();
+  document.getElementById('reminder-interval').value = String(spec.interval || 1);
+}
+
+// ---- modal ---------------------------------------------------------------
+
+let editingReminder = null;
+
+function openReminderModal(reminder){
+  editingReminder = reminder || null;
+  const isEdit = !!reminder;
+  const parsed = isEdit ? remParseDue(reminder.due) : null;
+
+  document.getElementById('reminder-modal-title').textContent = isEdit ? 'Edit reminder' : 'Add reminder';
+  document.getElementById('reminder-submit').textContent = isEdit ? 'Save changes' : 'Add reminder';
+  document.getElementById('reminder-delete').classList.toggle('is-hidden', !isEdit);
+  document.getElementById('reminder-title').value = isEdit ? (reminder.title || '') : '';
+  document.getElementById('reminder-notes').value = isEdit ? (reminder.notes || '') : '';
+
+  const now = new Date();
+  const dateStr = parsed
+    ? `${parsed.date.getFullYear()}-${String(parsed.date.getMonth() + 1).padStart(2, '0')}-${String(parsed.date.getDate()).padStart(2, '0')}`
+    : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  document.getElementById('reminder-date').value = dateStr;
+  document.getElementById('reminder-time').value = parsed && !parsed.allDay
+    ? `${String(parsed.date.getHours()).padStart(2, '0')}:${String(parsed.date.getMinutes()).padStart(2, '0')}`
+    : '';
+
+  remApplyRecurrence(isEdit ? reminder.recurrence : null, parsed ? parsed.date : now);
+
+  document.getElementById('reminder-status').textContent = '';
+  document.getElementById('reminder-status').className = 'receipts-status';
+  document.getElementById('reminder-modal').classList.add('open');
+  document.getElementById('reminder-title').focus();
+}
+
+function closeReminderModal(){
+  document.getElementById('reminder-modal').classList.remove('open');
+  editingReminder = null;
+}
+
+async function submitReminder(){
+  const title = document.getElementById('reminder-title').value.trim();
+  const dateStr = document.getElementById('reminder-date').value;
+  const timeStr = document.getElementById('reminder-time').value;
+  const notes = document.getElementById('reminder-notes').value.trim();
+  const statusEl = document.getElementById('reminder-status');
+  const recurrence = remReadRecurrence();
+  const isEdit = !!editingReminder;
+
+  if (!title){
+    statusEl.textContent = 'A title is required.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+  if (recurrence && !dateStr){
+    statusEl.textContent = 'A repeating reminder needs a date to repeat from.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+  if (recurrence && recurrence.freq === 'weekly' && !recurrence.byWeekday.length){
+    statusEl.textContent = 'Pick at least one day of the week.';
+    statusEl.className = 'receipts-status error';
+    return;
+  }
+
+  const body = { title, notes, recurrence };
+  if (dateStr){
+    body.due = timeStr ? `${dateStr} ${timeStr}:00` : dateStr;
+    body.allDay = !timeStr;
+  }
+
+  const btn = document.getElementById('reminder-submit');
+  btn.disabled = true;
+  statusEl.textContent = 'Saving…';
+  statusEl.className = 'receipts-status';
+  try {
+    const url = isEdit ? `/api/reminders/${encodeURIComponent(editingReminder.uid)}` : '/api/reminders';
+    const res = await fetch(url, {
+      method: isEdit ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok){
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'request failed');
+    }
+    closeReminderModal();
+    await renderReminders();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteEditingReminder(){
+  if (!editingReminder) return;
+  const statusEl = document.getElementById('reminder-status');
+  statusEl.textContent = 'Deleting…';
+  statusEl.className = 'receipts-status';
+  try {
+    const res = await fetch(`/api/reminders/${encodeURIComponent(editingReminder.uid)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'request failed');
+    closeReminderModal();
+    await renderReminders();
+  } catch (e){
+    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
+    statusEl.className = 'receipts-status error';
+  }
+}
+
+remBuildWeekdayChips();
+document.getElementById('reminder-freq').addEventListener('change', remUpdateRecurrenceUI);
+document.getElementById('reminder-monthly-mode').addEventListener('change', remUpdateRecurrenceUI);
+document.getElementById('reminder-add-btn').addEventListener('click', () => openReminderModal(null));
+document.getElementById('reminder-modal-close').addEventListener('click', closeReminderModal);
+document.getElementById('reminder-cancel').addEventListener('click', closeReminderModal);
+document.getElementById('reminder-submit').addEventListener('click', submitReminder);
+document.getElementById('reminder-delete').addEventListener('click', deleteEditingReminder);
+document.getElementById('reminder-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'reminder-modal') closeReminderModal();
+});
+
+renderReminders();
 
 // ---------------------------------------------------------------------
 // Shipping label tool: paste an image or drag a PDF -> Claude vision reads
@@ -3483,6 +3596,65 @@ document.getElementById('label-crop-rotate-btn').addEventListener('click', async
   await runPipelineAndUpdateUI();
 });
 
+// Printer status is fetched once and cached: the label modal asks about it at
+// print time, and a per-print round trip to a sleeping thermal printer would
+// stall the one moment the user is waiting on.
+let nasPrinterInfo = null;
+
+async function loadNasPrinterInfo(){
+  try {
+    const res = await fetch('/api/printer');
+    nasPrinterInfo = await res.json();
+  } catch {
+    nasPrinterInfo = { configured: false, error: 'unreachable' };
+  }
+  return nasPrinterInfo;
+}
+
+const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  // result is "data:application/pdf;base64,...." - only the payload is wanted.
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(reader.error || new Error('could not read the label PDF'));
+  reader.readAsDataURL(blob);
+});
+
+// Returns true when the NAS accepted the job, false to mean "use the browser
+// dialog instead". A failure here must never lose the label: the caller falls
+// back to window.print() rather than leaving the user with nothing.
+async function sendLabelToNasPrinter(pdfBlob, recipient, statusEl){
+  const info = nasPrinterInfo || await loadNasPrinterInfo();
+  if (!info || !info.configured || info.printable === false) return false;
+
+  try {
+    statusEl.textContent = 'Sending to printer…';
+    statusEl.className = 'receipts-status';
+    const res = await fetch('/api/printer/print-label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        document: await blobToBase64(pdfBlob),
+        mediaType: 'application/pdf',
+        jobName: `label-${sanitizeFilenamePart(recipient)}`,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok){
+      const extra = data.printerAccepts ? ` (printer accepts: ${data.printerAccepts.join(', ')})` : '';
+      throw new Error((data.error || 'print failed') + extra);
+    }
+    return true;
+  } catch (e){
+    // Surfaced rather than swallowed, but the browser dialog still opens - so
+    // a printer problem costs a click, not the label.
+    statusEl.textContent = `Printer error, opening the print dialog instead: ${e.message || 'unknown error'}`;
+    statusEl.className = 'receipts-status error';
+    return false;
+  }
+}
+
+loadNasPrinterInfo();
+
 function printLabelImage(dataUrl, preset){
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`<!doctype html><html><head><title>Print label</title><style>
@@ -3534,7 +3706,11 @@ async function confirmLabelCrop(){
       statusEl.className = 'receipts-status error';
     }
 
-    printLabelImage(croppedDataUrl, preset);
+    // Prefer the NAS printer when one is configured and can actually take a
+    // document we can produce; otherwise fall back to the browser dialog, which
+    // is still the only option on a printer that speaks raster only.
+    const sent = await sendLabelToNasPrinter(pdfBlob, recipient, statusEl);
+    if (!sent) printLabelImage(croppedDataUrl, preset);
     closeLabelCropModal();
   } catch (e){
     statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
@@ -3961,9 +4137,14 @@ async function refresh(){
     renderEvents(data.calendar);
     renderRokuDevices(data.roku);
     renderHomeStatus(data.homeAssistant);
-    renderTasks(data.tasks);
     renderControls(data.controls);
     renderRing(data.ring);
+    // Reminders come from their own endpoint rather than /api/dashboard: they
+    // are also edited from the HA to-do panel and rolled forward by the
+    // backend scheduler, so the card has to re-read on every cycle to stay in
+    // step with changes it didn't make. Deliberately not awaited - a slow or
+    // unreachable HA must not delay the rest of the board.
+    renderReminders();
 
     const updEl = document.getElementById('updated');
     if (data.errors && data.errors.length){
@@ -4006,7 +4187,7 @@ const CARD_REGISTRY = [
   { id: 'today', label: 'Today & Upcoming' },
   { id: 'home-status', label: 'Home Status' },
   { id: 'week', label: 'This Week' },
-  { id: 'tasks', label: 'Tasks' },
+  { id: 'reminders', label: 'Reminders' },
   { id: 'scratch-pad', label: 'Scratch Pad' },
   { id: 'controls', label: 'Controls' },
   { id: 'ring', label: 'Ring Cameras' },
@@ -4046,7 +4227,7 @@ function applyCardMinimized(tileId){
 // These are the compact board-grid tiles (as opposed to the "wide" cards
 // like Controls/Ring/Roku/Receipts) - already small enough that collapsing
 // them saves no real space, so they never get a minimize button at all.
-const NO_MINIMIZE_IDS = new Set(['today', 'home-status', 'week', 'tasks', 'scratch-pad']);
+const NO_MINIMIZE_IDS = new Set(['today', 'home-status', 'week', 'reminders', 'scratch-pad']);
 
 // Wraps each registered card's content (everything after its header) in a
 // single .card-body element, once, so minimizing just needs one class
@@ -5114,256 +5295,7 @@ document.getElementById('theme-select').addEventListener('change', (e) => {
   applyTheme(e.target.value);
 });
 
-async function loadTaskLists(){
-  try {
-    const res = await fetch('/api/tasks/lists');
-    if (!res.ok) throw new Error('failed');
-    allTaskLists = await res.json();
-  } catch (e){
-    allTaskLists = [];
-  }
-}
-
-const WEEKDAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-const MONTH_ABBREVS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-
-function weekdayNameFromDateStr(dateStr){
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return WEEKDAY_NAMES[new Date(y, m - 1, d).getDay()];
-}
-function ordinalSuffixForDay(day){
-  if (day >= 11 && day <= 13) return `${day}th`;
-  return `${day}${['th','st','nd','rd'][day % 10] || 'th'}`;
-}
-// Which occurrence of its weekday within the month (1st..4th) - used only
-// to default the "Which" ordinal select to match the chosen date.
-function ordinalWeekOfMonth(dateStr){
-  const day = Number(dateStr.split('-')[2]);
-  return ['1st','2nd','3rd','4th'][Math.min(Math.ceil(day / 7), 4) - 1];
-}
-function formatTimeNLP(timeStr){
-  const [hh, mm] = timeStr.split(':').map(Number);
-  const period = hh >= 12 ? 'pm' : 'am';
-  const h12 = hh % 12 || 12;
-  return `${h12}:${String(mm).padStart(2, '0')} ${period}`;
-}
-
-// Builds the natural-language due_string Todoist's own NLP parses into a
-// recurring due date - Todoist has no structured recurrence field at all
-// (confirmed against the live API), a due_string is the only way to set
-// one. Verified each of these phrasings against a real test task before
-// relying on them.
-function buildRecurrenceDueString(freq, dateStr, timeStr){
-  const timeSuffix = timeStr ? ` at ${formatTimeNLP(timeStr)}` : '';
-  const day = Number(dateStr.split('-')[2]);
-  if (freq === 'daily') return `every day${timeSuffix}`;
-  if (freq === 'weekly') return `every ${document.getElementById('add-task-weekday').value}${timeSuffix}`;
-  if (freq === 'biweekly') return `every other ${document.getElementById('add-task-weekday').value}${timeSuffix}`;
-  if (freq === 'monthly'){
-    const mode = document.getElementById('add-task-monthly-mode').value;
-    if (mode === 'weekday'){
-      const ordinal = document.getElementById('add-task-monthly-ordinal').value;
-      const weekday = document.getElementById('add-task-monthly-weekday').value;
-      return `every ${ordinal} ${weekday}${timeSuffix}`;
-    }
-    return `every month on the ${ordinalSuffixForDay(day)}${timeSuffix}`;
-  }
-  if (freq === 'yearly') return `every ${MONTH_ABBREVS[Number(dateStr.split('-')[1]) - 1]} ${day}${timeSuffix}`;
-  return null;
-}
-
-function updateRecurrenceDetailUI(){
-  const freq = document.getElementById('add-task-recurrence').value;
-  const detail = document.getElementById('add-task-recurrence-detail');
-  const weekdayField = document.getElementById('add-task-weekday-field');
-  const monthlyModeField = document.getElementById('add-task-monthly-mode-field');
-  const monthlyWeekdayRow = document.getElementById('add-task-monthly-weekday-row');
-  const monthlyMode = document.getElementById('add-task-monthly-mode').value;
-
-  const showDetail = freq === 'weekly' || freq === 'biweekly' || freq === 'monthly';
-  detail.classList.toggle('is-hidden', !showDetail);
-  weekdayField.classList.toggle('is-hidden', !(freq === 'weekly' || freq === 'biweekly'));
-  monthlyModeField.classList.toggle('is-hidden', freq !== 'monthly');
-  monthlyWeekdayRow.classList.toggle('is-hidden', !(freq === 'monthly' && monthlyMode === 'weekday'));
-}
-
-// Defaults the weekday/ordinal sub-fields to match whatever date is picked,
-// so switching to "Weekly" defaults to the day-of-week that date falls on.
-function syncRecurrenceDefaultsFromDate(){
-  const dateStr = document.getElementById('add-task-date').value;
-  if (!dateStr) return;
-  const weekday = weekdayNameFromDateStr(dateStr);
-  document.getElementById('add-task-weekday').value = weekday;
-  document.getElementById('add-task-monthly-weekday').value = weekday;
-  document.getElementById('add-task-monthly-ordinal').value = ordinalWeekOfMonth(dateStr);
-}
-
-document.getElementById('add-task-recurrence').addEventListener('change', updateRecurrenceDetailUI);
-document.getElementById('add-task-monthly-mode').addEventListener('change', updateRecurrenceDetailUI);
-document.getElementById('add-task-date').addEventListener('change', syncRecurrenceDefaultsFromDate);
-
-// null = Add mode. Pass an existing task object to edit it in place.
-let editingTask = null;
-
-function openTaskModal(task){
-  editingTask = task || null;
-  const isEdit = !!task;
-
-  document.getElementById('add-task-modal-title').textContent = isEdit ? 'Edit task' : 'Add task';
-  document.getElementById('add-task-submit').textContent = isEdit ? 'Save changes' : 'Add task';
-  document.getElementById('add-task-delete').classList.toggle('is-hidden', !isEdit);
-
-  document.getElementById('add-task-title').value = isEdit ? task.title : '';
-  document.getElementById('add-task-notes').value = isEdit ? (task.notes || '') : '';
-
-  let dateStr = todayDateOnly(), timeStr = '';
-  if (isEdit && task.due){
-    const info = taskDueInfo(task);
-    dateStr = info.dateStr;
-    if (!info.isAllDay){
-      timeStr = `${String(info.time.getHours()).padStart(2, '0')}:${String(info.time.getMinutes()).padStart(2, '0')}`;
-    }
-  }
-  document.getElementById('add-task-date').value = dateStr;
-  document.getElementById('add-task-time').value = timeStr;
-
-  const listSel = document.getElementById('add-task-list');
-  listSel.innerHTML = allTaskLists.length
-    ? allTaskLists.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(l.title)}</option>`).join('')
-    : '<option value="">Default list</option>';
-  if (isEdit) listSel.value = task.taskListId;
-
-  // Editing recurrence means picking a fresh pattern, not reverse-parsing
-  // Todoist's existing natural-language string - "Never" here just means
-  // "leave whatever repeat schedule is already there alone" when the task
-  // is already recurring (the keep-hint below explains this), and only
-  // means "no repeat" for a brand new task.
-  document.getElementById('add-task-recurrence').value = '';
-  const keepHint = document.getElementById('add-task-recurrence-keep');
-  if (isEdit && task.recurring){
-    keepHint.textContent = `Currently repeats: ${task.recurrenceLabel || 'yes'}. Leave "Never" to keep it, or pick a new pattern below to replace it.`;
-    keepHint.classList.remove('is-hidden');
-  } else {
-    keepHint.classList.add('is-hidden');
-  }
-
-  syncRecurrenceDefaultsFromDate();
-  updateRecurrenceDetailUI();
-
-  document.getElementById('add-task-status').textContent = '';
-  document.getElementById('add-task-status').className = 'receipts-status';
-  document.getElementById('add-task-modal').classList.add('open');
-  document.getElementById('add-task-title').focus();
-}
-function closeAddTaskModal(){
-  document.getElementById('add-task-modal').classList.remove('open');
-  editingTask = null;
-}
-
-async function submitAddTask(){
-  const title = document.getElementById('add-task-title').value.trim();
-  const dateStr = document.getElementById('add-task-date').value;
-  const timeStr = document.getElementById('add-task-time').value;
-  const freq = document.getElementById('add-task-recurrence').value;
-  const notes = document.getElementById('add-task-notes').value.trim();
-  const taskListId = document.getElementById('add-task-list').value;
-  const statusEl = document.getElementById('add-task-status');
-  const isEdit = !!editingTask;
-
-  if (!title){
-    statusEl.textContent = 'Title is required.';
-    statusEl.className = 'receipts-status error';
-    return;
-  }
-
-  let due, allDay, dueString = null;
-  const keepingExistingRecurrence = isEdit && editingTask.recurring && !freq;
-
-  if (keepingExistingRecurrence){
-    // Todoist's `due` object is all-or-nothing - setting a plain due_date/
-    // due_datetime replaces the whole thing and silently drops the existing
-    // recurrence. Leaving "Repeats" on its default while editing a task
-    // that's already recurring means "don't touch the schedule", so omit
-    // every due-related field entirely rather than resend the (unchanged)
-    // date/time fields, which would otherwise clear the repeat.
-  } else if (freq){
-    dueString = buildRecurrenceDueString(freq, dateStr, timeStr);
-  } else if (dateStr){
-    if (timeStr){
-      // Deliberately NOT .toISOString() - that forces UTC (a trailing "Z"),
-      // but Todoist's own API returns floating local times with no
-      // timezone at all (e.g. "date":"2026-08-03T08:00:00", timezone:
-      // null). Sending a UTC-suffixed string would silently shift every
-      // timed task by the server/account's UTC offset.
-      due = `${dateStr}T${timeStr}:00`;
-      allDay = false;
-    } else {
-      due = dateStr;
-      allDay = true;
-    }
-  } else if (isEdit) {
-    due = null; // explicit clear
-  }
-
-  const btn = document.getElementById('add-task-submit');
-  btn.disabled = true;
-  statusEl.textContent = isEdit ? 'Saving…' : 'Adding…';
-  statusEl.className = 'receipts-status';
-  try {
-    const url = isEdit ? `/api/tasks/${encodeURIComponent(editingTask.taskListId)}/${encodeURIComponent(editingTask.id)}` : '/api/tasks';
-    const res = await fetch(url, {
-      method: isEdit ? 'PATCH' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskListId: taskListId || undefined, title, due, allDay, notes: notes || undefined, dueString }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'request failed');
-    closeAddTaskModal();
-    refresh();
-  } catch (e){
-    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
-    statusEl.className = 'receipts-status error';
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function deleteEditingTask(){
-  if (!editingTask) return;
-  const statusEl = document.getElementById('add-task-status');
-  statusEl.textContent = 'Deleting…';
-  statusEl.className = 'receipts-status';
-  try {
-    const res = await fetch(`/api/tasks/${encodeURIComponent(editingTask.taskListId)}/${encodeURIComponent(editingTask.id)}`, {
-      method: 'DELETE',
-    });
-    if (!res.ok){
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'request failed');
-    }
-    closeAddTaskModal();
-    refresh();
-  } catch (e){
-    statusEl.textContent = 'Failed: ' + (e.message || 'unknown error');
-    statusEl.className = 'receipts-status error';
-  }
-}
-
-document.getElementById('task-add-btn').addEventListener('click', () => openTaskModal(null));
-document.getElementById('add-task-modal-close').addEventListener('click', closeAddTaskModal);
-document.getElementById('add-task-cancel').addEventListener('click', closeAddTaskModal);
-document.getElementById('add-task-delete').addEventListener('click', deleteEditingTask);
-document.getElementById('add-task-modal').addEventListener('click', (e) => {
-  if (e.target.id === 'add-task-modal') closeAddTaskModal();
-});
-document.getElementById('add-task-submit').addEventListener('click', submitAddTask);
-document.getElementById('due-popup-modal-close').addEventListener('click', closeDuePopup);
-document.getElementById('due-popup-modal').addEventListener('click', (e) => {
-  if (e.target.id === 'due-popup-modal') closeDuePopup();
-});
-
 initTheme();
-loadTaskLists();
 
 renderClock();
 setInterval(renderClock, 1000 * 15);

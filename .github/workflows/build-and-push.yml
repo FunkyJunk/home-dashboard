@@ -1,11 +1,43 @@
 name: Build and push images
 
+# Tests run on pull requests too, so a branch gets a verdict before it is
+# merged. The image build only runs on main - a PR has nothing to deploy to.
 on:
   push:
     branches: [main]
+  pull_request:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the runtime image in backend/Dockerfile (node:20-alpine), so
+          # the tests run against the Node the NAS actually executes.
+          node-version: "20"
+
+      # npm ci, so a transitive dependency update cannot change what the gate
+      # tested. Note this pins CI only - backend/Dockerfile still copies just
+      # package.json and runs `npm install --omit=dev`, so the published image
+      # resolves dependencies fresh. See README for why that is a separate fix.
+      - run: npm ci
+        working-directory: ./backend
+
+      # The suite pins TZ itself (test/helpers/env.mjs) rather than trusting the
+      # runner, which is UTC - a DST test would otherwise pass for the wrong
+      # reason.
+      - run: npm test
+        working-directory: ./backend
+
   build:
+    # The gate. Watchtower deploys :latest unattended within 5 minutes of a
+    # push, so a red suite must stop the image from ever being published rather
+    # than being noticed afterwards on the wall tablet.
+    needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

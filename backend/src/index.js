@@ -4,13 +4,18 @@ import { google } from "googleapis";
 import WebSocket, { WebSocketServer } from "ws";
 import { createReceiptsRouter } from "./receipts.js";
 import { createThemeRouter } from "./theme.js";
-import { getReminders, getReminderLists, completeReminder, createReminder, updateReminder, deleteReminder } from "./todoist.js";
 import { getAllRokuStatuses, sendRokuKey, getRokuApps, launchRokuApp } from "./roku.js";
 import { fetchPlexImage } from "./plex.js";
 import { getNotes, createNote, updateNote, deleteNote } from "./notes.js";
 import { analyzeShippingLabel } from "./shippingLabels.js";
 import { analyzeReturnScreenshot } from "./amazonReturns.js";
 import { createAuthRouter, requireAuth, authIsEnforced } from "./auth.js";
+import {
+  createRemindersClient,
+  createRemindersRouter,
+  startReminderScheduler,
+} from "./reminders.js";
+import { getPrinterAttributes, printJob, chooseFormat, probeHost, PRODUCIBLE_FORMATS } from "./ipp.js";
 import {
   createDevicesRouter,
   buildUserDeviceTiles,
@@ -60,15 +65,117 @@ app.use(
   })
 );
 
+const reminders = createRemindersClient({
+  callHaService,
+  callHaServiceForResponse,
+  getStates: () => getHomeAssistantStates(),
+  listServices: () => listHaServices(),
+});
+app.use("/api/reminders", createRemindersRouter(reminders));
+
+// ---------------------------------------------------------------------------
+// Label printing straight from the NAS over IPP, bypassing the browser print
+// dialog. The frontend already renders the normalised label to a 4x6 PDF with
+// jsPDF for the saved copy, so that same document is what gets posted here -
+// no second rendering path to keep in step with the canvas pipeline.
+// ---------------------------------------------------------------------------
+const LABEL_PRINTER_URI = process.env.LABEL_PRINTER_URI || null;
+const LABEL_PRINTER_MEDIA = process.env.LABEL_PRINTER_MEDIA || null;
+
+app.get("/api/printer", async (_req, res) => {
+  if (!LABEL_PRINTER_URI) {
+    return res.json({ configured: false, producibleFormats: PRODUCIBLE_FORMATS });
+  }
+  try {
+    const info = await getPrinterAttributes(LABEL_PRINTER_URI);
+    const choice = chooseFormat(info.formats, PRODUCIBLE_FORMATS);
+    res.json({
+      configured: true,
+      ...info,
+      producibleFormats: PRODUCIBLE_FORMATS,
+      // Surfaced so the UI can say "this printer needs raster" rather than
+      // offering a button that will always fail.
+      chosenFormat: choice?.format || null,
+      printable: !!choice,
+    });
+  } catch (e) {
+    res.status(502).json({ configured: true, uri: LABEL_PRINTER_URI, error: e.message || "printer unreachable" });
+  }
+});
+
+// Discovery helper: the backend container is on Docker's bridge network, not
+// host, so mDNS/Bonjour multicast never reaches it and the printer cannot be
+// browsed for. Given a hostname or IP this walks the handful of conventional
+// IPP paths and reports which one answers.
+app.post("/api/printer/probe", async (req, res) => {
+  const host = String(req.body?.host || "").trim();
+  // Hostname or IP, with an optional :port. No scheme and no path - the point
+  // of the probe is to find the path.
+  if (!/^[a-zA-Z0-9._-]+(:\d{1,5})?$/.test(host)) {
+    return res.status(400).json({ error: "a hostname or IP (optionally host:port) is required, with no scheme or path" });
+  }
+  try {
+    res.json({ host, results: await probeHost(host) });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "probe failed" });
+  }
+});
+
+app.post("/api/printer/print-label", async (req, res) => {
+  if (!LABEL_PRINTER_URI) {
+    return res.status(409).json({ error: "no printer configured - set LABEL_PRINTER_URI" });
+  }
+  const { document, mediaType, jobName, copies } = req.body || {};
+  if (!document || typeof document !== "string") {
+    return res.status(400).json({ error: "document (base64) is required" });
+  }
+  if (!PRODUCIBLE_FORMATS.includes(mediaType)) {
+    return res.status(400).json({ error: `mediaType must be one of ${PRODUCIBLE_FORMATS.join(", ")}` });
+  }
+  try {
+    const info = await getPrinterAttributes(LABEL_PRINTER_URI);
+    if (info.acceptingJobs === false) {
+      return res.status(502).json({
+        error: `printer is not accepting jobs${info.stateReasons.length ? ` (${info.stateReasons.join(", ")})` : ""}`,
+      });
+    }
+    const choice = chooseFormat(info.formats, [mediaType]);
+    if (!choice) {
+      // Naming both sides is the whole point: a bare "unsupported" leaves no
+      // way to tell whether to change the dashboard or the printer.
+      return res.status(415).json({
+        error: `printer cannot accept ${mediaType}`,
+        printerAccepts: info.formats,
+        dashboardCanSend: PRODUCIBLE_FORMATS,
+      });
+    }
+    const data = Buffer.from(document, "base64");
+    if (!data.length) return res.status(400).json({ error: "document decoded to zero bytes" });
+
+    const job = await printJob(LABEL_PRINTER_URI, {
+      data,
+      // A printer that only advertises application/octet-stream is told
+      // octet-stream and left to sniff the document itself.
+      format: choice.viaOctetStream ? "application/octet-stream" : choice.format,
+      jobName: String(jobName || "shipping-label").slice(0, 120),
+      copies: Number(copies) || 1,
+      media: LABEL_PRINTER_MEDIA || undefined,
+    });
+    console.log(`[printer] sent ${data.length}B as ${choice.format} -> job ${job.jobId ?? "?"} (${job.jobState ?? "?"})`);
+    res.json({ ok: true, bytes: data.length, sentAs: choice.format, ...job });
+  } catch (e) {
+    res.status(502).json({ error: e.message || "failed to print" });
+  }
+});
+
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 app.get("/api/dashboard", async (_req, res) => {
-  const [weather, cal, homeAssistant, nest, tasks, roku] = await Promise.allSettled([
+  const [weather, cal, homeAssistant, nest, roku] = await Promise.allSettled([
     getWeather(),
     getCalendar(),
     getHomeAssistantStates(),
     getNestThermostats(),
-    getReminders(),
     getAllRokuStatuses(),
   ]);
 
@@ -81,7 +188,6 @@ app.get("/api/dashboard", async (_req, res) => {
     calendar: cal.status === "fulfilled" ? cal.value : null,
     homeAssistant: haStates,
     ring: haStates ? getRingCameras(haStates) : [],
-    tasks: tasks.status === "fulfilled" ? tasks.value : [],
     roku: rokuStatuses,
     controls: [
       ...(haStates ? getControllableDevices(haStates, rokuStatuses) : []),
@@ -97,20 +203,10 @@ app.get("/api/dashboard", async (_req, res) => {
         ? buildUserDeviceTiles(haStates).filter((d) => !CONTROLLABLE_DEVICES[d.id])
         : []),
     ],
-    errors: [weather, cal, homeAssistant, nest, tasks, roku]
+    errors: [weather, cal, homeAssistant, nest, roku]
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason?.message || "unknown error"),
   });
-});
-
-// Marks a Todoist task complete via the REST API.
-app.post("/api/tasks/:taskListId/:taskId/complete", async (req, res) => {
-  try {
-    await completeReminder(req.params.taskListId, req.params.taskId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to complete task" });
-  }
 });
 
 // Proxies a Plex poster/art image so the Plex token never reaches the
@@ -204,64 +300,6 @@ app.post("/api/roku/:id/launch/:appId", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message || "failed to launch Roku app" });
-  }
-});
-
-app.get("/api/tasks/lists", async (req, res) => {
-  try {
-    res.json(await getReminderLists());
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to load task lists" });
-  }
-});
-
-// Manual task creation via Todoist REST API. Supports full due times,
-// all-day dates, and recurrence (daily, weekly, monthly, yearly, etc. via
-// a natural-language dueString - Todoist has no structured recurrence
-// field, see todoist.js for why).
-app.post("/api/tasks", async (req, res) => {
-  const { taskListId, title, due, allDay, notes, dueString } = req.body || {};
-  if (!title || !String(title).trim()) {
-    return res.status(400).json({ error: "title is required" });
-  }
-  try {
-    const task = await createReminder({
-      listId: taskListId || undefined,
-      title: String(title).trim(),
-      due: due || null,
-      allDay: !!allDay,
-      notes: notes || undefined,
-      dueString: dueString || null,
-    });
-    res.json(task);
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to create task" });
-  }
-});
-
-// Updates an existing task's title/due/notes/recurrence.
-app.patch("/api/tasks/:taskListId/:taskId", async (req, res) => {
-  const { title, due, allDay, notes, dueString } = req.body || {};
-  try {
-    const task = await updateReminder(req.params.taskId, {
-      title: title !== undefined ? String(title).trim() : undefined,
-      due: due !== undefined ? due : undefined,
-      allDay: !!allDay,
-      notes: notes !== undefined ? notes : undefined,
-      dueString: dueString || null,
-    });
-    res.json(task);
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to update task" });
-  }
-});
-
-app.delete("/api/tasks/:taskListId/:taskId", async (req, res) => {
-  try {
-    await deleteReminder(req.params.taskId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(502).json({ error: e.message || "failed to delete task" });
   }
 });
 
@@ -479,6 +517,33 @@ async function callHaService(domain, service, data) {
   if (!r.ok) throw new Error(`Home Assistant service call failed: ${r.status}`);
 }
 
+// Same call, but for services declared SupportsResponse.ONLY (todo.get_items
+// is the one this dashboard needs). HA rejects those without the
+// ?return_response query flag - "Add ?return_response to query parameters" -
+// and answers { changed_states, service_response }.
+async function callHaServiceForResponse(domain, service, data) {
+  const r = await fetch(`${HA_URL}/api/services/${domain}/${service}?return_response`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${HA_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(
+      `Home Assistant service call failed: ${r.status}${detail ? ` - ${detail.replace(/\s+/g, " ").slice(0, 160)}` : ""}`
+    );
+  }
+  return r.json();
+}
+
+async function listHaServices() {
+  const r = await fetch(`${HA_URL}/api/services`, {
+    headers: { Authorization: `Bearer ${HA_TOKEN}` },
+  });
+  if (!r.ok) throw new Error(`Home Assistant services fetch failed: ${r.status}`);
+  return r.json();
+}
+
 const RING_CAMERA_ID = /^camera\.[a-z0-9_]+$/;
 
 // Roku ECP key names - allowlisted rather than passed through raw, since this
@@ -537,10 +602,6 @@ async function getCalendar() {
   }));
 }
 
-// Only ever shows incomplete tasks (showCompleted: false) - this is a
-// glance-at-the-dashboard widget, not a full task manager. Pulls every
-// list (most accounts just have the one default "My Tasks", but nothing
-// stops someone from having more) and merges them, soonest due date first.
 let nestAccessToken = null;
 let nestTokenExpiresAt = 0;
 
@@ -558,10 +619,34 @@ async function getNestAccessToken() {
       grant_type: "refresh_token",
     }),
   });
-  if (!r.ok) throw new Error(`Nest token refresh failed: ${r.status}`);
+  // Google answers a bad refresh with 400 for several unrelated reasons, and
+  // the status alone cannot separate them: invalid_grant means the refresh
+  // token is expired or revoked (re-mint it), invalid_client means
+  // NEST_CLIENT_ID/SECRET are wrong (fix .env). Those need opposite fixes, so
+  // the body's error code has to reach the footer where this is read. The
+  // token-endpoint error body carries no credential material.
+  if (!r.ok) {
+    let reason = "";
+    try {
+      const text = (await r.text()).trim();
+      try {
+        const parsed = JSON.parse(text);
+        reason = parsed.error_description || parsed.error || text;
+      } catch {
+        reason = text;
+      }
+    } catch {
+      // Body unreadable - fall through and report the status on its own.
+    }
+    reason = String(reason).replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(`Nest token refresh failed: ${r.status}${reason ? ` - ${reason}` : ""}`);
+  }
   const data = await r.json();
   nestAccessToken = data.access_token;
-  nestTokenExpiresAt = Date.now() + data.expires_in * 1000;
+  // A response without expires_in would leave the deadline NaN, making every
+  // comparison false and re-refreshing on each poll. Fall back to Google's
+  // standard hour, minus the 60s skew the cache check already applies.
+  nestTokenExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
   return nestAccessToken;
 }
 
@@ -802,6 +887,11 @@ function isActiveOrRecent(entity, withinMs = 5 * 60 * 1000) {
 }
 
 const server = app.listen(PORT, () => console.log(`Backend listening on :${PORT}`));
+
+// Reminder pushes run on their own clock, independent of whether the wall
+// tablet has the dashboard open - the old Todoist widget only popped a browser
+// dialog, so a due reminder was silently missed whenever the page was closed.
+startReminderScheduler(reminders);
 
 // Ring's "_live_view" entities stream over WebRTC rather than HLS/MJPEG - the
 // only way to get an actual live frame (not a replay of the last motion
