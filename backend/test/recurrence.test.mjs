@@ -141,6 +141,30 @@ test("validation rejects unusable specs", () => {
   }
 });
 
+test("the backend service is given a TZ in docker-compose", async () => {
+  // Not a unit test of anything in src/, deliberately. The backend shipped
+  // once with no TZ, so it ran in UTC while reminders are stored and fired as
+  // local wall time - every notification off by the offset, and invisible
+  // because the browser rendered the time correctly. Nothing in the code could
+  // have caught that; only the deployment file says when a reminder fires.
+  const fs = await import("node:fs");
+  const url = await import("node:url");
+  const path = await import("node:path");
+  const here = path.dirname(url.fileURLToPath(import.meta.url));
+  const compose = fs.readFileSync(path.join(here, "../../infra/docker-compose.yml"), "utf8");
+
+  // Isolate the backend service block: from its key to the next service at the
+  // same indent, so a TZ belonging to another service cannot satisfy this.
+  const match = /\n {2}backend:\n([\s\S]*?)(?=\n {2}[a-z][a-z0-9_-]*:\n|$)/.exec(compose);
+  assert.ok(match, "no backend service found in infra/docker-compose.yml");
+  assert.match(
+    match[1],
+    /^\s*-\s*TZ=\S+/m,
+    "infra/docker-compose.yml must set TZ on the backend service - without it " +
+      "node:alpine runs in UTC and reminders fire at the wrong time"
+  );
+});
+
 test("validation normalises rather than trusting input", () => {
   const spec = validateRecurrence({ freq: "weekly", byWeekday: [5, 1, 1, 3] });
   assert.deepEqual(spec.byWeekday, [1, 3, 5], "duplicates dropped and sorted");

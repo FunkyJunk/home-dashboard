@@ -20,6 +20,18 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     restart: unless-stopped
     env_file: .env
+    environment:
+      # REQUIRED, not cosmetic. node:20-alpine has no timezone configured, so
+      # without this the backend runs in UTC while reminders are stored and
+      # compared as local wall time - a 7pm reminder pushed at 3pm Eastern, and
+      # all-day reminders at 4am. The dashboard displayed the right time the
+      # whole while, because the browser parses in its own zone, so the UI and
+      # the notification disagreed silently. Set after the fact; the other
+      # services had it from the start and the backend was simply missed.
+      #
+      # An explicit value here also wins over anything in .env, so a stale TZ
+      # line there cannot quietly change when reminders fire.
+      - TZ=America/New_York
     volumes:
       - ./volumes/backend:/app/data   # persists which receipts have been resolved
     depends_on:

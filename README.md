@@ -70,26 +70,33 @@ without a Workspace admin.
    — run it once, then copy the resulting refresh token into `infra/.env` on
    the NAS. Never commit that file.
 
-## 3. Ring camera access
+## 3. Ring cameras (through Home Assistant)
 
-Ring has no OAuth app registration flow like Google - auth is your account
-email/password plus 2FA, exchanged once for a long-lived refresh token.
+Ring needs **no credentials in this project**. Cameras arrive over the existing
+`HOME_ASSISTANT_TOKEN`: add the Ring integration inside Home Assistant (see
+step 6 below), and the backend picks up whatever `camera.*` entities appear -
+`getRingCameras` in `backend/src/index.js` reads them straight out of HA state.
 
-1. Run `node backend/src/auth/get-ring-refresh-token.js` *locally on your
-   desktop*, not on the NAS. It prompts for your Ring email/password and, if
-   your account has 2FA (most do), a verification code, then prints a
-   refresh token to paste into `infra/.env` as `RING_REFRESH_TOKEN`.
-2. Optionally set `RING_CAMERA_IDS` in `.env` to a comma-separated list of
-   camera IDs if you only want specific cameras on the board; leave it blank
-   to show every camera on the account.
+Snapshots are proxied through HA's `camera_proxy` endpoint, and live view uses
+HA's WebRTC stream. Nothing here talks to Ring's own API.
 
-   Honest heads-up: Ring rotates this refresh token roughly every hour under
-   the hood. The backend keeps using the one you set until it stops working,
-   at which point you'll see a Ring error on the dashboard and need to
-   re-run the script for a fresh token. Also, snapshot requests wake a
-   battery-powered camera - the backend caches those longer than wired
-   cameras to limit the drain, but a camera add-on that hammers this more
-   than the existing 60s poll cycle will burn through battery faster.
+Honest notes on what the code actually does:
+
+- **Snapshots are not cached.** The proxy route sets `Cache-Control: no-store`,
+  so every dashboard refresh pulls a fresh frame. That does wake a
+  battery-powered camera each time, so a battery cam on this board will drain
+  faster than one that is only viewed on demand. There is no
+  battery-versus-wired special casing - if that becomes a problem the fix is to
+  add caching to the snapshot route, not to change any setting.
+- **Offline detection uses the battery sensor, not camera state.** HA leaves a
+  dead battery cam's state as `idle`, so a `sensor.<name>_battery` reading of 0%
+  is what marks it offline.
+
+There is no `RING_REFRESH_TOKEN` and no `RING_CAMERA_IDS`. Earlier revisions of
+this file described minting a Ring refresh token with a script under
+`backend/src/auth/`; that path was replaced by the HA integration, the script
+was never committed, and nothing in the backend has ever read those variables.
+To limit which cameras show, hide the entities in Home Assistant.
 
 ## 4. Nest thermostat access (direct, bypassing Homey)
 
@@ -299,6 +306,16 @@ rule, in its own `reminders.db`.
    HA_NOTIFY_SERVICE=mobile_app_my_iphone
    REMINDER_ALLDAY_HOUR=8
    ```
+
+**The backend's `TZ` is load-bearing.** Reminders are stored and fired as local
+wall time, so the container's timezone decides when a notification actually
+goes out. `infra/docker-compose.yml` sets `TZ` on the backend service;
+`node:20-alpine` has no timezone of its own and would otherwise run in UTC,
+pushing a 7pm reminder at 3pm Eastern and all-day reminders at 4am — while the
+dashboard kept displaying the time you typed, because the browser parses in its
+own zone. The backend logs its resolved zone at startup, so
+`docker logs dashboard-backend | grep '\[time\]'` will tell you what it thinks
+the time is, and warns loudly if `TZ` is unset.
 
 Behaviour worth knowing:
 
