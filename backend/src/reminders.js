@@ -343,6 +343,35 @@ export function createRemindersClient({ callHaService, callHaServiceForResponse,
     return cachedNotify;
   }
 
+  // Which list am I actually writing to? Both targets are auto-discovered by
+  // taking the FIRST match, so with a shopping list present the reminders can
+  // silently land there and nothing in the UI would say so. Reportable over
+  // HTTP specifically because Home Assistant's own UI is LAN-only - checking
+  // this used to require being at home.
+  async function describeSource() {
+    const states = await getStates();
+    const candidates = (states || [])
+      .filter((s) => String(s.entity_id || "").startsWith("todo."))
+      .map((s) => ({
+        entity: s.entity_id,
+        name: s.attributes?.friendly_name || null,
+        openItems: Number(s.state) || 0,
+      }));
+    const entity = await todoEntity();
+    return {
+      usingTodoEntity: entity,
+      pinnedByEnv: !!process.env.HA_TODO_ENTITY,
+      todoCandidates: candidates,
+      // Flagged rather than left for the reader to spot: more than one list and
+      // no explicit pin means the choice is incidental.
+      ambiguous: candidates.length > 1 && !process.env.HA_TODO_ENTITY,
+      usingNotifyService: (await notifyService()) || null,
+      notifyPinnedByEnv: !!process.env.HA_NOTIFY_SERVICE,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+      localTime: new Date().toString(),
+    };
+  }
+
   async function rawItems(status) {
     const entity_id = await todoEntity();
     const body = { entity_id };
@@ -532,11 +561,24 @@ export function createRemindersClient({ callHaService, callHaServiceForResponse,
     return { sent };
   }
 
-  return { list, create, update, complete, remove, sendDueNotifications, todoEntity, notifyService };
+  return {
+    list, create, update, complete, remove,
+    sendDueNotifications, todoEntity, notifyService, describeSource,
+  };
 }
 
 export function createRemindersRouter(client) {
   const router = express.Router();
+
+  // Registered ahead of the parameterised routes so "source" is never taken
+  // for a reminder uid.
+  router.get("/source", async (_req, res) => {
+    try {
+      res.json(await client.describeSource());
+    } catch (e) {
+      res.status(502).json({ error: e.message || "failed to describe reminder source" });
+    }
+  });
 
   router.get("/", async (_req, res) => {
     try {
